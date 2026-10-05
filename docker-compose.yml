@@ -1,0 +1,28 @@
+# Local services for avtalsagent. M0 has only the database; the MCP server, API,
+# web app and (if needed) OCR service are added in their milestones.
+#
+# Start:  docker compose up -d postgres --wait
+# Values come from .env (see .env.example); the defaults below are for local use only.
+
+services:
+  postgres:
+    # PostgreSQL 17 with the pgvector extension (ADR 0004). Pinned so everyone runs the same version.
+    image: pgvector/pgvector:0.8.7-pg17-bookworm
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-avtalsagent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-avtalsagent}
+      POSTGRES_DB: ${POSTGRES_DB:-avtalsagent}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Runs once, when the data volume is created for the first time.
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
