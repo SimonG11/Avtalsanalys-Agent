@@ -437,6 +437,43 @@ class TestSplitSections:
         assert sections[-1].text.endswith("den personuppgiftsansvariges instruktioner.")
         assert sections[-1].page_start is None
 
+    @staticmethod
+    def request_template(*contents: str) -> ParsedDocument:
+        """An avropsförfrågan template: Word shows "1 Innehåll", Docling does not count it."""
+        return document(
+            block("1. Innehåll", None, BlockKind.LIST_ITEM),
+            *[block(line, None) for line in contents],
+            heading("1 Administrativa uppgifter", None, 1),
+            heading("1.1 Avropande organisation", None, 2),
+            block("Avropande organisation är [Namn].", None),
+            heading("1.2 Avropssvarets språk", None, 2),
+            block("Avropssvaret ska vara skrivet på svenska.", None),
+            file_type="docx",
+        )
+
+    def test_a_word_file_takes_the_numbers_its_contents_show(self) -> None:
+        _, sections = split_sections(
+            self.request_template(
+                "2\tAdministrativa uppgifter\t4",
+                "2.1\tAvropande organisation\t4",
+                "2.2\tAvropssvarets språk\t4",
+            )
+        )
+        numbered = [s for s in sections if s.number]
+        assert [(s.number, s.level) for s in numbered] == [("2", 1), ("2.1", 2), ("2.2", 2)]
+        assert numbered[1].path == ("2 Administrativa uppgifter", "2.1 Avropande organisation")
+        assert numbered[1].text.startswith("2.1 Avropande organisation")
+
+    def test_an_out_of_date_contents_does_not_renumber(self) -> None:
+        _, sections = split_sections(
+            self.request_template(
+                "2\tAdministrativa uppgifter\t4",
+                "2.1\tAvropande organisation\t4",
+                "2.2\tSpråk\t4",
+            )
+        )
+        assert [s.number for s in sections if s.number] == ["1", "1.1", "1.2"]
+
 
 class TestChunks:
     def section(self, text: str, number: str | None = "6.2", position: int = 1) -> Section:
@@ -495,6 +532,25 @@ def test_chunk_document_returns_sections_and_chunks() -> None:
     assert len(result.sections) == 6
     # "6 Allmänna villkor" and "6.21" are only headings; the other four have text.
     assert sorted({c.section for c in result.chunks}) == [0, 2, 3, 5]
+    assert result.contents_missing == []
+
+
+class TestContentsMissing:
+    def test_a_listed_number_without_a_section_is_reported(self) -> None:
+        terms = general_terms()
+        # The body loses heading 6.21.1: its number is now part of a sentence.
+        blocks = [
+            block("Enligt 6.21.1 utgår vite.", b.page)
+            if b.text == "6.21.1 Ansvar vid Försening"
+            else b
+            for b in terms.blocks
+        ]
+        missing = terms.model_copy(update={"blocks": tuple(blocks)})
+        assert chunk_document(missing, CONTEXT).contents_missing == ["6.21.1"]
+
+    def test_a_document_without_contents_is_not_checked(self) -> None:
+        result = chunk_document(document(heading("1 Inledning"), heading("2 Villkor")), CONTEXT)
+        assert result.contents_missing is None
 
 
 def test_context_header_of_the_text_before_the_first_heading() -> None:

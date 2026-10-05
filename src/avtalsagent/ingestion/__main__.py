@@ -7,8 +7,9 @@ What:
     the areas in the settings.
     `parse` (step 2) reads every downloaded file with Docling and reports pages
     without a text layer.
-    `chunk` (step 3) splits the parsed files into sections and chunks and
-    stores them.
+    `chunk` (step 3) splits the parsed files into sections and chunks, stores
+    them and reports the files whose table of contents lists a number that is
+    not a section.
     `outline` prints a file's table of contents as found by step 3, or a list
     of all files when no hash is given, so the result can be checked by hand.
 
@@ -144,6 +145,14 @@ def chunk() -> None:
         print(f"  {kind.value}: {outlines.get(kind, 0)}")
     print(f"Sections: {sum(len(document.sections) for document in chunked)}")
     print(f"Chunks: {sum(len(document.chunks) for document in chunked)}")
+    with_contents = [result for result in chunked if result.contents_missing is not None]
+    complete = sum(1 for result in with_contents if not result.contents_missing)
+    print(
+        f"Files with a table of contents: {len(with_contents)}, all its numbers found: {complete}"
+    )
+    for checked in with_contents:
+        if checked.contents_missing:
+            print(f"  {checked.sha256[:12]}: listed but not found {checked.contents_missing}")
     for document in parsed:
         if document.pages_needing_ocr:
             print(

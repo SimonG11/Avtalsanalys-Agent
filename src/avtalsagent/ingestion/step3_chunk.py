@@ -6,6 +6,8 @@ What:
     heading. `chunk_sections` cuts long sections into `Chunk`s for search and
     gives each chunk a context header ("IT-drift › Allmänna villkor ›
     14 Uppsägning › 14.2 Leverantörens uppsägning"). `chunk_document` does both.
+    `contents_missing` checks the sections against the document's own table
+    of contents.
 
 Why:
     The agent cites agreements by section number, so the section is the unit it
@@ -27,7 +29,9 @@ How:
     2. `ingestion/headings.py` finds the numbered headings. A questions-and-
        answers log is split per question instead. If a document has no usable
        numbered outline, the parser's own headings are used without numbers,
-       and a document without headings becomes one section.
+       and a document without headings becomes one section. A Word file
+       takes the numbers of its own table of contents when it lists exactly
+       the same headings, since Word computes the numbers it shows.
     3. Each heading starts a section that runs to the next heading. Its level
        comes from the number (6.21.9 is level 3) and its parent is the nearest
        section above it with a lower level.
@@ -38,7 +42,7 @@ How:
 import re
 from collections import Counter, defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from avtalsagent.domain.parsed import Block, BlockKind, Chunk, ParsedDocument, Section
@@ -119,6 +123,7 @@ _QUESTION = re.compile(
     r"(?: (?P<number_after>\d{1,4}))?$"
 )
 _MIN_QUESTIONS = 3
+_MIN_CONTENTS_ENTRIES = 3  # fewer numbered entries are not a table of contents to check
 _CONTENTS_TITLES = {"innehåll", "innehållsförteckning", "table of contents", "contents"}
 
 
@@ -182,6 +187,9 @@ class ChunkedDocument:
     outline: OutlineKind
     sections: list[Section]
     chunks: list[Chunk]
+    # The numbers the document's table of contents lists without a section; None when
+    # it has no table of contents (see `contents_missing`).
+    contents_missing: list[str] | None
 
 
 def chunk_document(
@@ -189,9 +197,25 @@ def chunk_document(
 ) -> ChunkedDocument:
     """Split a parsed document into sections and chunks."""
     outline, sections = split_sections(document)
-    return ChunkedDocument(
-        document.sha256, outline, sections, chunk_sections(sections, context, max_chars)
-    )
+    chunks = chunk_sections(sections, context, max_chars)
+    missing = contents_missing(document, sections)
+    return ChunkedDocument(document.sha256, outline, sections, chunks, missing)
+
+
+def contents_missing(document: ParsedDocument, sections: Sequence[Section]) -> list[str] | None:
+    """The numbered entries of the document's table of contents that no section has.
+
+    This is the check of M3's goal: the sections of a document with a table of
+    contents should be exactly the headings it lists, and more where it lists
+    only the upper levels. None when the document has no table of contents with
+    at least three numbered entries.
+    """
+    listed = listed_numbers(document.blocks)
+    if len(listed) < _MIN_CONTENTS_ENTRIES:
+        return None
+    found = {section.number for section in sections if section.number}
+    numbers = (".".join(str(part) for part in number) for number in sorted(listed))
+    return [number for number in numbers if number not in found]
 
 
 def clean_blocks(document: ParsedDocument) -> list[Block]:
@@ -313,6 +337,8 @@ def split_sections(document: ParsedDocument) -> tuple[OutlineKind, list[Section]
     ):
         headings = _with_unnumbered_parts(headings, blocks)
         headings = _with_contents_numbers(headings, blocks, document.blocks)
+        if document.file_type == "docx":
+            headings, blocks = _with_word_numbers(headings, blocks, document.blocks)
     else:
         outline = OutlineKind.HEADINGS
         headings = [
@@ -409,6 +435,47 @@ def _with_contents_numbers(
                 taken.add(index)
                 break
     return sorted([*headings, *added], key=lambda heading: heading.index)
+
+
+def _with_word_numbers(
+    headings: list[Heading], blocks: list[Block], document_blocks: Sequence[Block]
+) -> tuple[list[Heading], list[Block]]:
+    """A Word file's headings with the numbers its own table of contents shows.
+
+    A Word file stores list definitions, not numbers: Word computes the numbers it
+    shows, and its table of contents is made from them. Docling recounts the
+    numbers and can be off. In the avropsförfrågan templates the contents heading
+    inherits the numbering of heading 1, so Word shows "1 Innehåll" and
+    "2 Administrativa uppgifter", while Docling starts the headings at 1. When the
+    table of contents lists exactly the numbered headings, with the same titles in
+    the same order, its numbers are used; one that is out of date does not match.
+    The heading lines in the text get the same numbers.
+    """
+    numbered = [heading for heading in headings if heading.number]
+    entries = [entry for entry in contents_entries(document_blocks) if entry.number]
+    if not entries or len(entries) != len(numbered):
+        return headings, blocks
+    if any(
+        _normalise(entry.title) != _normalise(heading.title)
+        for entry, heading in zip(entries, numbered, strict=True)
+    ):
+        return headings, blocks
+    shown = {
+        heading.index: ".".join(map(str, entry.number))
+        for entry, heading in zip(entries, numbered, strict=True)
+        if entry.number
+    }
+    renumbered: list[Heading] = []
+    for heading in headings:
+        number = shown.get(heading.index)
+        if number is None or number == heading.number:
+            renumbered.append(heading)
+            continue
+        renumbered.append(replace(heading, number=number, level=number.count(".") + 1))
+        line = blocks[heading.index]
+        text = re.sub(rf"^\s*{re.escape(heading.number or '')}\.?", number, line.text, count=1)
+        blocks[heading.index] = line.model_copy(update={"text": text})
+    return renumbered, blocks
 
 
 def _questions(blocks: Sequence[Block]) -> list[Heading]:
