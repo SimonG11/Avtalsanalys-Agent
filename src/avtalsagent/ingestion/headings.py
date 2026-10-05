@@ -52,6 +52,8 @@ _TOC_LEADER = re.compile(r"(?:\t|\.{3,}|…)\s*\d{1,3}$")
 _TRAILING_NUMBER = re.compile(r"\s\d{1,3}$")
 _TOC_WINDOW = 2  # blocks on each side
 _TOC_MAX_CHARS = 200
+# Printed page numbers can start after an unnumbered cover and contents.
+_TOC_PAGE_SLACK = 2
 _OPENING_QUOTES = "\"'”“„«(["
 # A list number stuck to the start of a title: "7.9 1.Åtaganden vid nyttjanderättstidens
 # slut". It is removed from the title, so the heading is still found.
@@ -114,6 +116,11 @@ class Heading:
     title: str
 
 
+def starts_with_number(line: str) -> bool:
+    """Whether a line starts like a numbered heading: "6.21 Avtalsbrott och påföljder"."""
+    return _NUMBERED.match(line.strip()) is not None
+
+
 def parse_number(text: str) -> tuple[int, ...]:
     return tuple(int(part) for part in text.split("."))
 
@@ -129,7 +136,7 @@ def toc_entries(blocks: Sequence[Block]) -> set[int]:
             text = block.text.strip()
             if _TOC_LEADER.search(text):
                 strong.add(index)
-            elif _NUMBERED.match(text) and _TRAILING_NUMBER.search(text):
+            elif _NUMBERED.match(text) and _points_forward(block):
                 weak.add(index)
     marked = strong | weak
     entries = set(strong)
@@ -138,6 +145,18 @@ def toc_entries(blocks: Sequence[Block]) -> set[int]:
         if sum(1 for other in window if other != index and other in marked) >= 2:
             entries.add(index)
     return entries
+
+
+def _points_forward(block: Block) -> bool:
+    """Whether a line ends with a page number at or after its own page.
+
+    "1. Lösningsarkitekt, kompetensnivå 4" on page 11 is a list item, not a
+    contents entry for page 4.
+    """
+    page = _TRAILING_NUMBER.search(block.text.strip())
+    if page is None:
+        return False
+    return block.page is None or int(page[0]) >= block.page - _TOC_PAGE_SLACK
 
 
 def listed_numbers(blocks: Sequence[Block]) -> frozenset[tuple[int, ...]]:
@@ -235,7 +254,9 @@ def infer_numbers(entries: Sequence[ContentsEntry]) -> list[tuple[int, ...] | No
     is "Avropsberättigade" in the text layer, in the contents and in the body.
     The numbers can be recovered from the numbered entries around them: the
     entries between "2 IT-konsulttjänster" and "2.5.1 Delområden" end with 2.5
-    and count back from it (2.1 ... 2.5). A run is only numbered when its first
+    and count back from it (2.1 ... 2.5). Before x.1 comes its parent, so when
+    the chapter number is missing too, the entries between "3.7.12" and "4.4.1"
+    are 4, 4.1 ... 4.4. A run is only numbered when its first
     number follows the entry before it and its last is followed by the entry
     after it without a gap. Once a level is known to be printed as images, a
     run before a new chapter or at the end gets numbers at that level
@@ -259,8 +280,10 @@ def infer_numbers(entries: Sequence[ContentsEntry]) -> list[tuple[int, ...] | No
             if before is None or numbers[start] is not None:
                 continue
             if after is not None and len(after) > 1 and not second_pass:
-                last = after[:-1]
-                run = [(*last[:-1], last[-1] - (end - 1 - i)) for i in range(start, end)]
+                counted = _count_back(after[:-1], end - start)
+                if counted is None:
+                    continue
+                run = counted
             elif second_pass and image_level is not None:
                 first = _successor(before, image_level)
                 if first is None:
@@ -273,8 +296,25 @@ def infer_numbers(entries: Sequence[ContentsEntry]) -> list[tuple[int, ...] | No
             )
             if all(part > 0 for number in run for part in number) and fits:
                 numbers[start:end] = run
-                image_level = image_level or len(run[0])
+                image_level = image_level or len(run[-1])
     return numbers
+
+
+def _count_back(last: tuple[int, ...], count: int) -> list[tuple[int, ...]] | None:
+    """`count` numbers in outline order that end with `last`: 4.4 and 5 give 4, 4.1 ... 4.4.
+
+    Before x.1 comes its parent x. None if the numbers would go below 1.
+    """
+    run = [last]
+    while len(run) < count:
+        number = run[-1]
+        if number[-1] > 1:
+            run.append((*number[:-1], number[-1] - 1))
+        elif len(number) > 1:
+            run.append(number[:-1])
+        else:
+            return None
+    return run[::-1]
 
 
 def _successor(number: tuple[int, ...], level: int) -> tuple[int, ...] | None:

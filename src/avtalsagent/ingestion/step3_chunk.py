@@ -28,7 +28,8 @@ How:
        A list number the model put at the end of its item is moved to the front.
     2. `ingestion/headings.py` finds the numbered headings. A questions-and-
        answers log is split per question instead. If a document has no usable
-       numbered outline, the parser's own headings are used without numbers,
+       numbered outline, the parser's own headings are used without numbers
+       (with levels from the table of contents when the parser gives none),
        and a document without headings becomes one section. A Word file
        takes the numbers of its own table of contents when it lists exactly
        the same headings, since Word computes the numbers it shows.
@@ -45,7 +46,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
-from avtalsagent.domain.parsed import Block, BlockKind, Chunk, ParsedDocument, Section
+from avtalsagent.domain.parsed import (
+    CELL_SEPARATOR,
+    Block,
+    BlockKind,
+    Chunk,
+    ParsedDocument,
+    Section,
+)
 from avtalsagent.ingestion.headings import (
     Heading,
     contents_entries,
@@ -53,6 +61,7 @@ from avtalsagent.ingestion.headings import (
     infer_numbers,
     listed_numbers,
     select_outline,
+    starts_with_number,
     toc_entries,
 )
 
@@ -234,7 +243,45 @@ def clean_blocks(document: ParsedDocument) -> list[Block]:
         and _normalise(block.text) not in _CONTENTS_TITLES
     ]
     toc = toc_entries(kept)
-    return _markers_first([block for index, block in enumerate(kept) if index not in toc])
+    blocks = [block for index, block in enumerate(kept) if index not in toc]
+    return _markers_first(_text_of_column_tables(blocks))
+
+
+def _text_of_column_tables(blocks: Sequence[Block]) -> list[Block]:
+    """The blocks, with a one-column table that holds numbered headings split into text.
+
+    The layout model sometimes calls a stretch of text a table; when the table
+    model finds no columns, the parser reads its lines from the text layer. Its
+    headings ("6.21 Avtalsbrott och påföljder", "6.21.1 Ansvar vid Försening")
+    must be blocks of their own to be found, so the table becomes a text block
+    per numbered line, with the lines between them joined into one text block.
+    """
+    result: list[Block] = []
+    for block in blocks:
+        lines = [line.strip() for line in block.text.splitlines() if line.strip()]
+        if (
+            block.kind is not BlockKind.TABLE
+            or CELL_SEPARATOR in block.text
+            or not any(starts_with_number(line) for line in lines)
+        ):
+            result.append(block)
+            continue
+        paragraph: list[str] = []
+        for line in lines:
+            if not starts_with_number(line):
+                paragraph.append(line)
+                continue
+            if paragraph:
+                result.append(_text_block(block, " ".join(paragraph)))
+                paragraph = []
+            result.append(_text_block(block, line))
+        if paragraph:
+            result.append(_text_block(block, " ".join(paragraph)))
+    return result
+
+
+def _text_block(block: Block, text: str) -> Block:
+    return block.model_copy(update={"kind": BlockKind.TEXT, "text": text})
 
 
 def _is_page_label(text: str) -> bool:
@@ -341,11 +388,13 @@ def split_sections(document: ParsedDocument) -> tuple[OutlineKind, list[Section]
             headings, blocks = _with_word_numbers(headings, blocks, document.blocks)
     else:
         outline = OutlineKind.HEADINGS
+        parsed = [(i, block) for i, block in enumerate(blocks) if block.kind is BlockKind.HEADING]
         headings = [
             Heading(index, 1, None, block.level or 1, " ".join(block.text.split()))
-            for index, block in enumerate(blocks)
-            if block.kind is BlockKind.HEADING
+            for index, block in parsed
         ]
+        if not any(block.level for _, block in parsed):
+            headings = _levels_from_contents(headings, document.blocks)
         if not headings:
             outline = OutlineKind.NONE
 
@@ -435,6 +484,28 @@ def _with_contents_numbers(
                 taken.add(index)
                 break
     return sorted([*headings, *added], key=lambda heading: heading.index)
+
+
+def _levels_from_contents(
+    headings: list[Heading], document_blocks: Sequence[Block]
+) -> list[Heading]:
+    """Levels for headings without numbers or levels, from the table of contents.
+
+    Docling gives no heading levels in a PDF, so Microsoft's product terms would
+    have 1,500 headings on one level, and "Användningsrättigheter" (25 times) would
+    not say which product it is about. The table of contents lists the chapters and
+    products: a heading it lists is level 1 and the headings after it are its
+    children ("System Center Server › Användningsrättigheter"). Used when at least
+    half of the entries are headings of the document.
+    """
+    listed = {_normalise(entry.title) for entry in contents_entries(document_blocks)}
+    found = listed & {_normalise(heading.title) for heading in headings}
+    if len(found) < _MIN_CONTENTS_ENTRIES or 2 * len(found) < len(listed):
+        return headings
+    return [
+        replace(heading, level=1 if _normalise(heading.title) in listed else 2)
+        for heading in headings
+    ]
 
 
 def _with_word_numbers(

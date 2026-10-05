@@ -28,13 +28,16 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
+# Between the cells of a table row: "Konsult nivå 3 | 1 150 kr".
+CELL_SEPARATOR = " | "
+
 
 class BlockKind(StrEnum):
     TITLE = "title"  # the document title
     HEADING = "heading"  # marked as a heading by the parser (layout model or Word style)
     TEXT = "text"  # a paragraph, caption or footnote
     LIST_ITEM = "list_item"
-    TABLE = "table"  # cells as text, one row per line
+    TABLE = "table"  # cells as text, one row per line, separated by CELL_SEPARATOR
     TOC = "toc"  # marked as a table of contents by the parser
     PAGE_HEADER = "page_header"
     PAGE_FOOTER = "page_footer"

@@ -47,7 +47,7 @@ from docling_core.types.doc import (
     TextItem,
 )
 
-from avtalsagent.domain.parsed import Block, BlockKind
+from avtalsagent.domain.parsed import CELL_SEPARATOR, Block, BlockKind
 from avtalsagent.ingestion.parsers.base import ParseError
 
 LAYOUT_PRESET = "layout_heron_default"
@@ -193,7 +193,7 @@ def _inside_table(item: NodeItem, document: DoclingDocument) -> bool:
 
 
 def _table_text(table: TableItem, document: DoclingDocument, pdf: pdfium.PdfDocument | None) -> str:
-    """The table's text, one row per line, with cells separated by " | "."""
+    """The table's text, one row per line, with cells separated by `CELL_SEPARATOR`."""
     if table.data.table_cells:
         rows = []
         for row in table.data.grid:
@@ -207,7 +207,7 @@ def _table_text(table: TableItem, document: DoclingDocument, pdf: pdfium.PdfDocu
                     seen.add(start)
                     cells.append(" ".join(cell.text.split()))
             if any(cells):
-                rows.append(" | ".join(cells))
+                rows.append(CELL_SEPARATOR.join(cells))
         return "\n".join(rows)
     if pdf is None:
         return ""

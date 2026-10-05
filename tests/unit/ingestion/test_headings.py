@@ -281,6 +281,18 @@ class TestTableOfContents:
         assert toc_entries(blocks) == set()
         assert numbers(blocks) == ["2.4.4"]
 
+    def test_a_numbered_list_ending_in_numbers_on_a_later_page_is_not_an_entry(self) -> None:
+        # "kompetensnivå 4" on page 11 cannot be a contents entry for page 4.
+        items = [
+            "1. Lösningsarkitekt, kompetensnivå 4",
+            "2. Cybersäkerhetsspecialist, kompetensnivå 4",
+            "3. Projektledare, kompetensnivå 4",
+        ]
+        blocks = [Block(kind=BlockKind.LIST_ITEM, text=item, page=11) for item in items]
+        assert toc_entries(blocks) == set()
+        # The same lines on page 2, pointing forward, are entries.
+        assert toc_entries([b.model_copy(update={"page": 2}) for b in blocks]) == {0, 1, 2}
+
     def test_a_toc_block_from_the_parser_is_an_entry(self) -> None:
         block = Block(kind=BlockKind.TOC, text="1 Inledning 2\n2 Kravkatalog 3", page=2)
         assert toc_entries([block]) == {0}
@@ -347,3 +359,11 @@ def test_numbers_are_inferred_only_where_the_neighbours_agree() -> None:
     ]
     # Before the first numbered entry (a title page) nothing is inferred.
     assert infer_numbers(entries(None, "1", "1.1")) == [None, (1,), (1, 1)]
+    # The chapter number is missing too: counting back passes 4.1 to its parent 4.
+    assert infer_numbers(entries("3.7.12", None, None, None, "4.2.1")) == [
+        (3, 7, 12),
+        (4,),
+        (4, 1),
+        (4, 2),
+        (4, 2, 1),
+    ]

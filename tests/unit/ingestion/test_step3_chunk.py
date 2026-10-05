@@ -303,6 +303,33 @@ class TestSplitSections:
         assert outline is OutlineKind.NONE
         assert len(sections) == 1
 
+    def test_headings_in_a_table_without_columns_are_found(self) -> None:
+        # The layout model called this stretch a table and the table model found no
+        # columns, so the parser read its lines from the text layer.
+        table = block(
+            "6.21 Avtalsbrott och påföljder\n"
+            "Part kan göra gällande en eller flera olika\n"
+            "påföljder.\n"
+            "6.21.1 Ansvar vid Försening\n"
+            "6.21.1.1 Vad som avses med Försening",
+            65,
+            BlockKind.TABLE,
+        )
+        _, sections = split_sections(
+            document(
+                heading("6.20 Uppföljning", 64),
+                block("Ramavtalsleverantören ansvarar för att visa att krav uppfylls.", 64),
+                table,
+                block("Med Försening avses att Faktisk Startdag inträder senare.", 65),
+                heading("6.21.1.2 Vite vid Försening", 66),
+            )
+        )
+        assert [s.number for s in sections] == ["6.20", "6.21", "6.21.1", "6.21.1.1", "6.21.1.2"]
+        assert sections[1].text == (
+            "6.21 Avtalsbrott och påföljder\n\n"
+            "Part kan göra gällande en eller flera olika påföljder."
+        )
+
     def test_a_section_without_its_parent_number_has_no_parent(self) -> None:
         # A template whose sections 2-2.3 were deleted; its contents list 2.4.
         _, sections = split_sections(
@@ -401,6 +428,33 @@ class TestSplitSections:
             "Villkor för Azure",
             "Licensiering av Azure",
         ]
+
+    def test_headings_without_levels_take_them_from_the_contents(self) -> None:
+        contents = [
+            block(f"{title} ........................................ {page}", 2)
+            for title, page in [("INLEDNING", 3), ("SYSTEM CENTER SERVER", 29), ("SQL SERVER", 40)]
+        ]
+        _, sections = split_sections(
+            document(
+                *contents,
+                heading("Inledning", 3),
+                heading("Välkommen", 3),
+                heading("System Center Server", 29),
+                heading("Användningsrättigheter", 29),
+                block("Licensvillkor | Universella licensvillkor för all programvara", 29),
+                heading("SQL Server", 40),
+                heading("Användningsrättigheter", 40),
+            )
+        )
+        assert [(s.title, s.level) for s in sections] == [
+            ("Inledning", 1),
+            ("Välkommen", 2),
+            ("System Center Server", 1),
+            ("Användningsrättigheter", 2),
+            ("SQL Server", 1),
+            ("Användningsrättigheter", 2),
+        ]
+        assert sections[3].path == ("System Center Server", "Användningsrättigheter")
 
     def test_a_document_without_headings_is_one_section(self) -> None:
         outline, sections = split_sections(
