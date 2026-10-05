@@ -50,6 +50,9 @@ _TRAILING_NUMBER = re.compile(r"\s\d{1,3}$")
 _TOC_WINDOW = 2  # blocks on each side
 _TOC_MAX_CHARS = 200
 _OPENING_QUOTES = "\"'”“„«(["
+# A list number stuck to the start of a title: "7.9 1.Åtaganden vid nyttjanderättstidens
+# slut". It is removed from the title, so the heading is still found.
+_FUSED_LIST_NUMBER = re.compile(r"^\d{1,2}\.(?=[A-ZÅÄÖ])")
 
 # Scores and penalties of the outline search. A chain is a list of candidates;
 # its value is the sum of their scores minus the penalties of each step.
@@ -144,11 +147,12 @@ def find_candidates(blocks: Sequence[Block]) -> list[Candidate]:
             consumed = 2
         else:
             number_text, title = match["number"], match["title"]
-        title = " ".join(title.split("\n", 1)[0].split())
+        title = _FUSED_LIST_NUMBER.sub("", " ".join(title.split("\n", 1)[0].split()))
         if not _looks_like_title(title):
             continue
         number = parse_number(number_text)
-        if any(part > _MAX_NUMBER_PART for part in number):
+        # Sections are numbered from 1; "17.00" and "1.0" are times and versions.
+        if any(part > _MAX_NUMBER_PART or part == 0 for part in number):
             continue
         score = _score(block, title) + (_IN_TOC_BONUS if number in in_toc else 0.0)
         candidates.append(Candidate(index, consumed, number, title, score))

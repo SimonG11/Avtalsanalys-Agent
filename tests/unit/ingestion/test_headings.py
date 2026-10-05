@@ -44,6 +44,19 @@ def numbers(blocks: list[Block]) -> list[str | None]:
             "Kontaktperson för meddelanden och onlineadministration.",
         ),
         ("1.1 ”Avtalet” avser detta ramavtal", (1, 1), "”Avtalet” avser detta ramavtal"),
+        (
+            "8.1.76 Överlämning och avslut av Kontrakt",
+            (8, 1, 76),
+            "Överlämning och avslut av Kontrakt",
+        ),
+        ("5.1.1 Administratör 1", (5, 1, 1), "Administratör 1"),  # a title ending in a digit
+        ("1 PARTER", (1,), "PARTER"),
+        # A list number stuck to the title is dropped from it.
+        (
+            "7.9 1.Åtaganden vid nyttjanderättstidens slut",
+            (7, 9),
+            "Åtaganden vid nyttjanderättstidens slut",
+        ),
     ],
 )
 def test_numbered_lines_are_candidates(line: str, number: tuple[int, ...], title: str) -> None:
@@ -62,6 +75,22 @@ def test_numbered_lines_are_candidates(line: str, number: tuple[int, ...], title
         "2. FN:s barnkonvention (artikel 32),",  # a list item ending with a comma
         "8 X",  # a ticked box, not a title
         "2021000829",  # an organisation number
+        # Lines from the survey of all 207 documents (2026-10-05):
+        "6. ",  # a list number printed after its item
+        "17.00. Såvida inte annat överenskommes i Kontrakt, gäller att servicefönster",  # a time
+        "22.00 och kl. 06.00, mellan kl. 19.00 på fredag och kl. 07.00 på måndag samt",
+        "23.3-14537-2023 Bemanningstjänster Publicerad 2024-09-24 15:26",  # a footer
+        "23.3.2649-22 Programvaror och tjänster -",  # a footer with a dotted case number
+        "2.1 eller motsvarande eller hur tillgängligt det som avropas är för personer med",
+        "1.0 2024-09-27 Första versionen",  # a row of a version table
+        "10(11)",  # a page label
+        "500 000 SEK. Utan att någon av punkterna 1-3 föreligger kan Kammarkollegiet",
+        "1http://www.opensource.org/licenses/",  # a footnote number
+        "11 - 20 Arbetsdagar 26 eller fler Konsulter 10 Arbetsdagar",  # a table row
+        "1 mars 2024",
+        "(6.10.9 Avsnittet har utgått.)",
+        "a. Ditt svar?",
+        "7 har träffats ",  # a form field split over lines
     ],
 )
 def test_lines_that_are_not_headings(line: str) -> None:

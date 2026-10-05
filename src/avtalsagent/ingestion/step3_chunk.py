@@ -21,9 +21,10 @@ How:
     1. Page headers, page footers, page numbers and lines repeated on many
        pages are removed, and so is the table of contents (it repeats the
        headings and would otherwise be found by searches).
-    2. `ingestion/headings.py` finds the numbered headings. If a document has
-       no usable numbered outline, the parser's own headings are used without
-       numbers, and a document without headings becomes one section.
+    2. `ingestion/headings.py` finds the numbered headings. A questions-and-
+       answers log is split per question instead. If a document has no usable
+       numbered outline, the parser's own headings are used without numbers,
+       and a document without headings becomes one section.
     3. Each heading starts a section that runs to the next heading. Its level
        comes from the number (6.21.9 is level 3) and its parent is the nearest
        section above it with a lower level.
@@ -48,6 +49,13 @@ HEADER_SEPARATOR = " › "
 _PAGE_NUMBER = re.compile(
     r"^(?:sida|sid\.?|page)?\s*\d{1,4}\s*(?:(?:/|av|of|\()\s*\d{1,4}\)?)?$", re.IGNORECASE
 )
+# A short line that ends with the page counter of a form or printout:
+# "Utskrivet: 2021-02-09 12:21 Sida 5 av 111", "Datum Sid 2 (27)".
+_PAGE_LABEL = re.compile(
+    r"(?:^|\s)(?:sidan|sida|sid\.?|page)\s*\d{1,4}\s*(?:(?:/|av|of)\s*\d{1,4}|\(\d{1,4}\))$",
+    re.IGNORECASE,
+)
+_PAGE_LABEL_MAX_CHARS = 100
 _FURNITURE_KINDS = (BlockKind.PAGE_HEADER, BlockKind.PAGE_FOOTER, BlockKind.TOC)
 # A short line on at least this share of the pages (and at least three) is a running
 # header or footer, e.g. "23.3-5890-2023 IT-drift 2023, område Mindre".
@@ -61,11 +69,21 @@ _MIN_NUMBERED_HEADINGS = 2
 _MAX_TEXT_BEFORE_FIRST_HEADING = 0.5
 _SENTENCE_END = re.compile(r"(?<=[.!?:;])\s+(?=[A-ZÅÄÖ0-9\"”(])")
 _PREAMBLE_TITLE = "Text före första rubriken"
+# An entry in a TendSign "Frågor och svar" printout: "12 Publik fråga". Private
+# questions and notices from the authority have no number. The questions quote
+# the tender's headings ("5.6.3.1 Kvalitetsledningssystem"), so a document with
+# such entries is split per entry and never by its numbers.
+_QUESTION = re.compile(
+    r"^(?:(?P<number>\d{1,4}) )?"
+    r"(?P<title>Publik fråga|Privat fråga|Publikt informationsmeddelande)$"
+)
+_MIN_QUESTIONS = 3
 _CONTENTS_TITLES = {"innehåll", "innehållsförteckning", "table of contents", "contents"}
 
 
 class OutlineKind(StrEnum):
     NUMBERED = "numbered"  # sections from numbered headings
+    QUESTIONS = "questions"  # a questions-and-answers log: one section per question
     HEADINGS = "headings"  # no numbered outline; the parser's headings without numbers
     NONE = "none"  # no headings: the whole document is one section
 
@@ -144,10 +162,16 @@ def clean_blocks(document: ParsedDocument) -> list[Block]:
         for block in document.blocks
         if block.kind not in _FURNITURE_KINDS
         and not _PAGE_NUMBER.match(block.text.strip())
+        and not _is_page_label(block.text)
         and _normalise(block.text) not in repeated
     ]
     toc = toc_entries(kept)
     return [block for index, block in enumerate(kept) if index not in toc]
+
+
+def _is_page_label(text: str) -> bool:
+    text = text.strip()
+    return len(text) <= _PAGE_LABEL_MAX_CHARS and _PAGE_LABEL.search(text) is not None
 
 
 def _normalise(text: str) -> str:
@@ -169,8 +193,10 @@ def split_sections(document: ParsedDocument) -> tuple[OutlineKind, list[Section]
     """The document's sections in order, and how they were found."""
     blocks = clean_blocks(document)
     outline = OutlineKind.NUMBERED
-    headings = select_outline(find_candidates(blocks))
-    if _usable(headings, blocks):
+    headings = _questions(blocks)
+    if len(headings) >= _MIN_QUESTIONS:
+        outline = OutlineKind.QUESTIONS
+    elif _usable(headings := select_outline(find_candidates(blocks)), blocks):
         headings = _with_unnumbered_parts(headings, blocks)
     else:
         outline = OutlineKind.HEADINGS
@@ -215,6 +241,16 @@ def split_sections(document: ParsedDocument) -> tuple[OutlineKind, list[Section]
         sections.append(section)
         open_sections.append(section)
     return outline, sections
+
+
+def _questions(blocks: Sequence[Block]) -> list[Heading]:
+    """The entries of a questions-and-answers log, found by their first line."""
+    headings = []
+    for index, block in enumerate(blocks):
+        lines = block.text.strip().splitlines()
+        if lines and (match := _QUESTION.match(" ".join(lines[0].split()))):
+            headings.append(Heading(index, 1, match["number"], 1, match["title"]))
+    return headings
 
 
 def _with_unnumbered_parts(headings: list[Heading], blocks: Sequence[Block]) -> list[Heading]:

@@ -185,7 +185,8 @@ class ParsedFile(Base):
     page_count: Mapped[int] = mapped_column(Integer)  # 0 for Word files
     # Scanned pages without a text layer; their text is missing until OCR (M3b).
     pages_needing_ocr: Mapped[list[int]] = mapped_column(ARRAY(Integer))
-    outline: Mapped[str] = mapped_column(String(16))  # "numbered", "headings" or "none"
+    # How the sections were found (OutlineKind): numbered, questions, headings or none.
+    outline: Mapped[str] = mapped_column(String(16))
     section_count: Mapped[int] = mapped_column(Integer)
     chunk_count: Mapped[int] = mapped_column(Integer)
     chunked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

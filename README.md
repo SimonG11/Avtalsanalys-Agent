@@ -4,7 +4,7 @@ En agent som besvarar frågor om Statens inköpscentrals ramavtal (avropa.se) d�
 påstående har en verifierad källa. Inläsningen av avtalen är ett fast workflow, och
 frågebesvarandet är en agent i LangGraph som själv väljer verktyg och ordning.
 
-> **Status:** M2 (hämtning av dokumenten). Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
+> **Status:** M3 (tolkning och uppdelning i avsnitt). Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
 > förklaras i [`docs/steg/`](docs/steg/) och varje designbeslut i [`docs/adr/`](docs/adr/).
 
 ## Kom igång
@@ -22,6 +22,9 @@ uv run pytest                         # kör testerna (integrationstesterna krä
 
 uv run python -m avtalsagent.register --download   # hämtar och läser in Excel-registret
 uv run python -m avtalsagent.ingestion fetch       # hämtar avtalsdokumenten för urvalet
+uv run python -m avtalsagent.ingestion parse       # tolkar dokumenten med Docling
+uv run python -m avtalsagent.ingestion chunk       # delar dem i avsnitt och bitar
+uv run python -m avtalsagent.ingestion outline     # visar hur varje dokument delades
 ```
 
 Kontroller som CI kör:

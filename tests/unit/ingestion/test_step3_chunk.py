@@ -77,13 +77,54 @@ class TestCleanBlocks:
         assert "6.1 Allmänt 3" not in texts  # contents entry
         assert "6.1 Allmänt" in texts  # the heading itself stays
 
+    def test_page_labels_of_forms_and_printouts_are_removed(self) -> None:
+        labels = [
+            "Utskrivet: 2021-02-09 12:21 Sida 5 av 111",
+            "Datum Sid 2 (27)",
+            "MBSA20201Agr(WW)(SWE)(Oct2019) Page 1 of 8",
+            "Z126-6304-SE-8 03-2018 Sidan 1 av 5",
+        ]
+        kept = "Leveransen ska vara klar inom 30 dagar, se sida 4."
+        texts = [b.text for b in clean_blocks(document(*map(block, [*labels, kept])))]
+        assert texts == [kept]
+
     def test_a_line_on_few_pages_is_kept(self) -> None:
         blocks = [block("Ramavtalsleverantören ska ha en försäkring.", page) for page in (1, 2)]
         blocks += [block(f"Text på sidan {page}", page) for page in range(3, 11)]
         assert len(clean_blocks(document(*blocks))) == 10
 
 
+def questions_log() -> ParsedDocument:
+    """A TendSign "Frågor och svar" printout whose questions quote the tender."""
+    return document(
+        block("Frågor och svar - Upphandlingsdokument", 1, BlockKind.TITLE),
+        block("1 Publik fråga", 1),
+        block("5.6.3.1 Kvalitetsledningssystem", 1),
+        block("Avses ett certifierat ledningssystem?", 1),
+        block("Publikt svar 2024-09-30 14:32", 1),
+        block("Nej, se punkt 5.6.3.1.", 1),
+        block("2 Publik fråga", 2),
+        block("5.6.3.2 Miljöledningssystem", 2),
+        block("Gäller samma sak för miljöledningssystemet?", 2),
+        block("Privat fråga", 2),
+        block("Publikt informationsmeddelande", 2),
+        block("Sista dag för frågor är passerad.", 2),
+    )
+
+
 class TestSplitSections:
+    def test_a_questions_log_is_split_per_question_not_by_quoted_numbers(self) -> None:
+        outline, sections = split_sections(questions_log())
+        assert outline is OutlineKind.QUESTIONS
+        assert [(s.number, s.title, s.level) for s in sections] == [
+            (None, "Frågor och svar - Upphandlingsdokument", 0),
+            ("1", "Publik fråga", 1),
+            ("2", "Publik fråga", 1),
+            (None, "Privat fråga", 1),
+            (None, "Publikt informationsmeddelande", 1),
+        ]
+        assert "5.6.3.1 Kvalitetsledningssystem\n\nAvses" in sections[1].text
+
     def test_numbered_sections_with_levels_parents_and_paths(self) -> None:
         outline, sections = split_sections(general_terms())
         assert outline is OutlineKind.NUMBERED

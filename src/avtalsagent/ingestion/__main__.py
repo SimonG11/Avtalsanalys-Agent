@@ -35,7 +35,6 @@ from avtalsagent.ingestion.catalog import (
     procurements_for_areas,
     save_fetch,
 )
-from avtalsagent.ingestion.parsers.docling_parser import DoclingParser
 from avtalsagent.ingestion.section_store import (
     document_links,
     load_outline,
@@ -89,6 +88,9 @@ def fetch(areas: list[str]) -> None:
 
 
 def parse() -> None:
+    # Imported here, so the other commands start without loading Docling's models.
+    from avtalsagent.ingestion.parsers.docling_parser import DoclingParser
+
     settings = get_settings()
     with session_factory(create_db_engine())() as session:
         files = source_files(session, settings.data_dir)
