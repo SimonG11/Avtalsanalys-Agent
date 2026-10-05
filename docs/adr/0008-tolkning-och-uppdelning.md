@@ -55,17 +55,24 @@ Det som avgör valet:
    får inte börja om på 1, eftersom en omstart i de här dokumenten nästan alltid är en numrerad
    lista. Innehållsförteckningens nummer läses innan förteckningen tas bort (beslut 5).
    Nummer som dokumentet skriver som bilder räknas fram ur innehållsförteckningens ordning, men
-   bara när de passar utan lucka mellan de numrerade grannarna.
+   bara när de passar utan lucka mellan de numrerade grannarna. Saknar den bästa kedjan nummer
+   som innehållsförteckningen listar väljs den igen med så många listade nummer som möjligt,
+   eftersom nummer som citeras från ett annat dokument (`4.6.1`–`4.6.6` efter `5 Tekniska krav`)
+   annars kan slå ut ett riktigt avsnitt. En Word-fil får numren ur sin innehållsförteckning när
+   den listar exakt samma rubriker: Word räknar fram numren den visar och gör förteckningen av
+   dem, medan Docling räknar själv och i två mallar hamnar ett för lågt.
 5. **Innehållsförteckningen tas bort** innan avsnitten byggs. Den upprepar rubrikerna och skulle
    annars hittas av sökningar. Sidnummer och rader som återkommer överst eller nederst på minst
-   30 % av sidorna tas också bort; samma mening mitt på många sidor är avtalstext. Ett sidhuvud eller en sidfot enligt layoutmodellen tas bort bara om den står på
+   30 % av sidorna tas också bort; samma mening mitt på många sidor är avtalstext. En tabell utan
+   kolumner som innehåller numrerade rader delas till text, så att rubrikerna i den hittas. Ett sidhuvud eller en sidfot enligt layoutmodellen tas bort bara om den står på
    mer än en sida eller innehåller ett sidnummer. Modellen kallar ibland första raden på en sida
    för sidhuvud fast den är avtalstext, och den texten får inte försvinna.
 6. **Frågor och svar delas per fråga** (`12 Publik fråga` eller `Publik fråga 12`, `Privat fråga`,
    `Publikt informationsmeddelande`), aldrig vid nummer. Frågorna citerar upphandlingens rubriker
    (`5.6.3.1 Kvalitetsledningssystem`), som annars skulle bli avsnitt.
-   **Dokument utan numrering** delas vid Doclings rubriker utan nummer. Ett dokument utan rubriker
-   blir ett enda avsnitt. I Word läggs omärkta delar på högsta nivån till efter de numrerade
+   **Dokument utan numrering** delas vid Doclings rubriker utan nummer. Docling ger inga
+   rubriknivåer i en PDF, så rubriker som innehållsförteckningen listar får nivå 1 och de andra
+   nivå 2. Ett dokument utan rubriker blir ett enda avsnitt. I Word läggs omärkta delar på högsta nivån till efter de numrerade
    avsnitten (t.ex. "Instruktion till Personuppgiftsbiträdesavtalet" efter "16 Tvistelösning").
 7. **Föräldra–barn.** Avsnittet är det agenten läser och citerar. Ett avsnitt längre än 1 500 tecken
    delas i bitar mellan stycken (och mellan meningar i mycket långa stycken). Bitarna är det som
@@ -81,15 +88,22 @@ Det som avgör valet:
 ## Konsekvenser
 
 - Samma fil ger alltid samma avsnitt och samma kontextrubriker, så resultatet kan granskas och
-  testas. Kommandot `outline` skriver ut innehållsförteckningen för en fil.
+  testas. Kommandot `outline` skriver ut innehållsförteckningen för en fil, och `chunk`
+  rapporterar varje fil där dokumentets egen innehållsförteckning listar ett nummer som inte
+  blev ett avsnitt. Alla 103 filer med egen förteckning (77 PDF och 26 Word) klarar kontrollen.
 - PyTorch för CPU tar ungefär 1 GB. Modellerna laddas ner från Hugging Face första gången. CI
   sparar dem i en cache och kräver att PDF-testerna körs. Miljön måste nå `download.pytorch.org`
   (och `download-r2.pytorch.org`, där paketen ligger) och Hugging Face filservrar (`*.hf.co`).
 - Text i skannade sidor och i bilder saknas tills OCR finns.
+- Doclings läsordning och tabellmodell gör ibland fel (marginaletiketter, försättsblad, en
+  rubrik i en mall, tabeller med sammanslagna celler). Felen och var de finns står i
+  `docs/steg/03-tolkning.md`. Uppgifter ur tabeller bör kontrolleras mot källan (M6).
 - Docling ersätter typografiska citattecken och tankstreck med raka tecken (`”` blir `"`).
   Citatkontrollen behöver därför jämföra texten normaliserad på båda sidor.
 - Tillägg som märker sina punkter med bokstäver (A, B, C) delas inte per punkt, eftersom bara
   siffernummer är kandidater.
+- I tabellceller kan en listmarkör hamna efter sin punkt (`Tillhandahålls över internet; a.`).
+  Texten finns kvar, men markören står på fel plats.
 - Numrerade rubriker med nummer som citeras från ett annat dokument (t.ex. kravnummer i en
   redovisningsmall) blir avsnitt om de följer ordningen och annars en del av texten.
 - Bitarnas storlek (1 500 tecken) är en startpunkt. Den mäts på den svenska testsamlingen i M5.
@@ -104,7 +118,7 @@ Det som avgör valet:
   kontrollen av textlagret och för tabeller utan celler.
 - **Rubriker med reguljära uttryck rad för rad.** Testat på textlagret: numrerade listor,
   innehållsförteckningar och omstarter gav falska avsnitt och tappade riktiga. Kedjan i beslut 4
-  stämmer med dokumentens egen innehållsförteckning i 76 av 80 PDF:er som har en.
+  stämmer med dokumentets egen innehållsförteckning i alla 103 filer som har en.
 - **En språkmodell som hittar strukturen.** Kostar pengar per dokument, ger inte samma svar varje
   gång och numren skulle ändå behöva kontrolleras mot texten.
 - **Bitar med fast längd över hela dokumentet.** Planen kräver uppdelning per numrerat avsnitt,

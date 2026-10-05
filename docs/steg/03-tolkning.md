@@ -7,14 +7,49 @@ inläsningens workflow. M4 läser avtalsnummer, organisationsnummer och hänvisn
 **Klart när:** varje dokument i urvalet har en korrekt innehållsförteckning och avsnittsnumren
 stämmer vid stickprov. Det finns tester med fixtur-PDF:er.
 
-> **Läge (2026-10-05):** koden och testerna är klara. Körningen med Docling på alla 207 filer
-> återstår. Den kräver att miljön når PyTorchs paketindex och Hugging Face filservrar (se
-> [ADR 0008](../adr/0008-tolkning-och-uppdelning.md)). Siffrorna nedan kommer från PDF:ernas
-> textlager och ersätts med Doclings när körningen är gjord.
+## Resultat
 
-## Resultat hittills
+Körningen 2026-10-05 på alla 207 filer i urvalet: 176 PDF med 3 924 sidor och 31 Word-filer.
+Docling 2.133 läste PDF:erna på processorn på ungefär två timmar med fyra kärnor. En omkörning
+läser bara nya filer och filer som en äldre parserversion läst.
 
-**Textlagret.** 37 av 3 924 PDF-sidor (0,9 %) är skannade bilder utan text. De finns i fyra filer:
+| Hur avsnitten hittades | PDF | Word | Avsnitt |
+|---|---|---|---|
+| Numrerade rubriker | 136 | 30 | 9 978 |
+| Frågor och svar, en fråga per avsnitt | 13 | | 1 474 |
+| Doclings rubriker utan nummer | 25 | | 1 730 |
+| Inga rubriker: hela filen ett avsnitt, eller inget alls i en skannad fil | 2 | 1 | 1 |
+
+Det blev 13 183 avsnitt och 13 986 bitar. Ett avsnitt är i mitten 510 tecken långt och en bit
+högst 1 500. Dokumenten med rubriker utan nummer är främst Microsofts och IBM:s villkor,
+prisbilagor och blanketter. Microsofts produktvillkor (222 sidor, 1 505 avsnitt) får nivåer ur sin
+innehållsförteckning, så `Användningsrättigheter` hamnar under sin produkt.
+
+**Kontrollerna på hela urvalet:**
+
+| Kontroll | Resultat |
+|---|---|
+| Varje nummer i dokumentets egen innehållsförteckning är ett avsnitt (`chunk` gör kontrollen) | 103 av 103 filer med förteckning (77 PDF, 26 Word) |
+| Varje fråga i en fråge- och svarslogg är ett eget avsnitt | 1 462 av 1 463 frågor |
+| Raderna i PDF:ernas textlager (minst 25 tecken) finns i avsnitten | 99,5 % av 119 159 rader |
+
+Den fråga som saknas (fråga 29 i en logg) har sitt nummer i ett sidhuvud som layoutmodellen
+slagit ihop med annan text. Av de 582 rader som inte hittas är 500 sidfötter med adresser,
+sidnummer, TendSigns symbolförklaring på första sidan och kontaktuppgifter på försättsblad. Resten
+är nästan alltid samma ord i en annan ordning eller uppdelning. Bara ett värde saknas helt: en
+cell i en pristabell (se Kända begränsningar).
+
+**Stickprov.** Granskare jämförde avsnitten med PDF:erna i två omgångar, en granskare per
+dokument: först 18 dokument, sedan 8 igen (de som hade fel och tre nya). Varje granskare jämförde
+avsnitten med dokumentets innehållsförteckning och rubrikerna i textlagret, och minst sex avsnitts
+text ord för ord. Felen från första omgången rättades i parsern och i steg 3. I andra omgången
+hade fyra dokument bara små fel. Fyra hade fel i avsnitten: i villkoren för IT-drift saknades
+6.21 Avtalsbrott och påföljder med 17 underavsnitt, en prislista togs bort som om den var en
+innehållsförteckning, 4.1–4.4 saknades i en vägledning och Microsofts produktvillkor hade alla
+rubriker på samma nivå. De fyra är rättade och har tester. Kvar är 2.2.2 i en mall för
+hållbarhetskrav, där Docling läser rubriken efter nästa avsnitt (se nedan).
+
+**Skannade sidor.** 37 av 3 924 PDF-sidor (0,9 %) är bilder utan text. De finns i fyra filer:
 
 | Fil | Sidor utan text |
 |---|---|
@@ -26,25 +61,31 @@ stämmer vid stickprov. Det finns tester med fixtur-PDF:er.
 Ingen OCR-tjänst byggs nu (M3b), eftersom andelen är liten. Men två av filerna är avtalstext som
 agenten inte kan läsa förrän OCR finns. Om det räcker är Simons beslut.
 
-**Avsnitten på textlagret** (alla 207 filer, utan Docling):
+**Kända begränsningar:**
 
-| Hur avsnitten hittades | Filer |
-|---|---|
-| Numrerade rubriker | 169 |
-| Frågor och svar, en fråga per avsnitt | 13 |
-| Inga rubriker, hela dokumentet ett avsnitt | 25 |
+- Docling ersätter typografiska citattecken och tankstreck med raka tecken (`”` blir `"`), så
+  citatkontrollen i M6 måste jämföra normaliserad text.
+- TendSigns etiketter i marginalen (`Generella krav`, `Kravspecifikati...`, `European Sing...`)
+  hamnar ibland i nästa stycke, någon gång mitt i en mening (`anges i Kontorstjänster samband
+  med Avropet`). Inga ord försvinner, men ett citat över den platsen stämmer inte ordagrant.
+- Doclings läsordning är ibland fel. Ett stycke som fortsätter på nästa sida blir två stycken,
+  försättsblad med två spalter läses spalt för spalt, och i mallen för hållbarhetskrav inom
+  IT-säkerhet läses rubriken 2.2.2 efter avsnitt 2.3.1. Där blir 2.2.2 inget avsnitt, och dess
+  text hamnar i 2.2.1 och 2.3.1.
+- I dokument utan nummer bestämmer layoutmodellen vad som är en rubrik. I Microsofts
+  produktvillkor saknas 3 av ungefär 1 480 rubriker, och ett tiotal tabellceller blir rubriker.
+- Tabellmodellen kan göra fel. I en pristabell för Informationsförsörjning saknas den sista
+  cellen (`999 kr` för Redpill Linpro), i vägledningen för Programvaror och tjänster läses en
+  prislista utan tabellinjer som en tabell där leverantörsnamnen hamnar på fel rad, och i
+  Microsofts produktvillkor blandas raderna i tabeller med sammanslagna celler (s. 94 och 131).
+  Uppgifter ur tabeller bör därför kontrolleras mot källan innan agenten använder dem (M6).
+- Tillägg som märker sina punkter med bokstäver (A–G) delas inte per punkt, och i tabellceller
+  kan en listmarkör stå efter sin punkt (`Tillhandahålls över internet; a.`).
 
-Det blev 11 442 avsnitt och 12 800 bitar. 80 PDF:er har en egen innehållsförteckning, och i 76 av
-dem hittades exakt de numrerade rubriker som förteckningen listar. De 25 dokumenten utan avsnitt är
-prisbilagor, checklistor, kartor, korta leverantörsbilagor och Microsofts produktvillkor, som
-saknar numrerade rubriker. Med Docling delas de vid rubrikerna som layoutmodellen hittar.
-
-**Genomgången av dokumenten.** Alla 207 filer lästes igenom för att se hur de numrerar sina
-avsnitt och vad som ser ut som en rubrik utan att vara det. Det finns sex sätt att numrera
-(TendSign, Kammarkollegiets Word-mallar, Microsofts och IBM:s villkor, bokstavsmärkta tillägg,
-frågor och svar, och dokument utan nummer). De svåra raderna från genomgången finns som tester.
-
----
+Genomgången av dokumenten före bygget (alla 207 filer, för att se hur de numrerar sina avsnitt
+och vad som ser ut som en rubrik utan att vara det) gav sex sätt att numrera: TendSign,
+Kammarkollegiets Word-mallar, Microsofts och IBM:s villkor, bokstavsmärkta tillägg, frågor och
+svar, och dokument utan nummer. De svåra raderna finns som tester.
 
 ## Flödet
 
@@ -97,7 +138,8 @@ Allt annat i inläsningen ser bara block, så parsern kan bytas utan att resten 
     (`Accepterar anbudsgivaren villkoren? Ja/Nej. Ja krävs`) som grafik.
   - En tabells fotnoter behålls (`*Aktuell omfattning beskrivs i granskningsrapporten …`).
 - **Word:** Doclings Word-läsare behöver ingen modell. Den behåller rubriknivåerna (Rubrik 1, 2,
-  …) och rubriknumren. Word-filens egna sidhuvuden och sidfötter blir sidhuvuden.
+  …) och räknar fram rubriknumren (steg 3 rättar dem när de skiljer sig från Words egna).
+  Word-filens egna sidhuvuden och sidfötter blir sidhuvuden.
 - Blocken i en tabells celler läggs inte till en gång till, och en listpunkt får sin markör
   (`1.`, `a)`) före texten.
 
@@ -119,7 +161,9 @@ också med siffror. En regel per rad räcker inte, så rubrikerna väljs som en 
 
 1. **Innehållsförteckningen hittas:** block som Docling kallar innehållsförteckning, rader med
    punktlinje eller tabb före sidnumret, och rader som slutar med ett sidnummer och står bland
-   andra sådana rader. Numren i förteckningen ger bonus, eftersom de nästan säkert är rubriker.
+   andra sådana rader. Sidnumret måste peka framåt: `1. Lösningsarkitekt, kompetensnivå 4` på
+   sidan 11 är en lista, inte en rad för sidan 4. Numren i förteckningen ger bonus, eftersom de
+   nästan säkert är rubriker.
 2. **Kandidater:** varje block som börjar med ett nummer följt av en titel. Titeln ska börja med
    stor bokstav, ha minst två bokstäver och inte sluta med komma eller semikolon. Ingen del av
    numret får vara 0 eller över 200. Står numret ensamt på sin rad tas titeln från nästa block.
@@ -131,6 +175,11 @@ också med siffror. En regel per rad räcker inte, så rubrikerna väljs som en 
    börjar på 1, utom när numret står i dokumentets innehållsförteckning: en mall med strukna
    avsnitt kan gå från `1.3` till `2.4`. Numreringen får inte börja om, eftersom en omstart
    nästan alltid är en numrerad lista.
+5. **Innehållsförteckningen väger tyngst.** Nummer som citeras från ett annat dokument kan ge
+   fler poäng än en riktig rubrik: efter `5 Tekniska krav` citerar en sammanställning kraven
+   `4.6.1`–`4.6.6` ur kravspecifikationen, och kedjan `4, 4.6.1 … 4.6.6, 6` har fler rubriker än
+   `4, 5, 6`. Saknar den bästa kedjan nummer som förteckningen listar väljs kedjan igen, nu med
+   så många listade nummer som möjligt och först därefter högst poäng.
 
 En numrerad lista inuti ett avsnitt förlorar alltså mot de riktiga rubrikerna: den börjar om på 1,
 och dess nummer passar inte in i kedjan.
@@ -145,7 +194,11 @@ och dess nummer passar inte in i kedjan.
    som bara står på en sida behålls som text, eftersom layoutmodellen ibland kallar första raden
    på en sida för sidhuvud fast den är avtalstext. En listmarkör som layoutmodellen lagt sist
    (`Säkerhetsskyddsavtal 2.`, `…; a.`, `… ·`) flyttas först när markörerna i följd är 1, 2, 3
-   eller a, b, c.
+   eller a, b, c. Det gäller listpunkter och rubriker (`Miljöpolicy 2.`), men inte vanlig text,
+   eftersom meningar också kan sluta med nummer i följd (`… i steg 1.` och sedan `… i detta
+   steg 2.`). En tabell utan kolumner som innehåller numrerade rader delas till text vid de
+   raderna. Layoutmodellen kallade början av 6.21 Avtalsbrott och påföljder i villkoren för
+   IT-drift en tabell, och utan den regeln försvann 6.21 och alla dess underavsnitt.
 2. `split_sections` väljer hur dokumentet delas:
    - **Frågor och svar** från TendSign delas per fråga (`12 Publik fråga` i textlagret,
      `Publik fråga 12` i Doclings läsordning). Frågorna citerar upphandlingens rubriker, så
@@ -154,13 +207,24 @@ och dess nummer passar inte in i kedjan.
      texten, och om de inte mest är listpunkter i ett dokument med många fler rubriker utan
      nummer (Microsofts produktvillkor). Word-delar utan nummer på högsta nivån läggs till
      (t.ex. "Instruktion till Personuppgiftsbiträdesavtalet" efter "16 Tvistelösning").
+   - **Word-filens egna nummer.** En Word-fil sparar listdefinitioner, inte nummer. Word räknar
+     fram numren den visar, och innehållsförteckningen görs av dem. Docling räknar själv och kan
+     hamna fel: i avropsförfrågan för IT-drift ärver rubriken `Innehåll` numreringen från
+     Rubrik 1, så Word visar `1 Innehåll` och `2 Administrativa uppgifter` medan Docling börjar
+     rubrikerna på 1. När förteckningen listar exakt samma rubriker i samma ordning används dess
+     nummer, också i rubrikraden i texten. En förteckning som inte är uppdaterad stämmer inte
+     och används inte.
    - **Nummer som är bilder.** Kammarkollegiets vägledningar från 2025 skriver andra nivåns nummer
      som bilder, så `2.1 Avropsberättigade` är `Avropsberättigade` både i innehållsförteckningen
      och i texten. Numren räknas fram ur förteckningens ordning: raderna mellan `2 IT-konsulttjänster`
-     och `2.5.1 Delområden` slutar med 2.5 och räknas bakåt (2.1–2.5). Det görs bara när numren
+     och `2.5.1 Delområden` slutar med 2.5 och räknas bakåt (2.1–2.5). Före x.1 kommer x, så
+     när också kapitelnumret saknas blir raderna före `4.4.1` 4, 4.1–4.4. Det görs bara när numren
      passar utan lucka mellan grannarna före och efter.
    - **Doclings rubriker utan nummer** används annars, och utan rubriker blir dokumentet ett
-     avsnitt.
+     avsnitt. Docling ger inga rubriknivåer i en PDF. Listar dokumentets innehållsförteckning
+     rubrikerna (minst hälften av raderna är rubriker i texten) får de listade nivå 1 och
+     rubrikerna efter dem nivå 2, så `Användningsrättigheter` i Microsofts produktvillkor får
+     rubrikstigen `System Center Server › Användningsrättigheter`.
 
    Text före första rubriken blir ett eget avsnitt på nivå 0. Varje avsnitt får förälder och
    rubrikstig (`6 Allmänna villkor › 6.21 Avtalsbrott och påföljder › 6.21.1 Ansvar vid
@@ -188,17 +252,19 @@ Steg 3 ersätter alla avsnitt i en transaktion, så tabellerna alltid motsvarar 
 ### 7. `ingestion/__main__.py` – kommandona
 
 `parse` tolkar alla hämtade filer och rapporterar sidor utan textlager. `chunk` delar upp de
-tolkade filerna och sparar dem. `outline` listar filerna, eller skriver ut en fils
-innehållsförteckning med sidor, så att den kan jämföras med PDF:en.
+tolkade filerna, sparar dem och kontrollerar varje fil som har en egen innehållsförteckning:
+varje nummer som förteckningen listar ska vara ett avsnitt (`contents_missing` i steg 3). Det är
+M3:s mål som en kontroll som vem som helst kan köra. `outline` listar filerna, eller skriver ut
+en fils innehållsförteckning med sidor, så att den kan jämföras med PDF:en.
 
 ## Tester
 
 | Fil | Vad den visar |
 |---|---|
-| `tests/unit/ingestion/test_headings.py` | Rubriker och falska rubriker med rader från dokumenten: listor, klockslag, sidfötter med diarienummer, versionstabeller, sidnummer; kedjan med listor inuti avsnitt, start på kapitel 6 och saknade nivåer |
-| `tests/unit/ingestion/test_step3_chunk.py` | Rensning av sidhuvuden och innehållsförteckning, frågor och svar, avsnitt med nivå, förälder och rubrikstig, uppdelning i bitar, kontextrubriker |
+| `tests/unit/ingestion/test_headings.py` | Rubriker och falska rubriker med rader från dokumenten: listor, klockslag, sidfötter med diarienummer, versionstabeller, sidnummer; kedjan med listor inuti avsnitt, start på kapitel 6, saknade nivåer, strukna avsnitt och citerade kravnummer; innehållsförteckningens rader (och listor som ser ut som rader) och nummer som räknas fram ur den |
+| `tests/unit/ingestion/test_step3_chunk.py` | Rensning av sidhuvuden och innehållsförteckning (och att text mitt på sidorna och sidhuvuden på en enda sida behålls), listnummer som flyttas först (också på rubriker), rubriker i en tabell utan kolumner, frågor och svar i båda formerna, avsnitt med nivå, förälder och rubrikstig, rubriker över två block, nummer som bilder, nivåer ur innehållsförteckningen, Word-filens egna nummer, kontrollen mot innehållsförteckningen, uppdelning i bitar, kontextrubriker |
 | `tests/unit/ingestion/test_step2_parse.py` | En PDF med en skannad sida (gjord med reportlab), sparade resultat, ny parserversion, fel som inte sparas |
-| `tests/unit/ingestion/test_docling_parser.py` | Word: rubriker med nivåer, tabell, listpunkt. PDF: text och sidor ur textlagret, sidnummer som sidfot, en pristabell med celler. PDF-testerna kräver modellerna och måste köras i CI |
+| `tests/unit/ingestion/test_docling_parser.py` | Word: rubriker med nivåer, tabell, listpunkt, sidhuvuden. PDF: text och sidor ur textlagret, sidnummer som sidfot, en pristabell med celler. Rättelserna i parsern: bindestreck vid radbrytning, text i bildrutor, celler med samma text och tabellens fotnot. PDF-testerna kräver modellerna och måste köras i CI |
 | `tests/integration/test_section_store.py` | Filer och länkar mot riktig Postgres, och att en ny körning ersätter avsnitten |
 
 ## Så verifierar du M3 själv
