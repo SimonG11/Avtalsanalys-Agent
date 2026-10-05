@@ -31,9 +31,13 @@ Det som avgör valet:
    installeras). Layoutmodellen Heron hittar rubriker, listor, tabeller, sidhuvuden och sidfötter
    och ger texten i läsordning. Tabellmodellen TableFormer delar tabellerna i celler, så en
    prisrad blir `Konsult nivå 3 | 1 150 kr`. OCR är avstängd (beslut 2). All text kommer ur PDF:ens
-   textlager, så citaten blir exakta. Får en tabell inga celler läses texten i tabellens ruta ur
-   textlagret, en rad per tabellrad. Word läses av Doclings Word-läsare, som behåller
-   rubriknivåer och rubriknummer utan modell. Simon valde Docling med PyTorch 2026-10-05.
+   textlager. Får en tabell inga celler läses texten i tabellens ruta ur textlagret, en rad per
+   tabellrad. Word läses av Doclings Word-läsare, som behåller rubriknivåer och rubriknummer utan
+   modell. Simon valde Docling med PyTorch 2026-10-05.
+   Stickprov mot textlagret visade att Docling tappar eller ändrar text på tre sätt, som rättas
+   i parsern: ett bindestreck i slutet av en rad behålls (Docling gjorde `2025-08-19` till
+   `202508-19` och `1-4` till `14`), text i rutor som layoutmodellen kallar bilder läses
+   (TendSigns frågerutor) och tabellers fotnoter behålls.
 2. **Steg 2 kontrollerar varje sida.** En sida med färre än 50 tecken där bilder täcker minst halva
    sidan räknas som skannad och markeras `needs_ocr`. Den rapporteras i varje körning och lagras i
    `parsed_file.pages_needing_ocr`. Ingen OCR-tjänst byggs nu (M3b), eftersom andelen är under 1 %.
@@ -50,9 +54,11 @@ Det som avgör valet:
    står i innehållsförteckningen (en mall med strukna avsnitt går från 1.3 till 2.4). Numreringen
    får inte börja om på 1, eftersom en omstart i de här dokumenten nästan alltid är en numrerad
    lista. Innehållsförteckningens nummer läses innan förteckningen tas bort (beslut 5).
+   Nummer som dokumentet skriver som bilder räknas fram ur innehållsförteckningens ordning, men
+   bara när de passar utan lucka mellan de numrerade grannarna.
 5. **Innehållsförteckningen tas bort** innan avsnitten byggs. Den upprepar rubrikerna och skulle
-   annars hittas av sökningar. Sidnummer och rader som återkommer på minst 30 % av sidorna tas
-   också bort. Ett sidhuvud eller en sidfot enligt layoutmodellen tas bort bara om den står på
+   annars hittas av sökningar. Sidnummer och rader som återkommer överst eller nederst på minst
+   30 % av sidorna tas också bort; samma mening mitt på många sidor är avtalstext. Ett sidhuvud eller en sidfot enligt layoutmodellen tas bort bara om den står på
    mer än en sida eller innehåller ett sidnummer. Modellen kallar ibland första raden på en sida
    för sidhuvud fast den är avtalstext, och den texten får inte försvinna.
 6. **Frågor och svar delas per fråga** (`12 Publik fråga` eller `Publik fråga 12`, `Privat fråga`,
@@ -80,6 +86,10 @@ Det som avgör valet:
   sparar dem i en cache och kräver att PDF-testerna körs. Miljön måste nå `download.pytorch.org`
   (och `download-r2.pytorch.org`, där paketen ligger) och Hugging Face filservrar (`*.hf.co`).
 - Text i skannade sidor och i bilder saknas tills OCR finns.
+- Docling ersätter typografiska citattecken och tankstreck med raka tecken (`”` blir `"`).
+  Citatkontrollen behöver därför jämföra texten normaliserad på båda sidor.
+- Tillägg som märker sina punkter med bokstäver (A, B, C) delas inte per punkt, eftersom bara
+  siffernummer är kandidater.
 - Numrerade rubriker med nummer som citeras från ett annat dokument (t.ex. kravnummer i en
   redovisningsmall) blir avsnitt om de följer ordningen och annars en del av texten.
 - Bitarnas storlek (1 500 tecken) är en startpunkt. Den mäts på den svenska testsamlingen i M5.

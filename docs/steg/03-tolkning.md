@@ -87,10 +87,17 @@ Allt annat i inläsningen ser bara block, så parsern kan bytas utan att resten 
 `docling_parser.py` läser PDF och Word med Docling:
 
 - **PDF:** layoutmodellen hittar rubriker, listor, tabeller, sidhuvuden och sidfötter. Texten
-  kommer ur PDF:ens textlager, så den är exakt. OCR är avstängd. En tabell blir en rad per
-  tabellrad med cellerna åtskilda av ` | `.
+  kommer ur PDF:ens textlager. OCR är avstängd. En tabell blir en rad per tabellrad med cellerna
+  åtskilda av ` | `. Tomma celler behålls, så att varje värde står i sin kolumn (`Ja |  | Ja`).
+- **Tre ändringar mot Doclings standard**, alla hittade vid stickproven:
+  - Ett bindestreck i slutet av en rad behålls. Docling tar bort det för att laga avstavade ord,
+    men i avtalen är det nästan alltid en del av texten: `2025-` + `08-19` blev `202508-19` och
+    `nivå 1-` + `4` blev `14`. Det görs i en liten underklass till Doclings PDF-flöde.
+  - Text i en ruta som layoutmodellen kallar bild läses också. TendSign ritar sina frågerutor
+    (`Accepterar anbudsgivaren villkoren? Ja/Nej. Ja krävs`) som grafik.
+  - En tabells fotnoter behålls (`*Aktuell omfattning beskrivs i granskningsrapporten …`).
 - **Word:** Doclings Word-läsare behöver ingen modell. Den behåller rubriknivåerna (Rubrik 1, 2,
-  …) och rubriknumren.
+  …) och rubriknumren. Word-filens egna sidhuvuden och sidfötter blir sidhuvuden.
 - Blocken i en tabells celler läggs inte till en gång till, och en listpunkt får sin markör
   (`1.`, `a)`) före texten.
 
@@ -131,23 +138,35 @@ och dess nummer passar inte in i kedjan.
 ### 5. `ingestion/step3_chunk.py` – steg 3
 
 1. `clean_blocks` tar bort sidnummer (`Sida 2/30`, `Sid 2 (7)`, `Utskrivet: … Sida 5 av 111`),
-   rader som återkommer på minst 30 % av sidorna och innehållsförteckningen. Sidhuvuden och
+   innehållsförteckningen med sin rubrik (`Innehåll`) och rader som återkommer överst eller
+   nederst på minst 30 % av sidorna. En mening som återkommer mitt på sidorna (`I denna tjänst
+   kan nedan arbetsuppgifter förekomma:` i varje roll) är avtalstext och behålls. Sidhuvuden och
    sidfötter tas bort om de står på mer än en sida eller innehåller ett sidnummer. Ett sidhuvud
    som bara står på en sida behålls som text, eftersom layoutmodellen ibland kallar första raden
-   på en sida för sidhuvud fast den är avtalstext.
+   på en sida för sidhuvud fast den är avtalstext. En listmarkör som layoutmodellen lagt sist
+   (`Säkerhetsskyddsavtal 2.`, `…; a.`, `… ·`) flyttas först när markörerna i följd är 1, 2, 3
+   eller a, b, c.
 2. `split_sections` väljer hur dokumentet delas:
    - **Frågor och svar** från TendSign delas per fråga (`12 Publik fråga` i textlagret,
      `Publik fråga 12` i Doclings läsordning). Frågorna citerar upphandlingens rubriker, så
      numren används inte.
    - **Numrerade rubriker** används om det finns minst två och den första kommer före halva
-     texten. Word-delar utan nummer på högsta nivån läggs till (t.ex. "Instruktion till
-     Personuppgiftsbiträdesavtalet" efter "16 Tvistelösning").
+     texten, och om de inte mest är listpunkter i ett dokument med många fler rubriker utan
+     nummer (Microsofts produktvillkor). Word-delar utan nummer på högsta nivån läggs till
+     (t.ex. "Instruktion till Personuppgiftsbiträdesavtalet" efter "16 Tvistelösning").
+   - **Nummer som är bilder.** Kammarkollegiets vägledningar från 2025 skriver andra nivåns nummer
+     som bilder, så `2.1 Avropsberättigade` är `Avropsberättigade` både i innehållsförteckningen
+     och i texten. Numren räknas fram ur förteckningens ordning: raderna mellan `2 IT-konsulttjänster`
+     och `2.5.1 Delområden` slutar med 2.5 och räknas bakåt (2.1–2.5). Det görs bara när numren
+     passar utan lucka mellan grannarna före och efter.
    - **Doclings rubriker utan nummer** används annars, och utan rubriker blir dokumentet ett
      avsnitt.
 
    Text före första rubriken blir ett eget avsnitt på nivå 0. Varje avsnitt får förälder och
    rubrikstig (`6 Allmänna villkor › 6.21 Avtalsbrott och påföljder › 6.21.1 Ansvar vid
-   Försening`).
+   Försening`). Föräldern till ett numrerat avsnitt har ett nummer som avsnittets nummer börjar
+   med, så 2.4 hamnar inte under 1 när 2 saknas. En rubrik som layoutmodellen delat i två block
+   (`5.4.1.4 Terroristbrott eller brott med anknytning till` + `terroristverksamhet`) slås ihop.
 3. `chunk_sections` delar ett avsnitt längre än 1 500 tecken mellan stycken, och ett mycket långt
    stycke mellan meningar. Ett avsnitt som bara är en kort rubrik får ingen bit, eftersom dess
    text finns i underavsnitten.
