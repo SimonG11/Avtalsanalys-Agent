@@ -1,9 +1,11 @@
 """Database tables, defined with SQLAlchemy 2.
 
 What:
-    The register tables built from the Excel master list: list version,
+    The register tables built from the Excel master list (M1): list version,
     procurement, supplier, supplier name, agreement, sub-area and the link
-    between agreements and sub-areas. Later milestones add document tables.
+    between agreements and sub-areas. The document tables (M2): the agreement
+    pages on avropa.se, the files downloaded from them and which page links to
+    which file.
 
 Why:
     The Excel list has one row per supplier and sub-area. Splitting it into
@@ -21,7 +23,17 @@ How:
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    ARRAY,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -113,3 +125,47 @@ class AgreementSubArea(Base):
     valid_from: Mapped[date] = mapped_column(Date)
     valid_to: Mapped[date] = mapped_column(Date)
     max_extension_to: Mapped[date | None] = mapped_column(Date)
+
+
+class AgreementPage(Base):
+    """A framework-agreement page on avropa.se, as last read."""
+
+    __tablename__ = "agreement_page"
+
+    url: Mapped[str] = mapped_column(Text, primary_key=True)
+    title: Mapped[str] = mapped_column(Text)
+    # From "Ramavtalsnummer" and the supplier cards; same numbers as procurement.
+    procurement_numbers: Mapped[list[str]] = mapped_column(ARRAY(String(32)))
+    agreement_period: Mapped[str | None] = mapped_column(Text)  # as written on the page
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SourceDocument(Base):
+    """A file downloaded from avropa.se, stored on disk under its SHA-256 hash."""
+
+    __tablename__ = "source_document"
+
+    url: Mapped[str] = mapped_column(Text, primary_key=True)  # without "?v=..."
+    version: Mapped[str | None] = mapped_column(String(32))  # the "?v=..." value
+    etag: Mapped[str | None] = mapped_column(Text)  # for links without a version
+    file_type: Mapped[str] = mapped_column(String(8))
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    local_path: Mapped[str] = mapped_column(Text)  # relative to the data directory
+    downloaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class AgreementPageDocument(Base):
+    """A link from a page to a document, with how the page lists it."""
+
+    __tablename__ = "agreement_page_document"
+
+    page_url: Mapped[str] = mapped_column(ForeignKey("agreement_page.url"), primary_key=True)
+    document_url: Mapped[str] = mapped_column(ForeignKey("source_document.url"), primary_key=True)
+    title: Mapped[str] = mapped_column(Text)  # the link text
+    category: Mapped[str | None] = mapped_column(Text)  # e.g. "Avtal"
+    # Set for a document in a supplier's card, e.g. "23.3-5834-2022-018".
+    agreement_number: Mapped[str | None] = mapped_column(String(40), index=True)
+    site_updated: Mapped[date | None] = mapped_column(Date)  # "Senast uppdaterad"

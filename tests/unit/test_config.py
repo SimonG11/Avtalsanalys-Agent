@@ -27,6 +27,10 @@ ENV_VARS = (
     "LOG_LEVEL",
     "REGISTER_EXCEL_URL",
     "DATA_DIR",
+    "AGREEMENT_INDEX_URL",
+    "FETCH_AREAS",
+    "FETCH_FILE_TYPES",
+    "FETCH_DELAY_SECONDS",
 )
 
 
@@ -56,6 +60,12 @@ def test_values_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert str(settings.database_url) == "postgresql://u:p@db:5432/other"
     assert settings.agent_model == "gpt-6-astra"
+
+
+def test_fetch_areas_are_read_as_a_json_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FETCH_AREAS", '["IT-drift", "Möbler och inredning"]')
+
+    assert Settings(_env_file=None).fetch_areas == ["IT-drift", "Möbler och inredning"]
 
 
 def test_empty_value_counts_as_not_set(monkeypatch: pytest.MonkeyPatch) -> None:

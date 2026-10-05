@@ -52,8 +52,24 @@ class Settings(BaseSettings):
 
     # Where the Excel master list "Alla giltiga ramavtal" is published (M1).
     register_excel_url: str = "https://www.avropa.se/giltigaramavtal/excel"
-    # Downloaded files (Excel, later PDFs). Not committed to git.
+    # Downloaded files (Excel, PDFs). Not committed to git.
     data_dir: Path = Path("data")
+
+    # Fetching agreement documents from avropa.se (M2).
+    # The A-Ö index that links to every framework-agreement page.
+    agreement_index_url: str = "https://www.avropa.se/ramavtal/ramavtal-a-o/"
+    # Framework areas to fetch, named as in the register's "Ramavtalsområde".
+    # Start small so the whole chain works before scaling up (plan, M2).
+    fetch_areas: list[str] = [
+        "IT-drift",
+        "Bemanningstjänster",
+        "IT-konsulttjänster Resurskonsulter",
+        "Programvaror och tjänster",
+    ]
+    # File types to download. Docling (M3) reads both; price lists in xlsx are skipped.
+    fetch_file_types: list[str] = ["pdf", "docx"]
+    # Pause between requests, so the site is not loaded more than a person browsing.
+    fetch_delay_seconds: float = 0.5
 
     log_level: str = "INFO"
 
