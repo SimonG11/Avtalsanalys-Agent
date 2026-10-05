@@ -12,13 +12,13 @@ Why:
     the text in reading order, which plain text extraction does not.
 
 How:
-    PDFs: Docling's standard pipeline with the Heron layout model run through
-    ONNX Runtime on the CPU, so PyTorch is not needed. OCR is off (step 2
-    reports pages without a text layer instead) and the table-structure model
-    is off, since it needs PyTorch. A table without structure has no cells in
-    Docling, so its text is read from the PDF's text layer inside the table's
-    box, one line per row. Word files: Docling's Word reader, which needs no
-    model and keeps heading levels and heading numbers. See ADR 0008.
+    PDFs: Docling's standard pipeline on the CPU, with the Heron layout model
+    and the TableFormer table model. OCR is off (step 2 reports pages without
+    a text layer instead). The text of every block, table cells included,
+    comes from the PDF's text layer. A table that gets no cells is read from
+    the text layer inside the table's box, one line per row. Word files:
+    Docling's Word reader, which needs no model and keeps heading levels and
+    heading numbers. See ADR 0008.
 """
 
 from importlib.metadata import version
@@ -26,9 +26,6 @@ from pathlib import Path
 
 import pypdfium2 as pdfium
 from docling.datamodel.base_models import ConversionStatus, InputFormat
-from docling.datamodel.object_detection_engine_options import (
-    OnnxRuntimeObjectDetectionEngineOptions,
-)
 from docling.datamodel.pipeline_options import LayoutObjectDetectionOptions, PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import (
@@ -76,16 +73,14 @@ class DoclingParser:
     """A `DocumentParser` for PDF and Word files."""
 
     def __init__(self) -> None:
-        layout = LayoutObjectDetectionOptions.from_preset(LAYOUT_PRESET)
-        layout.engine_options = OnnxRuntimeObjectDetectionEngineOptions()
-        pdf_options = PdfPipelineOptions(do_ocr=False, do_table_structure=False)
-        pdf_options.layout_options = layout
+        pdf_options = PdfPipelineOptions(do_ocr=False, do_table_structure=True)
+        pdf_options.layout_options = LayoutObjectDetectionOptions.from_preset(LAYOUT_PRESET)
         self._converter = DocumentConverter(
             allowed_formats=[InputFormat.PDF, InputFormat.DOCX],
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)},
         )
         self._name = (
-            f"docling {version('docling-slim')} ({LAYOUT_PRESET}, onnx, no ocr), "
+            f"docling {version('docling-slim')} ({LAYOUT_PRESET}, tableformer, no ocr), "
             f"blocks v{BLOCK_MAPPING_VERSION}"
         )
 
@@ -160,7 +155,7 @@ def _table_text(table: TableItem, document: DoclingDocument, pdf: pdfium.PdfDocu
         return "\n".join(rows)
     if pdf is None:
         return ""
-    # No structure (the table model is off): read the text inside the table's box.
+    # No cells (the table model found no structure): read the text inside the table's box.
     parts = []
     for prov in table.prov:
         page = pdf[prov.page_no - 1]

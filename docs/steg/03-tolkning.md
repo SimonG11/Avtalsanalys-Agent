@@ -174,7 +174,7 @@ innehållsförteckning med sidor, så att den kan jämföras med PDF:en.
 | `tests/unit/ingestion/test_headings.py` | Rubriker och falska rubriker med rader från dokumenten: listor, klockslag, sidfötter med diarienummer, versionstabeller, sidnummer; kedjan med listor inuti avsnitt, start på kapitel 6 och saknade nivåer |
 | `tests/unit/ingestion/test_step3_chunk.py` | Rensning av sidhuvuden och innehållsförteckning, frågor och svar, avsnitt med nivå, förälder och rubrikstig, uppdelning i bitar, kontextrubriker |
 | `tests/unit/ingestion/test_step2_parse.py` | En PDF med en skannad sida (gjord med reportlab), sparade resultat, ny parserversion, fel som inte sparas |
-| `tests/unit/ingestion/test_docling_parser.py` | Word: rubriker med nivåer, tabell, listpunkt. PDF: text och sidor ur textlagret, sidnummer som sidfot. PDF-testerna kräver layoutmodellen och måste köras i CI |
+| `tests/unit/ingestion/test_docling_parser.py` | Word: rubriker med nivåer, tabell, listpunkt. PDF: text och sidor ur textlagret, sidnummer som sidfot, en pristabell med celler. PDF-testerna kräver modellerna och måste köras i CI |
 | `tests/integration/test_section_store.py` | Filer och länkar mot riktig Postgres, och att en ny körning ersätter avsnitten |
 
 ## Så verifierar du M3 själv

@@ -7,20 +7,21 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.20.0",
     "beautifulsoup4>=4.13",
-    "docling-slim[convert-core,format-docx,format-pdf]>=2.133",
+    # Docling reads PDF and Word; models-local runs its layout and table models on PyTorch.
+    "docling-slim[convert-core,format-docx,format-pdf,models-local]>=2.133",
+    # The table model needs OpenCV, and its package leaves the build to us: headless,
+    # without GUI libraries.
+    "docling-ibm-models[opencv-python-headless]>=4.0.3",
     "httpx>=0.28.1",
-    # Docling downloads its layout model with huggingface-hub and runs it in ONNX Runtime.
-    # transformers only prepares the page images for the model. It stays on 4.x, whose
-    # RT-DETR image processor runs on numpy; from 5.x it needs PyTorch (ADR 0008).
-    "huggingface-hub>=0.34,<1",
-    "onnxruntime>=1.24",
     "openpyxl>=3.1.5",
     "psycopg[binary]>=3.3.6",
     "pydantic>=2.13",
     "pydantic-settings>=2.15",
     "pypdfium2>=5.0",
     "sqlalchemy>=2.1.3",
-    "transformers>=4.57,<5",
+    # Listed so that [tool.uv.sources] below picks their CPU build on Linux.
+    "torch>=2.2.2",
+    "torchvision>=0.17",
 ]
 
 [dependency-groups]
@@ -36,6 +37,28 @@ dev = [
     "types-openpyxl>=3.1.5.20260827",
     "types-reportlab>=5.0.0.20260911",
 ]
+
+[tool.uv]
+# The platforms the project is locked for. Without this uv would also resolve PyTorch for
+# platforms such as IBM Z (s390x) that nobody runs it on.
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'win32'",
+]
+
+# PyPI's Linux build of PyTorch also installs several GB of CUDA libraries. The models run
+# on the CPU, so on Linux PyTorch comes from PyTorch's own CPU index (ADR 0008). macOS and
+# Windows get the CPU build from PyPI.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["uv_build>=0.8.17,<0.9"]

@@ -1,9 +1,9 @@
 """Tests for avtalsagent.ingestion.parsers.docling_parser.
 
-Word files need no model. PDFs need Docling's layout model, which is downloaded
-from Hugging Face on first use; where it cannot be downloaded the PDF tests are
-skipped with the reason, unless AVTALSAGENT_REQUIRE_MODELS=1 (set in CI), which
-makes them fail instead.
+Word files need no model. PDFs need Docling's layout and table models, which are
+downloaded from Hugging Face on first use; where they cannot be downloaded the PDF
+tests are skipped with the reason, unless AVTALSAGENT_REQUIRE_MODELS=1 (set in CI),
+which makes them fail instead.
 """
 
 import os
@@ -11,8 +11,11 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.pdfgen.canvas import Canvas
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from avtalsagent.domain.parsed import Block, BlockKind
 from avtalsagent.ingestion.parsers.docling_parser import DoclingParser
@@ -90,15 +93,41 @@ def make_pdf(target: Path) -> Path:
     return target
 
 
-@pytest.fixture(scope="module")
-def pdf_blocks(parser: DoclingParser, tmp_path_factory: pytest.TempPathFactory) -> list[Block]:
-    path = make_pdf(tmp_path_factory.mktemp("pdf") / "terms.pdf")
+def make_price_pdf(target: Path) -> Path:
+    styles = getSampleStyleSheet()
+    rows = [
+        ["Kompetensnivå", "Takpris per timme"],
+        ["Nivå 1", "650 kr"],
+        ["Nivå 2", "850 kr"],
+        ["Nivå 3", "1 150 kr"],
+    ]
+    table = Table(rows, colWidths=[200, 200])
+    table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.black)]))
+    SimpleDocTemplate(str(target), pagesize=A4).build(
+        [
+            Paragraph("3.2 Takpriser", styles["Heading2"]),
+            Paragraph(
+                "Ramavtalsleverantören får inte debitera mer än takpriset.", styles["Normal"]
+            ),
+            Spacer(1, 12),
+            table,
+        ]
+    )
+    return target
+
+
+def parse_or_skip(parser: DoclingParser, path: Path) -> list[Block]:
     try:
         return parser.parse(path)
-    except Exception as error:  # the layout model could not be downloaded
+    except Exception as error:  # the models could not be downloaded
         if os.environ.get("AVTALSAGENT_REQUIRE_MODELS") == "1":
             raise
-        pytest.skip(f"Docling's layout model is not available: {error}")
+        pytest.skip(f"Docling's models are not available: {error}")
+
+
+@pytest.fixture(scope="module")
+def pdf_blocks(parser: DoclingParser, tmp_path_factory: pytest.TempPathFactory) -> list[Block]:
+    return parse_or_skip(parser, make_pdf(tmp_path_factory.mktemp("pdf") / "terms.pdf"))
 
 
 def test_pdf_text_comes_from_the_text_layer_with_pages(pdf_blocks: list[Block]) -> None:
@@ -112,3 +141,14 @@ def test_pdf_text_comes_from_the_text_layer_with_pages(pdf_blocks: list[Block]) 
 def test_pdf_page_numbers_are_not_body_text(pdf_blocks: list[Block]) -> None:
     page_numbers = [b for b in pdf_blocks if b.text.startswith("Sida ")]
     assert all(b.kind is BlockKind.PAGE_FOOTER for b in page_numbers)
+
+
+def test_a_pdf_table_gets_its_cells_from_the_table_model(
+    parser: DoclingParser, tmp_path: Path
+) -> None:
+    blocks = parse_or_skip(parser, make_price_pdf(tmp_path / "prices.pdf"))
+    tables = [b.text for b in blocks if b.kind is BlockKind.TABLE]
+    assert tables == [
+        "Kompetensnivå | Takpris per timme\nNivå 1 | 650 kr\nNivå 2 | 850 kr\nNivå 3 | 1 150 kr"
+    ]
+    assert any(b.kind is BlockKind.HEADING and b.text == "3.2 Takpriser" for b in blocks)
