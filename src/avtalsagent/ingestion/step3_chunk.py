@@ -18,9 +18,12 @@ Why:
     without a language model, so the same input always gives the same header.
 
 How:
-    1. Page headers, page footers, page numbers and lines repeated on many
-       pages are removed, and so is the table of contents (it repeats the
-       headings and would otherwise be found by searches).
+    1. Page numbers, page headers and footers, lines repeated on many pages
+       and the table of contents are removed (the contents repeat the headings
+       and would otherwise be found by searches). A line the layout model calls
+       a header is removed only if it is on more than one page or holds a page
+       counter, since the model sometimes gives that label to agreement text.
+       A list number the model put at the end of its item is moved to the front.
     2. `ingestion/headings.py` finds the numbered headings. A questions-and-
        answers log is split per question instead. If a document has no usable
        numbered outline, the parser's own headings are used without numbers,
@@ -49,14 +52,26 @@ HEADER_SEPARATOR = " › "
 _PAGE_NUMBER = re.compile(
     r"^(?:sida|sid\.?|page)?\s*\d{1,4}\s*(?:(?:/|av|of|\()\s*\d{1,4}\)?)?$", re.IGNORECASE
 )
-# A short line that ends with the page counter of a form or printout:
-# "Utskrivet: 2021-02-09 12:21 Sida 5 av 111", "Datum Sid 2 (27)".
-_PAGE_LABEL = re.compile(
-    r"(?:^|\s)(?:sidan|sida|sid\.?|page)\s*\d{1,4}\s*(?:(?:/|av|of)\s*\d{1,4}|\(\d{1,4}\))$",
+# The page counter of a form or printout: "Utskrivet: 2021-02-09 12:21 Sida 5 av 111",
+# "Datum Sid 2 (27)". A short line that ends with it is a page label; a page header or
+# footer that contains it anywhere is too ("Page 1 of 2 Document X20-11691").
+_PAGE_COUNTER = re.compile(
+    r"(?:^|\s)(?:sidan|sida|sid\.?|page)\s*\d{1,4}\s*(?:(?:/|av|of)\s*\d{1,4}|\(\d{1,4}\))(?=\s|$)",
     re.IGNORECASE,
 )
 _PAGE_LABEL_MAX_CHARS = 100
-_FURNITURE_KINDS = (BlockKind.PAGE_HEADER, BlockKind.PAGE_FOOTER, BlockKind.TOC)
+# Page headers and footers as the layout model labels them. The label alone is not
+# enough: the model sometimes calls the first line of a page a header, also when it is
+# agreement text ("Kammarkollegiet kommer att säkerställa att jäv eller intressekonflikt
+# inte föreligger."). So a header or footer is removed only when it is on more than one
+# page or holds a page counter; otherwise it is kept as text.
+_HEADER_KINDS = (BlockKind.PAGE_HEADER, BlockKind.PAGE_FOOTER)
+# The layout model sometimes puts a list item's number last ("Säkerhetsskyddsavtal 2."),
+# when the number sits a little lower on the line than the text. The number is moved to
+# the front when list items end with 1, 2, 3 ... in order; a single item ending with a
+# number ("se punkt 6.") is left as it is.
+_TRAILING_NUMBER = re.compile(r"^(?P<text>.*\S)\s+(?P<number>\d{1,3})\.$", re.DOTALL)
+_LEADING_MARKER = re.compile(r"^\(?(?:\d{1,3}|[a-zA-Z])[.)]\s")
 # A short line on at least this share of the pages (and at least three) is a running
 # header or footer, e.g. "23.3-5890-2023 IT-drift 2023, område Mindre".
 _REPEATED_SHARE = 0.3
@@ -69,13 +84,15 @@ _MIN_NUMBERED_HEADINGS = 2
 _MAX_TEXT_BEFORE_FIRST_HEADING = 0.5
 _SENTENCE_END = re.compile(r"(?<=[.!?:;])\s+(?=[A-ZÅÄÖ0-9\"”(])")
 _PREAMBLE_TITLE = "Text före första rubriken"
-# An entry in a TendSign "Frågor och svar" printout: "12 Publik fråga". Private
-# questions and notices from the authority have no number. The questions quote
-# the tender's headings ("5.6.3.1 Kvalitetsledningssystem"), so a document with
-# such entries is split per entry and never by its numbers.
+# An entry in a TendSign "Frågor och svar" printout: "12 Publik fråga" in the text
+# layer, "Publik fråga 12" in the layout model's reading order. Private questions and
+# notices from the authority have no number. The questions quote the tender's
+# headings ("5.6.3.1 Kvalitetsledningssystem"), so a document with such entries is
+# split per entry and never by its numbers.
 _QUESTION = re.compile(
     r"^(?:(?P<number>\d{1,4}) )?"
-    r"(?P<title>Publik fråga|Privat fråga|Publikt informationsmeddelande)$"
+    r"(?P<title>Publik fråga|Privat fråga|Publikt informationsmeddelande)"
+    r"(?: (?P<number_after>\d{1,4}))?$"
 )
 _MIN_QUESTIONS = 3
 _CONTENTS_TITLES = {"innehåll", "innehållsförteckning", "table of contents", "contents"}
@@ -157,21 +174,60 @@ def clean_blocks(document: ParsedDocument) -> list[Block]:
     """The blocks without page furniture and without the table of contents."""
     page_count = max((block.page or 0 for block in document.blocks), default=0)
     repeated = _repeated_lines(document.blocks, page_count)
+    running = _running_headers(document.blocks)
     kept = [
         block
         for block in document.blocks
-        if block.kind not in _FURNITURE_KINDS
+        if block.kind is not BlockKind.TOC
         and not _PAGE_NUMBER.match(block.text.strip())
         and not _is_page_label(block.text)
         and _normalise(block.text) not in repeated
+        and not (block.kind in _HEADER_KINDS and _is_running_header(block.text, running))
     ]
     toc = toc_entries(kept)
-    return [block for index, block in enumerate(kept) if index not in toc]
+    return _numbers_first([block for index, block in enumerate(kept) if index not in toc])
 
 
 def _is_page_label(text: str) -> bool:
     text = text.strip()
-    return len(text) <= _PAGE_LABEL_MAX_CHARS and _PAGE_LABEL.search(text) is not None
+    if len(text) > _PAGE_LABEL_MAX_CHARS:
+        return False
+    return any(match.end() == len(text) for match in _PAGE_COUNTER.finditer(text))
+
+
+def _numbers_first(blocks: list[Block]) -> list[Block]:
+    """The blocks with list numbers moved from the end of an item to the front."""
+    runs: list[list[tuple[int, re.Match[str]]]] = []
+    for index, block in enumerate(blocks):
+        if block.kind is not BlockKind.LIST_ITEM or _LEADING_MARKER.match(block.text):
+            continue
+        if (match := _TRAILING_NUMBER.match(block.text)) is None:
+            continue
+        number = int(match["number"])
+        if runs and number == int(runs[-1][-1][1]["number"]) + 1:
+            runs[-1].append((index, match))
+        elif number == 1:
+            runs.append([(index, match)])
+    for run in runs:
+        if len(run) < 2:
+            continue
+        for index, match in run:
+            text = f"{match['number']}. {match['text']}"
+            blocks[index] = blocks[index].model_copy(update={"text": text})
+    return blocks
+
+
+def _running_headers(blocks: Sequence[Block]) -> set[str]:
+    """The texts of page headers and footers that are on more than one page."""
+    pages: defaultdict[str, set[int]] = defaultdict(set)
+    for block in blocks:
+        if block.kind in _HEADER_KINDS and block.page is not None:
+            pages[_normalise(block.text)].add(block.page)
+    return {text for text, seen in pages.items() if len(seen) > 1}
+
+
+def _is_running_header(text: str, running: set[str]) -> bool:
+    return _normalise(text) in running or _PAGE_COUNTER.search(text) is not None
 
 
 def _normalise(text: str) -> str:
@@ -249,7 +305,8 @@ def _questions(blocks: Sequence[Block]) -> list[Heading]:
     for index, block in enumerate(blocks):
         lines = block.text.strip().splitlines()
         if lines and (match := _QUESTION.match(" ".join(lines[0].split()))):
-            headings.append(Heading(index, 1, match["number"], 1, match["title"]))
+            number = match["number"] or match["number_after"]
+            headings.append(Heading(index, 1, number, 1, match["title"]))
     return headings
 
 

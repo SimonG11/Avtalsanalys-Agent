@@ -3,6 +3,8 @@
 The documents are built from verbatim lines of avropa.se documents (2026-10-05).
 """
 
+import pytest
+
 from avtalsagent.domain.parsed import Block, BlockKind, ParsedDocument, Section
 from avtalsagent.ingestion.step3_chunk import (
     DocumentContext,
@@ -88,24 +90,58 @@ class TestCleanBlocks:
         texts = [b.text for b in clean_blocks(document(*map(block, [*labels, kept])))]
         assert texts == [kept]
 
+    def test_a_page_header_is_removed_only_when_it_runs_over_pages(self) -> None:
+        # The layout model sometimes labels the first line of a page as a header.
+        sentence = (
+            "Kammarkollegiet kommer att säkerställa att jäv eller intressekonflikt inte föreligger."
+        )
+        code = "AcademicQualEdUserDef(EMEA)(SWE)(Aug2023)"
+        blocks = [
+            block(code, 1, BlockKind.PAGE_FOOTER),
+            block("Page 1 of 2 Document X20-11691", 1, BlockKind.PAGE_FOOTER),
+            block(sentence, 2, BlockKind.PAGE_HEADER),
+            block(code, 2, BlockKind.PAGE_FOOTER),
+        ]
+        assert [b.text for b in clean_blocks(document(*blocks))] == [sentence]
+
+    def test_list_numbers_put_last_by_the_layout_model_are_moved_first(self) -> None:
+        items = [
+            "Skriftliga ändringar och tillägg till säkerhetsskyddsavtal 1.",
+            "Säkerhetsskyddsavtal 2.",
+            "· Bilaga Prisjustering",
+            "Kontraktet med bilagor (såsom bilagorna Allmänna villkor och Servicenivåavtal) 3.",
+            "Avtalet gäller enligt punkt 6.",  # not the next number: a sentence
+            "Leverans sker enligt bilaga 1.",  # a run of one: a sentence
+        ]
+        blocks = [block(text, 7, BlockKind.LIST_ITEM) for text in items]
+        assert [b.text for b in clean_blocks(document(*blocks))] == [
+            "1. Skriftliga ändringar och tillägg till säkerhetsskyddsavtal",
+            "2. Säkerhetsskyddsavtal",
+            "· Bilaga Prisjustering",
+            "3. Kontraktet med bilagor (såsom bilagorna Allmänna villkor och Servicenivåavtal)",
+            "Avtalet gäller enligt punkt 6.",
+            "Leverans sker enligt bilaga 1.",
+        ]
+
     def test_a_line_on_few_pages_is_kept(self) -> None:
         blocks = [block("Ramavtalsleverantören ska ha en försäkring.", page) for page in (1, 2)]
         blocks += [block(f"Text på sidan {page}", page) for page in range(3, 11)]
         assert len(clean_blocks(document(*blocks))) == 10
 
 
-def questions_log() -> ParsedDocument:
+def questions_log(first: str = "1 Publik fråga", second: str = "2 Publik fråga") -> ParsedDocument:
     """A TendSign "Frågor och svar" printout whose questions quote the tender."""
     return document(
         block("Frågor och svar - Upphandlingsdokument", 1, BlockKind.TITLE),
-        block("1 Publik fråga", 1),
+        block(first, 1),
         block("5.6.3.1 Kvalitetsledningssystem", 1),
         block("Avses ett certifierat ledningssystem?", 1),
         block("Publikt svar 2024-09-30 14:32", 1),
         block("Nej, se punkt 5.6.3.1.", 1),
-        block("2 Publik fråga", 2),
+        block(second, 2),
         block("5.6.3.2 Miljöledningssystem", 2),
-        block("Gäller samma sak för miljöledningssystemet?", 2),
+        block("Gäller samma sak för miljöledningssystemet? Se svar Fråga 1.", 2),
+        block("Publik fråga 502022-03-22 16:07 Enligt 4.2.2 erhåller sökanden 10 poäng", 2),
         block("Privat fråga", 2),
         block("Publikt informationsmeddelande", 2),
         block("Sista dag för frågor är passerad.", 2),
@@ -113,8 +149,17 @@ def questions_log() -> ParsedDocument:
 
 
 class TestSplitSections:
-    def test_a_questions_log_is_split_per_question_not_by_quoted_numbers(self) -> None:
-        outline, sections = split_sections(questions_log())
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [
+            ("1 Publik fråga", "2 Publik fråga"),  # the text layer
+            ("Publik fråga 1", "Publik fråga 2"),  # the layout model's reading order
+        ],
+    )
+    def test_a_questions_log_is_split_per_question_not_by_quoted_numbers(
+        self, first: str, second: str
+    ) -> None:
+        outline, sections = split_sections(questions_log(first, second))
         assert outline is OutlineKind.QUESTIONS
         assert [(s.number, s.title, s.level) for s in sections] == [
             (None, "Frågor och svar - Upphandlingsdokument", 0),

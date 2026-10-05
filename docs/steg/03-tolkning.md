@@ -128,12 +128,15 @@ och dess nummer passar inte in i kedjan.
 
 ### 5. `ingestion/step3_chunk.py` – steg 3
 
-1. `clean_blocks` tar bort sidhuvuden, sidfötter, sidnummer (`Sida 2/30`, `Sid 2 (7)`,
-   `Utskrivet: … Sida 5 av 111`), rader som återkommer på minst 30 % av sidorna och
-   innehållsförteckningen.
+1. `clean_blocks` tar bort sidnummer (`Sida 2/30`, `Sid 2 (7)`, `Utskrivet: … Sida 5 av 111`),
+   rader som återkommer på minst 30 % av sidorna och innehållsförteckningen. Sidhuvuden och
+   sidfötter tas bort om de står på mer än en sida eller innehåller ett sidnummer. Ett sidhuvud
+   som bara står på en sida behålls som text, eftersom layoutmodellen ibland kallar första raden
+   på en sida för sidhuvud fast den är avtalstext.
 2. `split_sections` väljer hur dokumentet delas:
-   - **Frågor och svar** från TendSign delas per fråga (`12 Publik fråga`). Frågorna citerar
-     upphandlingens rubriker, så numren används inte.
+   - **Frågor och svar** från TendSign delas per fråga (`12 Publik fråga` i textlagret,
+     `Publik fråga 12` i Doclings läsordning). Frågorna citerar upphandlingens rubriker, så
+     numren används inte.
    - **Numrerade rubriker** används om det finns minst två och den första kommer före halva
      texten. Word-delar utan nummer på högsta nivån läggs till (t.ex. "Instruktion till
      Personuppgiftsbiträdesavtalet" efter "16 Tvistelösning").

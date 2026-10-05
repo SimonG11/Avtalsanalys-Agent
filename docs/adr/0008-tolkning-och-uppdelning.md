@@ -49,9 +49,11 @@ Det som avgör valet:
    (6.6.8 → 6.6.9, 6.7, 7). Saknade nummer kostar poäng. Numreringen får inte börja om på 1, eftersom
    en omstart i de här dokumenten nästan alltid är en numrerad lista.
 5. **Innehållsförteckningen tas bort** innan avsnitten byggs. Den upprepar rubrikerna och skulle
-   annars hittas av sökningar. Sidhuvuden, sidfötter, sidnummer och rader som återkommer på minst
-   30 % av sidorna tas också bort.
-6. **Frågor och svar delas per fråga** (`12 Publik fråga`, `Privat fråga`,
+   annars hittas av sökningar. Sidnummer och rader som återkommer på minst 30 % av sidorna tas
+   också bort. Ett sidhuvud eller en sidfot enligt layoutmodellen tas bort bara om den står på
+   mer än en sida eller innehåller ett sidnummer. Modellen kallar ibland första raden på en sida
+   för sidhuvud fast den är avtalstext, och den texten får inte försvinna.
+6. **Frågor och svar delas per fråga** (`12 Publik fråga` eller `Publik fråga 12`, `Privat fråga`,
    `Publikt informationsmeddelande`), aldrig vid nummer. Frågorna citerar upphandlingens rubriker
    (`5.6.3.1 Kvalitetsledningssystem`), som annars skulle bli avsnitt.
    **Dokument utan numrering** delas vid Doclings rubriker utan nummer. Ett dokument utan rubriker
@@ -74,7 +76,7 @@ Det som avgör valet:
   testas. Kommandot `outline` skriver ut innehållsförteckningen för en fil.
 - PyTorch för CPU tar ungefär 1 GB. Modellerna laddas ner från Hugging Face första gången. CI
   sparar dem i en cache och kräver att PDF-testerna körs. Miljön måste nå `download.pytorch.org`
-  och Hugging Face filservrar (`*.hf.co`).
+  (och `download-r2.pytorch.org`, där paketen ligger) och Hugging Face filservrar (`*.hf.co`).
 - Text i skannade sidor och i bilder saknas tills OCR finns.
 - Numrerade rubriker med nummer som citeras från ett annat dokument (t.ex. kravnummer i en
   redovisningsmall) blir avsnitt om de följer ordningen och annars en del av texten.
