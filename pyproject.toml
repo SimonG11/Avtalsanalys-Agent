@@ -5,8 +5,13 @@ description = "Agentic RAG over Statens inköpscentral framework agreements, wit
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.20.0",
+    "httpx>=0.28.1",
+    "openpyxl>=3.1.5",
+    "psycopg[binary]>=3.3.6",
     "pydantic>=2.13",
     "pydantic-settings>=2.15",
+    "sqlalchemy>=2.1.3",
 ]
 
 [dependency-groups]
@@ -15,6 +20,8 @@ dev = [
     "pre-commit>=4.6",
     "pytest>=9.1",
     "ruff>=0.16",
+    "testcontainers[postgres]>=4.15.0",
+    "types-openpyxl>=3.1.5.20260827",
 ]
 
 [build-system]
@@ -42,7 +49,12 @@ strict = true
 python_version = "3.12"
 plugins = ["pydantic.mypy"]
 files = ["src", "tests"]
+# Module names come from these roots: src/avtalsagent -> avtalsagent, tests/... -> tests....
+mypy_path = ["src", "."]
+explicit_package_bases = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Lets tests import shared helpers with `from tests.conftest import ...`.
+pythonpath = ["."]
 addopts = "-ra --strict-markers"

@@ -25,6 +25,8 @@ ENV_VARS = (
     "REVIEWER_MODEL",
     "EXTRACTION_MODEL",
     "LOG_LEVEL",
+    "REGISTER_EXCEL_URL",
+    "DATA_DIR",
 )
 
 
@@ -38,7 +40,7 @@ def test_defaults_match_docker_compose_and_adr_0005() -> None:
     settings = Settings(_env_file=None)
 
     assert str(settings.database_url) == (
-        "postgresql://avtalsagent:avtalsagent@localhost:5432/avtalsagent"
+        "postgresql+psycopg://avtalsagent:avtalsagent@localhost:5432/avtalsagent"
     )
     assert settings.openai_api_key is None
     assert settings.agent_model == "gpt-6.1-sol"
