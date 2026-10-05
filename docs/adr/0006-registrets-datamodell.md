@@ -1,6 +1,7 @@
 # ADR 0006: Registrets datamodell och inläsning
 
-**Status:** Förslag (M1), granskas av Simon i PR:en
+**Status:** Förslag (M1), granskas av Simon i PR:en. Punkt 1–3 justerades 2026-10-05 efter
+inläsning av hela listan.
 
 ## Kontext
 
@@ -12,10 +13,14 @@ innehålla ett tidigare namn ("f.d. …"). Listan ändras när avtal tillkommer 
 ## Beslut
 
 1. **Leverantören identifieras med normaliserat orgnr** (`NNNNNN-NNNN`), aldrig med namn. Namnen
-   ligger i en egen tabell, `supplier_name`, med ett eventuellt tidigare namn.
+   ligger i en egen tabell, `supplier_name`, med ett eventuellt tidigare namn. Utländska
+   leverantörer (6 st i listan 2026-10-05) behåller sitt nummer som det står, t.ex. `FI01148912`.
 2. **Avtalsnumret delas i diarienummer och löpnummer.** Diarienumret blir upphandlingen
-   (`procurement`), som också används för att hitta PDF-paketen på avropa.se i M2.
-3. **Datum hör till avtalet.** Om två rader för samma avtal har olika orgnr eller datum gäller den
+   (`procurement`), som också används för att hitta PDF-paketen på avropa.se i M2. Några avtal
+   har bara ett diarienummer och saknar löpnummer. En upphandling kan täcka flera
+   ramavtalsområden, så området hör till delområdet och inte till upphandlingen.
+3. **Datum hör till avtalet i ett delområde** (`agreement_sub_area`), inte till hela avtalet, eftersom
+   samma avtal kan ha olika datum i olika delområden. Om två rader för samma avtal har olika orgnr gäller den
    första raden, och avvikelsen visas i inläsningsrapporten.
 4. **Delområdet blir en hierarki** (`sub_area` med `parent_id`), en nod per nivå i " / "-strängen,
    separat per ramavtalsområde.

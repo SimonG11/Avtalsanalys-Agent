@@ -8,7 +8,10 @@ What:
 Why:
     The same supplier or agreement is written in different ways in the Excel
     list and in the PDFs (e.g. `5563372381      ` vs `556337-2381`). Matching
-    only works if both sides are normalised the same way. Supplier names are
+    only works if both sides are normalised the same way. The real list also
+    has foreign suppliers (Finnish, Danish, Norwegian, British registration
+    numbers) and older agreement-number formats, so those are accepted too
+    rather than dropped. Supplier names are
     never used on their own for matching, because several names can share one
     organisation number and names change over time ("f.d. ...").
 
@@ -28,10 +31,26 @@ class IdentifierError(ValueError):
 
 # A Swedish organisation number has 10 digits: NNNNNN-NNNN.
 _ORG_NUMBER_DIGITS = 10
+_SWEDISH_ORG_NUMBER = re.compile(r"^\d{6}-\d{4}$")
 
-# Agreement number, e.g. 23.3-14537-2023-001:
-#   procurement case number (diarienummer) 23.3-14537-2023 + supplier sequence 001.
-_AGREEMENT_NUMBER = re.compile(r"^(?P<procurement>\d+\.\d+-\d+-\d{4})-(?P<sequence>\d+)$")
+# A foreign registration number, as written in the list: optional country or
+# register prefix, then digits. Real examples: FI01148912 (Finland),
+# CVR:37120928 and 33948786 (Denmark), 965920358 (Norway), FC16134 (UK).
+# With a prefix five digits are enough; without one, six.
+_FOREIGN_ORG_NUMBER = re.compile(r"^(?:[A-Z]{2,3}:?\d{5,12}|\d{6,12})$")
+
+# Agreement number formats seen in the list (2026-10-05). Each has a
+# procurement case number (diarienummer) and, usually, a supplier sequence.
+_AGREEMENT_NUMBER_FORMATS = (
+    # 23.3-14537-2023-001, and 23.3-4613-2023-003-A (a variant of agreement 003)
+    re.compile(r"^(?P<procurement>\d+\.\d+-\d+-\d{4})-(?P<sequence>\d+(?:-[A-Z])?)$"),
+    # Older form with a two-digit year and a colon: 23.3-2965-20:001
+    re.compile(r"^(?P<procurement>\d+\.\d+-\d+-\d{2}):(?P<sequence>\d+)$"),
+    # Only a case number, for agreements with one supplier: 23.5-3718-2024
+    re.compile(r"^(?P<procurement>\d+\.\d+-\d+-\d{4})$"),
+    # Old case number: 6765/05
+    re.compile(r"^(?P<procurement>\d+/\d{2})$"),
+)
 
 # Former name in a supplier name, e.g. "AB HOLMRIS B8 (f.d. Addentity Interiör AB)".
 _FORMER_NAME = re.compile(r"^(?P<name>.*?)\s*\(f\.d\.\s*(?P<former>[^)]+)\)$")
@@ -40,35 +59,47 @@ _SUB_AREA_SEPARATOR = " / "
 
 
 def normalize_org_number(raw: str) -> str:
-    """Return the organisation number as NNNNNN-NNNN.
+    """Return a Swedish organisation number as NNNNNN-NNNN, or a foreign one as written.
 
-    Accepts the Excel form (digits with trailing spaces) and the PDF form
-    (with a hyphen). Anything that is not exactly 10 digits is rejected.
+    Swedish: the Excel form (digits with trailing spaces) and the PDF form
+    (with a hyphen) both give NNNNNN-NNNN. Foreign: spaces are removed and
+    letters upper-cased, nothing else, because each country has its own
+    format. Anything else is rejected.
     """
     digits = re.sub(r"[\s-]", "", raw)
-    if not digits.isdigit() or len(digits) != _ORG_NUMBER_DIGITS:
-        raise IdentifierError(f"organisation number must have 10 digits: {raw!r}")
-    return f"{digits[:6]}-{digits[6:]}"
+    if digits.isdigit() and len(digits) == _ORG_NUMBER_DIGITS:
+        return f"{digits[:6]}-{digits[6:]}"
+    compact = re.sub(r"\s", "", raw).upper()
+    if _FOREIGN_ORG_NUMBER.match(compact):
+        return compact
+    raise IdentifierError(f"organisation number has an unknown format: {raw!r}")
+
+
+def is_swedish_org_number(org_number: str) -> bool:
+    """True for a normalised Swedish organisation number (NNNNNN-NNNN)."""
+    return _SWEDISH_ORG_NUMBER.match(org_number) is not None
 
 
 @dataclass(frozen=True)
 class AgreementNumber:
-    """An agreement number split into its two parts."""
+    """An agreement number split into its parts."""
 
+    full: str  # as written in the list, e.g. 23.3-2965-20:001
     procurement_number: str  # diarienummer, shared by all suppliers in one procurement
-    sequence: str  # the supplier's sequence number within the procurement
-
-    @property
-    def full(self) -> str:
-        return f"{self.procurement_number}-{self.sequence}"
+    sequence: str | None  # the supplier's sequence number; None if the number has none
 
 
 def parse_agreement_number(raw: str) -> AgreementNumber:
-    """Split e.g. `23.3-14537-2023-001` into `23.3-14537-2023` and `001`."""
-    match = _AGREEMENT_NUMBER.match(raw.strip())
-    if match is None:
-        raise IdentifierError(f"agreement number has an unknown format: {raw!r}")
-    return AgreementNumber(match["procurement"], match["sequence"])
+    """Split e.g. `23.3-14537-2023-001` into `23.3-14537-2023` and `001`.
+
+    See `_AGREEMENT_NUMBER_FORMATS` for the accepted formats.
+    """
+    text = raw.strip()
+    for pattern in _AGREEMENT_NUMBER_FORMATS:
+        match = pattern.match(text)
+        if match is not None:
+            return AgreementNumber(text, match["procurement"], match.groupdict().get("sequence"))
+    raise IdentifierError(f"agreement number has an unknown format: {raw!r}")
 
 
 @dataclass(frozen=True)

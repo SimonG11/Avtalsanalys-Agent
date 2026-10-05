@@ -36,15 +36,17 @@ class RegisterRow(BaseModel):
 
     agreement_number: str  # 23.3-14537-2023-001
     procurement_number: str  # 23.3-14537-2023 (diarienummer)
-    sequence: str  # 001
+    sequence: str | None  # 001; None when the number has no sequence (23.5-3718-2024)
 
     supplier_name: str
     former_supplier_name: str | None
-    org_number: str  # NNNNNN-NNNN
+    org_number: str  # NNNNNN-NNNN, or a foreign number as written (FI01148912)
 
     framework_area: str  # Ramavtalsområde, e.g. "Bemanningstjänster"
     sub_area_path: tuple[str, ...]  # Delområde split on " / "
 
+    # The dates belong to this row (agreement + sub-area), not to the whole
+    # agreement: one agreement can start at different dates in different sub-areas.
     valid_from: date
     valid_to: date
     max_extension_to: date | None  # "Max förl. till", often empty

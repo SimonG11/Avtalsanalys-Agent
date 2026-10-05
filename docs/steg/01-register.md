@@ -4,12 +4,47 @@
 tabeller. Registret är facit: agenten svarar på datum- och leverantörsfrågor ur det, och i M4
 stäms varje PDF av mot det.
 
-**Klart när:** hela Excel-filen (ca 4 500 rader) läses in, och tester täcker varje
+**Klart när:** hela Excel-filen (4 507 rader) läses in, och tester täcker varje
 normaliseringsregel med riktiga exempelrader.
 
-> **Läge:** koden och testerna är klara och testade på 18 riktiga rader från listan
-> (2026-10-05). Inläsningen av hela filen återstår, eftersom molnmiljön ännu inte når
-> www.avropa.se. Resultatet läggs till här när den är gjord.
+> **Läge (2026-10-05):** klart. Hela listan hämtades direkt från avropa.se och lästes in.
+
+## Resultat på hela listan
+
+Listan "Giltiga ramavtal 2026-10-05", hämtad med `--download`:
+
+| | Antal |
+|---|---|
+| Excel-rader | 4 507 |
+| Inlästa rader | 4 507 |
+| Avtal | 2 361 |
+| Leverantörer (orgnr) | 802, varav 6 utländska |
+| Leverantörsnamn | 1 098 |
+| Upphandlingar (diarienummer) | 79 |
+| Ramavtalsområden | 51 |
+| Delområden (noder i hierarkin) | 3 311 |
+| Underkända rader | 0 |
+| Motsägelser | 0 |
+
+### Vad den riktiga filen lärde oss
+
+Första körningen, med reglerna som byggts på de 18 exempelraderna, underkände 79 rader och
+rapporterade 27 motsägelser. Alla visade sig vara riktiga format i listan, inte fel i den.
+Reglerna ändrades därför, var och en med ett test som använder den riktiga raden:
+
+| Fynd | Exempel (Excel-rad) | Ändring |
+|---|---|---|
+| Utländska leverantörer har inte svenskt orgnr | `FI01148912` Martela Oyj (2358), `CVR:37120928` Stibo Complete (3994), `965920358` Norwegian Air Shuttle (2485), `FC16134` EBSCO (994) | Utländska nummer behålls som de står. De listas i rapporten så att ett felskrivet svenskt nummer inte slinker igenom. |
+| Äldre avtalsnummer med kolon och tvåsiffrigt år | `23.3-2965-20:001` AB Svenska Pass (24) | Godkänns: diarienummer `23.3-2965-20`, löpnummer `001`. |
+| Bokstavsvariant av ett avtal | `23.3-4613-2023-003-A` Azets (325) | Löpnummer `003-A`. |
+| Avtal med bara diarienummer | `23.5-3718-2024` Microsoft (2380), `6765/05` IBM (2015) | Diarienumret är hela numret, löpnummer saknas. |
+| Samma avtal har olika datum i olika delområden | `23.3-14537-2023-004` Bemannia börjar 2025-04-03 i ett delområde och 2025-04-22 i ett annat (334, 341) | Datumen flyttades från avtalet till kopplingen avtal–delområde. 8 avtal har sådana skillnader. |
+| En upphandling spänner över två ramavtalsområden | `23.3-2965-20` i två "Identifiering och behörighet"-områden | Ramavtalsområdet togs bort från upphandlingen. Det nås via delområdet. |
+
+Ett fynd att känna till: rad 3926 har avtalsnumret `23.3-1200020-20:005` (Språkpoolen).
+Samma leverantör har avtal `23.3-12000-2020-005` i samma område, så det är troligen ett
+skrivfel i listan. Numret följer ett giltigt format och läses in som det står, som en egen
+upphandling. Koden rättar inte data på egen hand.
 
 ---
 
@@ -41,8 +76,9 @@ Rena funktioner utan beroenden. Varje regel har egna tester i `tests/unit/domain
 
 | Regel | Exempel | Varför |
 |---|---|---|
-| Orgnr får bindestreck, mellanslag tas bort, exakt 10 siffror krävs | `5563372381      ` → `556337-2381` | Excel och PDF skriver olika. Matchning sker alltid på orgnr. |
-| Avtalsnumret delas i diarienummer och löpnummer | `23.3-14537-2023-001` → `23.3-14537-2023` + `001` | Diarienumret är upphandlingen och finns i avropa.se:s PDF-sökvägar. |
+| Svenskt orgnr (10 siffror) får bindestreck, mellanslag tas bort | `5563372381      ` → `556337-2381` | Excel och PDF skriver olika. Matchning sker alltid på orgnr. |
+| Utländskt orgnr behålls som det står, utan mellanslag | `FI01148912      ` → `FI01148912` | Varje land har sitt format. Annat än svenskt eller känt utländskt format underkänns. |
+| Avtalsnumret delas i diarienummer och löpnummer | `23.3-14537-2023-001` → `23.3-14537-2023` + `001`, `23.3-2965-20:001` → `23.3-2965-20` + `001` | Diarienumret är upphandlingen och finns i avropa.se:s PDF-sökvägar. Fyra format finns i listan, se tabellen ovan. |
 | Tidigare namn bryts ut | `AB HOLMRIS B8 (f.d. Addentity Interiör AB)` → namn + tidigare namn | Samma leverantör ska kunna hittas under båda namnen. |
 | Delområdet delas på ` / ` | `Gävleborgs län / Gävle / Gävle zon 1 - Longstay` → 3 nivåer | Ger en hierarki. Bindestreck inne i en nivå är inte en avgränsare. |
 
@@ -72,8 +108,9 @@ server och behöver inget nätverk.
 - Varje rad blir en `RegisterRow`, eller ett **fynd** med radnummer och orsak. En felaktig rad
   stoppar inte inläsningen men försvinner inte heller tyst.
 - Datum godtas både som Excel-datum och som text (`2026-07-01`). "Max förl. till" får vara tomt.
-- `find_conflicts` hittar rader som motsäger varandra: samma avtal med olika orgnr eller datum,
-  eller samma upphandling i två ramavtalsområden.
+- `find_conflicts` hittar rader som motsäger varandra: samma avtal med olika orgnr, eller samma
+  avtal och delområde två gånger. Olika datum per delområde är inte en motsägelse.
+- `find_foreign_org_numbers` listar varje utländskt orgnr en gång, så att det kan kontrolleras.
 
 ### 6. `db/models.py` och migreringen – tabellerna
 
@@ -90,12 +127,12 @@ erDiagram
 | Tabell | Nyckel | Innehåll |
 |---|---|---|
 | `register_version` | listans datum | titel, när den lästes in, antal rader och felaktiga rader |
-| `procurement` | diarienummer | ramavtalsområde |
+| `procurement` | diarienummer | – (en upphandling kan täcka flera ramavtalsområden) |
 | `supplier` | orgnr | – |
 | `supplier_name` | orgnr + namn | tidigare namn |
-| `agreement` | avtalsnummer | upphandling, leverantör, giltig från/till, max förlängning |
+| `agreement` | avtalsnummer | upphandling, löpnummer, leverantör |
 | `sub_area` | id | ramavtalsområde, hela sökvägen, namn, nivå, förälder |
-| `agreement_sub_area` | avtal + delområde | en rad per Excel-rad |
+| `agreement_sub_area` | avtal + delområde | giltig från/till, max förlängning; en rad per Excel-rad |
 
 Tabellerna skapas med Alembic (`uv run alembic upgrade head`). Migreringen är genererad från
 modellerna och granskad för hand. Varför modellen ser ut så här står i
@@ -110,7 +147,7 @@ modellerna och granskad för hand. Varför modellen ser ut så här står i
    (föräldrar före barn) i **en transaktion**. Samma fil två gånger ger samma tabeller, och en
    misslyckad inläsning lämnar den förra utgåvan orörd.
 3. Inläsningen loggas i `register_version` och en rapport skrivs ut med antal per tabell,
-   felaktiga rader och motsägelser.
+   felaktiga rader, motsägelser och utländska orgnr.
 
 ### 8. `register/__main__.py` – kommandot
 

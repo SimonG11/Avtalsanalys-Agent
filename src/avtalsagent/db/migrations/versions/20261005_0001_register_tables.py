@@ -32,7 +32,6 @@ def upgrade() -> None:
     op.create_table(
         "procurement",
         sa.Column("procurement_number", sa.String(length=32), nullable=False),
-        sa.Column("framework_area", sa.Text(), nullable=False),
         sa.PrimaryKeyConstraint("procurement_number"),
     )
     op.create_table(
@@ -63,19 +62,16 @@ def upgrade() -> None:
     )
     op.create_table(
         "supplier",
-        sa.Column("org_number", sa.String(length=11), nullable=False),
+        sa.Column("org_number", sa.String(length=20), nullable=False),
         sa.PrimaryKeyConstraint("org_number"),
     )
     op.create_table(
         "agreement",
         sa.Column("agreement_number", sa.String(length=40), nullable=False),
         sa.Column("procurement_number", sa.String(length=32), nullable=False),
-        sa.Column("sequence", sa.String(length=8), nullable=False),
-        sa.Column("org_number", sa.String(length=11), nullable=False),
+        sa.Column("sequence", sa.String(length=8), nullable=True),
+        sa.Column("org_number", sa.String(length=20), nullable=False),
         sa.Column("supplier_name", sa.Text(), nullable=False),
-        sa.Column("valid_from", sa.Date(), nullable=False),
-        sa.Column("valid_to", sa.Date(), nullable=False),
-        sa.Column("max_extension_to", sa.Date(), nullable=True),
         sa.ForeignKeyConstraint(
             ["org_number"],
             ["supplier.org_number"],
@@ -92,7 +88,7 @@ def upgrade() -> None:
     )
     op.create_table(
         "supplier_name",
-        sa.Column("org_number", sa.String(length=11), nullable=False),
+        sa.Column("org_number", sa.String(length=20), nullable=False),
         sa.Column("name", sa.Text(), nullable=False),
         sa.Column("former_name", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(
@@ -105,6 +101,9 @@ def upgrade() -> None:
         "agreement_sub_area",
         sa.Column("agreement_number", sa.String(length=40), nullable=False),
         sa.Column("sub_area_id", sa.Integer(), nullable=False),
+        sa.Column("valid_from", sa.Date(), nullable=False),
+        sa.Column("valid_to", sa.Date(), nullable=False),
+        sa.Column("max_extension_to", sa.Date(), nullable=True),
         sa.ForeignKeyConstraint(
             ["agreement_number"],
             ["agreement.agreement_number"],

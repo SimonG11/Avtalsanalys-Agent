@@ -13,8 +13,9 @@ Why:
 
 How:
     1. `build_tables` (pure) turns the rows into plain dicts, one list per table.
-       The first row for an agreement decides its supplier and dates; rows that
-       contradict it are listed by `find_conflicts` in the report.
+       The first row for an agreement decides its supplier; each row's dates go
+       on its agreement + sub-area link. Rows that contradict an earlier row are
+       listed by `find_conflicts` in the report.
     2. `load_register` deletes the old rows (children first) and inserts the
        new ones, then records the load in `register_version`.
 """
@@ -29,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from avtalsagent.db import models
 from avtalsagent.domain.register import RegisterRow, RegisterVersion
-from avtalsagent.register.normalize import Finding, find_conflicts
+from avtalsagent.register.normalize import Finding, find_conflicts, find_foreign_org_numbers
 
 SUB_AREA_SEPARATOR = " / "
 
@@ -52,15 +53,18 @@ class LoadReport:
     rows_loaded: int
     rejected: list[Finding]
     conflicts: list[Finding]
+    foreign_org_numbers: list[Finding]
     table_counts: dict[str, int]
 
     def summary(self) -> str:
         lines = [
             f"Register {self.list_date}: {self.rows_loaded} rows loaded, "
-            f"{len(self.rejected)} rejected, {len(self.conflicts)} conflicts",
+            f"{len(self.rejected)} rejected, {len(self.conflicts)} conflicts, "
+            f"{len(self.foreign_org_numbers)} foreign org numbers",
             *(f"  {table}: {count}" for table, count in self.table_counts.items()),
             *(f"  rejected row {f.source_row}: {f.message}" for f in self.rejected),
             *(f"  conflict row {f.source_row}: {f.message}" for f in self.conflicts),
+            *(f"  row {f.source_row}: {f.message}" for f in self.foreign_org_numbers),
         ]
         return "\n".join(lines)
 
@@ -68,15 +72,15 @@ class LoadReport:
 def build_tables(rows: Sequence[RegisterRow]) -> RegisterTables:
     """Group rows into one list of plain dicts per table. Pure; no database."""
     tables = RegisterTables()
-    procurements: dict[str, str] = {}
+    procurements: set[str] = set()
     suppliers: set[str] = set()
     supplier_names: dict[tuple[str, str], str | None] = {}
     agreements: dict[str, RegisterRow] = {}
     sub_area_ids: dict[tuple[str, tuple[str, ...]], int] = {}
-    links: set[tuple[str, int]] = set()
+    links: dict[tuple[str, int], RegisterRow] = {}
 
     for row in rows:
-        procurements.setdefault(row.procurement_number, row.framework_area)
+        procurements.add(row.procurement_number)
         suppliers.add(row.org_number)
         supplier_names.setdefault((row.org_number, row.supplier_name), row.former_supplier_name)
         agreements.setdefault(row.agreement_number, row)
@@ -101,12 +105,9 @@ def build_tables(rows: Sequence[RegisterRow]) -> RegisterTables:
             parent_id = sub_area_ids[key]
         if parent_id is None:
             raise ValueError(f"row {row.source_row} has an empty sub-area path")
-        links.add((row.agreement_number, parent_id))
+        links.setdefault((row.agreement_number, parent_id), row)
 
-    tables.procurements = [
-        {"procurement_number": number, "framework_area": area}
-        for number, area in procurements.items()
-    ]
+    tables.procurements = [{"procurement_number": number} for number in sorted(procurements)]
     tables.suppliers = [{"org_number": org} for org in sorted(suppliers)]
     tables.supplier_names = [
         {"org_number": org, "name": name, "former_name": former}
@@ -119,15 +120,18 @@ def build_tables(rows: Sequence[RegisterRow]) -> RegisterTables:
             "sequence": row.sequence,
             "org_number": row.org_number,
             "supplier_name": row.supplier_name,
-            "valid_from": row.valid_from,
-            "valid_to": row.valid_to,
-            "max_extension_to": row.max_extension_to,
         }
         for row in agreements.values()
     ]
     tables.agreement_sub_areas = [
-        {"agreement_number": number, "sub_area_id": sub_area_id}
-        for number, sub_area_id in sorted(links)
+        {
+            "agreement_number": number,
+            "sub_area_id": sub_area_id,
+            "valid_from": row.valid_from,
+            "valid_to": row.valid_to,
+            "max_extension_to": row.max_extension_to,
+        }
+        for (number, sub_area_id), row in sorted(links.items())
     ]
     return tables
 
@@ -184,6 +188,7 @@ def load_register(
         rows_loaded=len(rows),
         rejected=list(rejected),
         conflicts=find_conflicts(rows),
+        foreign_org_numbers=find_foreign_org_numbers(rows),
         table_counts={
             "procurement": len(tables.procurements),
             "supplier": len(tables.suppliers),

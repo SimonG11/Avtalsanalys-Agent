@@ -102,3 +102,14 @@ def test_agreement_can_be_found_with_its_sub_areas(
             "Stockholm",
             "Sydsverige",
         ]
+
+
+def test_dates_are_stored_per_sub_area(engine: Engine, sample_register_xlsx: Path) -> None:
+    load_sample(engine, sample_register_xlsx)
+
+    with engine.connect() as connection:
+        missing = connection.execute(
+            text("SELECT count(*) FROM agreement_sub_area WHERE valid_from IS NULL")
+        ).scalar_one()
+
+    assert missing == 0

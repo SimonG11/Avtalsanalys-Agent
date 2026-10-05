@@ -3,8 +3,10 @@
 What:
     `normalize_rows` converts every `RawRow` into a `RegisterRow` and collects
     the rows it cannot convert, with the reason. `find_conflicts` checks that
-    rows sharing an agreement number agree on supplier and dates, and that
-    rows sharing a procurement agree on framework area.
+    rows sharing an agreement number agree on the supplier, and that no
+    agreement + sub-area appears twice. `find_foreign_org_numbers` lists the
+    suppliers with a non-Swedish registration number, so they can be checked
+    by hand.
 
 Why:
     A bad row must never disappear silently or stop the whole import. Each
@@ -22,6 +24,7 @@ from datetime import date, datetime
 
 from avtalsagent.domain.identifiers import (
     IdentifierError,
+    is_swedish_org_number,
     normalize_org_number,
     parse_agreement_number,
     parse_supplier_name,
@@ -79,39 +82,58 @@ def normalize_row(raw: RawRow) -> RegisterRow:
 
 
 def find_conflicts(rows: Iterable[RegisterRow]) -> list[Finding]:
-    """Report rows that contradict an earlier row for the same agreement or procurement.
+    """Report rows that contradict an earlier row.
 
-    Supplier org number and the three dates belong to the agreement, so every
-    row with the same agreement number must carry the same values. Likewise,
-    one procurement belongs to one framework area.
+    The supplier belongs to the agreement, so every row with the same
+    agreement number must carry the same org number. Dates do not: in the
+    real list one agreement often has different dates per sub-area. A row
+    key (agreement + org number + framework area + sub-area) must appear only once.
+
+    A procurement may span several framework areas (23.3-2965-20 does), so
+    that is not a conflict.
     """
     first_agreement: dict[str, RegisterRow] = {}
-    first_procurement: dict[str, RegisterRow] = {}
+    first_key: dict[tuple[str, str, str, tuple[str, ...]], RegisterRow] = {}
     findings: list[Finding] = []
     for row in rows:
         first = first_agreement.setdefault(row.agreement_number, row)
-        if _agreement_fields(row) != _agreement_fields(first):
+        if row.org_number != first.org_number:
             findings.append(
                 Finding(
                     row.source_row,
-                    f"agreement {row.agreement_number} differs from row {first.source_row} "
-                    "(org number or dates)",
+                    f"agreement {row.agreement_number} has org number {row.org_number}, "
+                    f"row {first.source_row} has {first.org_number}",
                 )
             )
-        first = first_procurement.setdefault(row.procurement_number, row)
-        if row.framework_area != first.framework_area:
+        key = (row.agreement_number, row.org_number, row.framework_area, row.sub_area_path)
+        first = first_key.setdefault(key, row)
+        if first is not row:
             findings.append(
                 Finding(
                     row.source_row,
-                    f"procurement {row.procurement_number} has framework area "
-                    f"{row.framework_area!r}, row {first.source_row} has {first.framework_area!r}",
+                    f"agreement {row.agreement_number} and sub-area "
+                    f"{' / '.join(row.sub_area_path)!r} already on row {first.source_row}",
                 )
             )
     return findings
 
 
-def _agreement_fields(row: RegisterRow) -> tuple[object, ...]:
-    return (row.org_number, row.valid_from, row.valid_to, row.max_extension_to)
+def find_foreign_org_numbers(rows: Iterable[RegisterRow]) -> list[Finding]:
+    """List each supplier whose org number is not Swedish, once, at its first row.
+
+    Foreign numbers are accepted as written. Listing them makes a mistyped
+    Swedish number (e.g. 9 digits) visible instead of silently accepted.
+    """
+    seen: set[str] = set()
+    findings: list[Finding] = []
+    for row in rows:
+        if is_swedish_org_number(row.org_number) or row.org_number in seen:
+            continue
+        seen.add(row.org_number)
+        findings.append(
+            Finding(row.source_row, f"foreign org number {row.org_number} ({row.supplier_name})")
+        )
+    return findings
 
 
 def _text(value: CellValue, column: str) -> str:
