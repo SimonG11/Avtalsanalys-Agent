@@ -54,6 +54,13 @@ _OPENING_QUOTES = "\"'”“„«(["
 # A list number stuck to the start of a title: "7.9 1.Åtaganden vid nyttjanderättstidens
 # slut". It is removed from the title, so the heading is still found.
 _FUSED_LIST_NUMBER = re.compile(r"^\d{1,2}\.(?=[A-ZÅÄÖ])")
+# The rest of a heading that the layout model put in a block of its own, also across a
+# page break: "5.4.1.4 Terroristbrott eller brott med anknytning till" + "terroristverksamhet".
+_CONTINUATION = re.compile(r"^[a-zåäö]")
+_MAX_CONTINUATION_CHARS = 80
+# A contents line without its dot leaders and page number.
+_LEADERS = re.compile(r"\.{3,}|…+")
+_PAGE_AT_END = re.compile(r"\s+\d{1,3}$")
 
 # Scores and penalties of the outline search. A chain is a list of candidates;
 # its value is the sum of their scores minus the penalties of each step.
@@ -84,6 +91,14 @@ class Candidate:
     title: str
     score: float
     listed: bool = False  # the number is in the document's own table of contents
+
+
+@dataclass(frozen=True)
+class ContentsEntry:
+    """A line of the document's own table of contents."""
+
+    number: tuple[int, ...] | None  # None when the line has no number in the text
+    title: str
 
 
 @dataclass(frozen=True)
@@ -161,6 +176,16 @@ def find_candidates(
         else:
             number_text, title = match["number"], match["title"]
         title = _FUSED_LIST_NUMBER.sub("", " ".join(title.split("\n", 1)[0].split()))
+        rest = blocks[index + consumed] if index + consumed < len(blocks) else None
+        if (
+            rest is not None
+            and blocks[index + consumed - 1].kind is BlockKind.HEADING
+            and rest.kind is BlockKind.HEADING
+            and _CONTINUATION.match(rest.text.strip())
+            and len(rest.text) <= _MAX_CONTINUATION_CHARS
+        ):
+            title = f"{title} {' '.join(rest.text.split())}"
+            consumed += 1
         if not _looks_like_title(title):
             continue
         number = parse_number(number_text)
@@ -171,6 +196,92 @@ def find_candidates(
         score = _score(block, title) + (_IN_TOC_BONUS if is_listed else 0.0)
         candidates.append(Candidate(index, consumed, number, title, score, is_listed))
     return candidates
+
+
+def contents_entries(blocks: Sequence[Block]) -> list[ContentsEntry]:
+    """The lines of the document's table of contents in order, without page numbers.
+
+    A title wrapped over two lines has its page number on the second line only,
+    so a line without a page number is joined with the next one.
+    """
+    entries: list[ContentsEntry] = []
+    pending = ""
+    for index in sorted(toc_entries(blocks)):
+        for raw in blocks[index].text.splitlines():
+            line = " ".join(_LEADERS.sub(" ", raw.replace("|", " ")).split())
+            if not line:
+                continue
+            line = f"{pending} {line}".strip()
+            if not _PAGE_AT_END.search(line):
+                pending = line
+                continue
+            pending = ""
+            line = _PAGE_AT_END.sub("", line)
+            match = _NUMBERED.match(line)
+            if match is None:
+                entries.append(ContentsEntry(None, line))
+            else:
+                title = " ".join(match["title"].split())
+                entries.append(ContentsEntry(parse_number(match["number"]), title))
+    return entries
+
+
+def infer_numbers(entries: Sequence[ContentsEntry]) -> list[tuple[int, ...] | None]:
+    """Numbers for the contents entries, also for those printed without one.
+
+    Some documents print one level's numbers as images, so "2.1 Avropsberättigade"
+    is "Avropsberättigade" in the text layer, in the contents and in the body.
+    The numbers can be recovered from the numbered entries around them: the
+    entries between "2 IT-konsulttjänster" and "2.5.1 Delområden" end with 2.5
+    and count back from it (2.1 ... 2.5). A run is only numbered when its first
+    number follows the entry before it and its last is followed by the entry
+    after it without a gap. Once a level is known to be printed as images, a
+    run before a new chapter or at the end gets numbers at that level
+    (between "1 Om vägledningen" and "2 IT-konsulttjänster": 1.1, 1.2). Other
+    unnumbered entries get None.
+    """
+    numbers = [entry.number for entry in entries]
+    runs: list[tuple[int, int]] = []  # [start, end) of each run of unnumbered entries
+    start = None
+    for position, number in enumerate([*numbers, ()]):
+        if number is None and start is None:
+            start = position
+        elif number is not None and start is not None:
+            runs.append((start, position))
+            start = None
+    image_level = None
+    for second_pass in (False, True):
+        for start, end in runs:
+            before = numbers[start - 1] if start > 0 else None
+            after = numbers[end] if end < len(numbers) else None
+            if before is None or numbers[start] is not None:
+                continue
+            if after is not None and len(after) > 1 and not second_pass:
+                last = after[:-1]
+                run = [(*last[:-1], last[-1] - (end - 1 - i)) for i in range(start, end)]
+            elif second_pass and image_level is not None:
+                first = _successor(before, image_level)
+                if first is None:
+                    continue
+                run = [(*first[:-1], first[-1] + i) for i in range(end - start)]
+            else:
+                continue
+            fits = step_penalty(before, run[0]) == 0.0 and (
+                after is None or step_penalty(run[-1], after) == 0.0
+            )
+            if all(part > 0 for number in run for part in number) and fits:
+                numbers[start:end] = run
+                image_level = image_level or len(run[0])
+    return numbers
+
+
+def _successor(number: tuple[int, ...], level: int) -> tuple[int, ...] | None:
+    """The first number at `level` after `number`: 2 -> 2.1 and 2.5.3 -> 2.6 at level 2."""
+    if len(number) >= level:
+        return (*number[: level - 1], number[level - 1] + 1)
+    if len(number) == level - 1:
+        return (*number, 1)
+    return None
 
 
 def _looks_like_title(title: str) -> bool:

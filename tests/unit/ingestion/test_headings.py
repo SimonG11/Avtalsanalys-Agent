@@ -8,7 +8,10 @@ import pytest
 
 from avtalsagent.domain.parsed import Block, BlockKind
 from avtalsagent.ingestion.headings import (
+    ContentsEntry,
+    contents_entries,
     find_candidates,
+    infer_numbers,
     listed_numbers,
     parse_number,
     select_outline,
@@ -262,3 +265,52 @@ def test_levels_and_titles() -> None:
     )
     assert (first.number, first.level, first.title) == ("6.21", 2, "Avtalsbrott och påföljder")
     assert (second.number, second.level) == ("6.21.1", 3)
+
+
+def test_contents_entries_without_leaders_and_page_numbers() -> None:
+    blocks = [
+        Block(
+            kind=BlockKind.TOC,
+            text="Exempelroller och kompetensnivåer IT-konsulttjänster\n"
+            "Resurskonsulttjänster - Verksamhetens IT-behov | ......................... 1\n"
+            "1 Området, kompetensområden och exempelroller ............ | 4\n"
+            "2.5.1 | Delområden ........................................ | 7",
+            page=2,
+        )
+    ]
+    assert contents_entries(blocks) == [
+        ContentsEntry(
+            None,
+            "Exempelroller och kompetensnivåer IT-konsulttjänster "
+            "Resurskonsulttjänster - Verksamhetens IT-behov",
+        ),
+        ContentsEntry((1,), "Området, kompetensområden och exempelroller"),
+        ContentsEntry((2, 5, 1), "Delområden"),
+    ]
+
+
+def test_numbers_are_inferred_only_where_the_neighbours_agree() -> None:
+    def entries(*numbers: str | None) -> list[ContentsEntry]:
+        return [ContentsEntry(parse_number(n) if n else None, "Titel") for n in numbers]
+
+    # 2.1-2.3 end with 2.3 before 2.3.1; then 1.1-1.2 at the same level.
+    assert infer_numbers(entries("1", None, None, "2", None, None, None, "2.3.1")) == [
+        (1,),
+        (1, 1),
+        (1, 2),
+        (2,),
+        (2, 1),
+        (2, 2),
+        (2, 3),
+        (2, 3, 1),
+    ]
+    # Three entries cannot end with 2.2 after 2: no numbers.
+    assert infer_numbers(entries("2", None, None, None, "2.2.1")) == [
+        (2,),
+        None,
+        None,
+        None,
+        (2, 2, 1),
+    ]
+    # Before the first numbered entry (a title page) nothing is inferred.
+    assert infer_numbers(entries(None, "1", "1.1")) == [None, (1,), (1, 1)]

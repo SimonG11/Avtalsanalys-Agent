@@ -104,12 +104,14 @@ class TestCleanBlocks:
         ]
         assert [b.text for b in clean_blocks(document(*blocks))] == [sentence]
 
-    def test_list_numbers_put_last_by_the_layout_model_are_moved_first(self) -> None:
+    def test_list_markers_put_last_by_the_layout_model_are_moved_first(self) -> None:
         items = [
             "Skriftliga ändringar och tillägg till säkerhetsskyddsavtal 1.",
             "Säkerhetsskyddsavtal 2.",
-            "· Bilaga Prisjustering",
+            "uppfyller krav ställda i Kontrakt och i Ramavtalet; a.",
+            "avseende Programvara uppfyller de krav som Kund har beskrivit; b.",
             "Kontraktet med bilagor (såsom bilagorna Allmänna villkor och Servicenivåavtal) 3.",
+            "sköta administrativa rutiner ·",
             "Avtalet gäller enligt punkt 6.",  # not the next number: a sentence
             "Leverans sker enligt bilaga 1.",  # a run of one: a sentence
         ]
@@ -117,11 +119,38 @@ class TestCleanBlocks:
         assert [b.text for b in clean_blocks(document(*blocks))] == [
             "1. Skriftliga ändringar och tillägg till säkerhetsskyddsavtal",
             "2. Säkerhetsskyddsavtal",
-            "· Bilaga Prisjustering",
+            "a. uppfyller krav ställda i Kontrakt och i Ramavtalet;",
+            "b. avseende Programvara uppfyller de krav som Kund har beskrivit;",
             "3. Kontraktet med bilagor (såsom bilagorna Allmänna villkor och Servicenivåavtal)",
+            "· sköta administrativa rutiner",
             "Avtalet gäller enligt punkt 6.",
             "Leverans sker enligt bilaga 1.",
         ]
+
+    def test_text_repeated_in_the_middle_of_pages_is_kept(self) -> None:
+        # A running header is at the top of every page; the role description repeats
+        # in the middle of every page and is body text.
+        header = "23.3-14537-2023 Bemanningstjänster"
+        intro = "I denna tjänst kan nedan arbetsuppgifter förekomma:"
+        blocks = []
+        for page in range(1, 5):
+            blocks += [
+                block(header, page),
+                heading(f"5.1.{page} Administratör {page}", page),
+                block("Arbetsuppgifter", page),
+                block(intro, page),
+                block(f"sköta rutiner för enhet {page}", page, BlockKind.LIST_ITEM),
+                block("Kompetenskrav", page),
+                block("Gymnasium eller likvärdig utbildning", page),
+                block(f"Sida {page} (4)", page),
+            ]
+        texts = [b.text for b in clean_blocks(document(*blocks))]
+        assert header not in texts
+        assert texts.count(intro) == 4
+
+    def test_the_title_of_the_removed_contents_is_removed(self) -> None:
+        blocks = [heading("Innehåll", 1), heading("6.1 Innehållsförteckning", 2)]
+        assert [b.text for b in clean_blocks(document(*blocks))] == ["6.1 Innehållsförteckning"]
 
     def test_a_line_on_few_pages_is_kept(self) -> None:
         blocks = [block("Ramavtalsleverantören ska ha en försäkring.", page) for page in (1, 2)]
@@ -252,6 +281,105 @@ class TestSplitSections:
         assert outline is OutlineKind.NONE
         assert len(sections) == 1
 
+    def test_a_section_without_its_parent_number_has_no_parent(self) -> None:
+        # A template whose sections 2-2.3 were deleted; its contents list 2.4.
+        _, sections = split_sections(
+            document(
+                block("1.3 Hållbarhetsmål ........................ 3", 1),
+                block("2.4 Särskilda kontraktsvillkor ............ 4", 1),
+                heading("1 Inledning", 2),
+                heading("1.3 Hållbarhetsmål", 2),
+                heading("2.4 Särskilda kontraktsvillkor", 3),
+                heading("2.4.1 Villkor för miljöhänsyn vid fullgörande av ramavtalet", 3),
+                heading("3 Kravkatalog", 4),
+            )
+        )
+        assert [s.path for s in sections] == [
+            ("1 Inledning",),
+            ("1 Inledning", "1.3 Hållbarhetsmål"),
+            ("2.4 Särskilda kontraktsvillkor",),
+            (
+                "2.4 Särskilda kontraktsvillkor",
+                "2.4.1 Villkor för miljöhänsyn vid fullgörande av ramavtalet",
+            ),
+            ("3 Kravkatalog",),
+        ]
+
+    def test_a_heading_split_over_two_blocks_is_joined(self) -> None:
+        _, sections = split_sections(
+            document(
+                heading("5.4.1.3 Bedrägeri", 31),
+                block("Har företaget dömts för bedrägeri?", 31),
+                heading("5.4.1.4 Terroristbrott eller brott med anknytning till", 32),
+                heading("terroristverksamhet", 32),
+                block("Har företaget dömts för terroristbrott?", 32),
+            )
+        )
+        assert sections[-1].title == (
+            "Terroristbrott eller brott med anknytning till terroristverksamhet"
+        )
+        assert sections[-1].text.startswith(
+            "5.4.1.4 Terroristbrott eller brott med anknytning till terroristverksamhet\n\nHar"
+        )
+
+    def test_numbers_printed_as_images_come_from_the_contents(self) -> None:
+        # The second-level numbers are images: neither the contents nor the headings
+        # have them in the text layer. The contents order gives them back.
+        contents = [
+            "1 Om vägledningen .............................. | 5",
+            "Inledning ...................................... | 5",
+            "Utveckling av vägledningen ..................... | 5",
+            "2 IT-konsulttjänster ........................... | 5",
+            "Avropsberättigade .............................. | 5",
+            "Ramavtalets omfattning ......................... | 6",
+            "2.2.1 | Delområden ............................... | 7",
+        ]
+        _, sections = split_sections(
+            document(
+                block("\n".join(contents), 2, BlockKind.TOC),
+                heading("1 Om vägledningen", 5),
+                heading("Inledning", 5),
+                block("Vägledningen beskriver hur man avropar.", 5),
+                heading("Utveckling av vägledningen", 5),
+                heading("2 IT-konsulttjänster", 5),
+                heading("Avropsberättigade", 5),
+                heading("Ramavtalets omfattning", 6),
+                heading("2.2.1 Delområden", 7),
+                block("Ramavtalsområdet består av fem delområden.", 7),
+            )
+        )
+        assert [(s.number, s.title, s.parent) for s in sections] == [
+            ("1", "Om vägledningen", None),
+            ("1.1", "Inledning", 0),
+            ("1.2", "Utveckling av vägledningen", 0),
+            ("2", "IT-konsulttjänster", None),
+            ("2.1", "Avropsberättigade", 3),
+            ("2.2", "Ramavtalets omfattning", 3),
+            ("2.2.1", "Delområden", 5),
+        ]
+
+    def test_numbered_list_items_among_many_headings_are_not_the_outline(self) -> None:
+        # Microsoft's product terms: unnumbered headings, and numbered list items.
+        blocks = []
+        for name in ("Azure", "Dynamics 365", "Office 365", "Windows"):
+            blocks += [
+                heading(f"{name}", 3),
+                heading(f"Villkor för {name}", 3),
+                heading(f"Licensiering av {name}", 3),
+                block(f"Kunden får använda {name} enligt följande.", 3),
+            ]
+        blocks[2:2] = [
+            block("1. Kunden har tillräckliga rättigheter.", 3, BlockKind.LIST_ITEM),
+            block("2. Kunden ändrar inte programvaran.", 3, BlockKind.LIST_ITEM),
+        ]
+        outline, sections = split_sections(document(*blocks))
+        assert outline is OutlineKind.HEADINGS
+        assert [s.title for s in sections][:3] == [
+            "Azure",
+            "Villkor för Azure",
+            "Licensiering av Azure",
+        ]
+
     def test_a_document_without_headings_is_one_section(self) -> None:
         outline, sections = split_sections(
             document(block("Timpriser"), block("Konsult 1 | 950 kr"))
@@ -277,8 +405,8 @@ class TestSplitSections:
                 file_type="docx",
             )
         )
+        # "Innehåll", the title of the removed table of contents, is removed too.
         assert [(s.number, s.title, s.level) for s in sections] == [
-            (None, "Text före första rubriken", 0),
             ("15", "Ansvar för skada i samband med behandling", 1),
             ("16", "Tvistelösning", 1),
             ("16.1", "Bestämmelser om tvist regleras i ramavtalet.", 2),

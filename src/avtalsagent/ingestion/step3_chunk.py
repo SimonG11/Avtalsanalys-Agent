@@ -44,7 +44,9 @@ from enum import StrEnum
 from avtalsagent.domain.parsed import Block, BlockKind, Chunk, ParsedDocument, Section
 from avtalsagent.ingestion.headings import (
     Heading,
+    contents_entries,
     find_candidates,
+    infer_numbers,
     listed_numbers,
     select_outline,
     toc_entries,
@@ -72,22 +74,35 @@ _PAGE_LABEL_MAX_CHARS = 100
 # inte föreligger."). So a header or footer is removed only when it is on more than one
 # page or holds a page counter; otherwise it is kept as text.
 _HEADER_KINDS = (BlockKind.PAGE_HEADER, BlockKind.PAGE_FOOTER)
-# The layout model sometimes puts a list item's number last ("Säkerhetsskyddsavtal 2."),
-# when the number sits a little lower on the line than the text. The number is moved to
-# the front when list items end with 1, 2, 3 ... in order; a single item ending with a
-# number ("se punkt 6.") is left as it is.
-_TRAILING_NUMBER = re.compile(r"^(?P<text>.*\S)\s+(?P<number>\d{1,3})\.$", re.DOTALL)
-_LEADING_MARKER = re.compile(r"^\(?(?:\d{1,3}|[a-zA-Z])[.)]\s")
+# The layout model sometimes puts a list item's marker last ("Säkerhetsskyddsavtal 2.",
+# "uppfyller krav ställda i Kontrakt och i Ramavtalet; a.", "sköta administrativa
+# rutiner ·"), when the marker sits a little lower on the line than the text. A number
+# or letter is moved to the front when list items end with 1, 2, 3 ... or a, b, c ... in
+# order; a single item ending with one ("se punkt 6.") is left as it is. A bullet at
+# the end is always moved.
+_TRAILING_MARKER = re.compile(r"^(?P<text>.*\S)\s+(?P<marker>\d{1,3}|[a-z])(?P<dot>[.)])$", re.S)
+_TRAILING_BULLET = re.compile(r"^(?P<text>.*\S)\s+(?P<marker>[·•▪◦●])$", re.DOTALL)
+_LEADING_MARKER = re.compile(r"^(?:\(?(?:\d{1,3}|[a-zA-Z])[.)]|[·•▪◦●\-–])\s")
 # A short line on at least this share of the pages (and at least three) is a running
 # header or footer, e.g. "23.3-5890-2023 IT-drift 2023, område Mindre".
 _REPEATED_SHARE = 0.3
 _REPEATED_MIN_PAGES = 3
 _REPEATED_MAX_CHARS = 150
+# ...and it stands among the first or last blocks of its page. Text repeated in the
+# middle of pages is body text ("I denna tjänst kan nedan arbetsuppgifter förekomma:" in
+# every role of a requirements list) and stays.
+_PAGE_EDGE_BLOCKS = 3
+_PAGE_EDGE_SHARE = 0.8
 # A numbered outline is used when it has at least this many headings and the first
 # one comes before this share of the document's text; otherwise the numbers are
 # probably a list or a table, not the document's structure.
 _MIN_NUMBERED_HEADINGS = 2
 _MAX_TEXT_BEFORE_FIRST_HEADING = 0.5
+# Numbers that are mostly list items, in a document where the parser found many more
+# headings without numbers, are a list (Microsoft's product terms number a few list
+# items in 222 pages with 1,500 headings), so the parser's headings are used instead.
+_LIST_OUTLINE_SHARE = 0.5
+_HEADINGS_PER_LIST_HEADING = 3
 _SENTENCE_END = re.compile(r"(?<=[.!?:;])\s+(?=[A-ZÅÄÖ0-9\"”(])")
 _PREAMBLE_TITLE = "Text före första rubriken"
 # An entry in a TendSign "Frågor och svar" printout: "12 Publik fråga" in the text
@@ -189,9 +204,10 @@ def clean_blocks(document: ParsedDocument) -> list[Block]:
         and not _is_page_label(block.text)
         and _normalise(block.text) not in repeated
         and not (block.kind in _HEADER_KINDS and _is_running_header(block, running))
+        and _normalise(block.text) not in _CONTENTS_TITLES
     ]
     toc = toc_entries(kept)
-    return _numbers_first([block for index, block in enumerate(kept) if index not in toc])
+    return _markers_first([block for index, block in enumerate(kept) if index not in toc])
 
 
 def _is_page_label(text: str) -> bool:
@@ -201,25 +217,33 @@ def _is_page_label(text: str) -> bool:
     return any(match.end() == len(text) for match in _PAGE_COUNTER.finditer(text))
 
 
-def _numbers_first(blocks: list[Block]) -> list[Block]:
-    """The blocks with list numbers moved from the end of an item to the front."""
-    runs: list[list[tuple[int, re.Match[str]]]] = []
+def _markers_first(blocks: list[Block]) -> list[Block]:
+    """The blocks with list markers moved from the end of an item to the front."""
+    moved: dict[int, re.Match[str]] = {}
+    # Runs of items ending with 1, 2, 3 ... and with a, b, c ..., kept apart so that a
+    # lettered list inside item 2 does not break the numbered list around it.
+    runs: dict[bool, list[list[tuple[int, re.Match[str], int]]]] = {True: [], False: []}
     for index, block in enumerate(blocks):
         if block.kind is not BlockKind.LIST_ITEM or _LEADING_MARKER.match(block.text):
             continue
-        if (match := _TRAILING_NUMBER.match(block.text)) is None:
-            continue
-        number = int(match["number"])
-        if runs and number == int(runs[-1][-1][1]["number"]) + 1:
-            runs[-1].append((index, match))
-        elif number == 1:
-            runs.append([(index, match)])
-    for run in runs:
-        if len(run) < 2:
-            continue
-        for index, match in run:
-            text = f"{match['number']}. {match['text']}"
-            blocks[index] = blocks[index].model_copy(update={"text": text})
+        if bullet := _TRAILING_BULLET.match(block.text):
+            moved[index] = bullet
+        elif match := _TRAILING_MARKER.match(block.text):
+            marker = match["marker"]
+            digits = marker.isdigit()
+            place = int(marker) if digits else ord(marker) - ord("a") + 1
+            kind_runs = runs[digits]
+            if kind_runs and place == kind_runs[-1][-1][2] + 1:
+                kind_runs[-1].append((index, match, place))
+            elif place == 1:
+                kind_runs.append([(index, match, place)])
+    for run in (run for kind_runs in runs.values() for run in kind_runs):
+        if len(run) >= 2:
+            moved |= {index: match for index, match, _ in run}
+    for index, match in moved.items():
+        dot = match.groupdict().get("dot") or ""
+        text = f"{match['marker']}{dot} {match['text']}"
+        blocks[index] = blocks[index].model_copy(update={"text": text})
     return blocks
 
 
@@ -243,14 +267,33 @@ def _normalise(text: str) -> str:
 
 
 def _repeated_lines(blocks: Sequence[Block], page_count: int) -> set[str]:
+    """Short texts on many pages, at the top or bottom of the page: running headers."""
     if page_count < _REPEATED_MIN_PAGES:
         return set()
+    on_page: defaultdict[int, list[int]] = defaultdict(list)
+    for position, block in enumerate(blocks):
+        if block.page is not None:
+            on_page[block.page].append(position)
+    edges = {
+        position
+        for positions in on_page.values()
+        for position in (*positions[:_PAGE_EDGE_BLOCKS], *positions[-_PAGE_EDGE_BLOCKS:])
+    }
     pages: defaultdict[str, set[int]] = defaultdict(set)
-    for block in blocks:
+    seen: Counter[str] = Counter()
+    at_edge: Counter[str] = Counter()
+    for position, block in enumerate(blocks):
         if block.page is not None and len(block.text) <= _REPEATED_MAX_CHARS:
-            pages[_normalise(block.text)].add(block.page)
+            text = _normalise(block.text)
+            pages[text].add(block.page)
+            seen[text] += 1
+            at_edge[text] += position in edges
     needed = max(_REPEATED_MIN_PAGES, _REPEATED_SHARE * page_count)
-    return {text for text, seen in pages.items() if len(seen) >= needed}
+    return {
+        text
+        for text, on in pages.items()
+        if len(on) >= needed and at_edge[text] >= _PAGE_EDGE_SHARE * seen[text]
+    }
 
 
 def split_sections(document: ParsedDocument) -> tuple[OutlineKind, list[Section]]:
@@ -265,6 +308,7 @@ def split_sections(document: ParsedDocument) -> tuple[OutlineKind, list[Section]
         blocks,
     ):
         headings = _with_unnumbered_parts(headings, blocks)
+        headings = _with_contents_numbers(headings, blocks, document.blocks)
     else:
         outline = OutlineKind.HEADINGS
         headings = [
@@ -283,7 +327,7 @@ def split_sections(document: ParsedDocument) -> tuple[OutlineKind, list[Section]
     open_sections: list[Section] = []  # the current section and its ancestors
     for i, heading in enumerate(headings):
         end = headings[i + 1].index if i + 1 < len(headings) else len(blocks)
-        while open_sections and open_sections[-1].level >= heading.level:
+        while open_sections and not _encloses(open_sections[-1], heading):
             open_sections.pop()
         parent = open_sections[-1] if open_sections else None
         number = heading.number
@@ -291,11 +335,11 @@ def split_sections(document: ParsedDocument) -> tuple[OutlineKind, list[Section]
         own = f"{number} {title}" if number else title
         path = (*(parent.path if parent else ()), own)
         own_blocks = list(blocks[heading.index : end])
-        if heading.consumed == 2:
-            # The number stood alone on its line; join it with the title that followed.
-            number_block, title_block = own_blocks[:2]
-            joined = f"{number_block.text.strip()} {title_block.text.strip()}"
-            own_blocks[:2] = [number_block.model_copy(update={"text": joined})]
+        if heading.consumed > 1:
+            # The number stood alone on its line, or the heading went on in the next
+            # block: join them into one heading line.
+            joined = " ".join(block.text.strip() for block in own_blocks[: heading.consumed])
+            own_blocks[: heading.consumed] = [own_blocks[0].model_copy(update={"text": joined})]
         section = _section(
             len(sections),
             number,
@@ -308,6 +352,59 @@ def split_sections(document: ParsedDocument) -> tuple[OutlineKind, list[Section]
         sections.append(section)
         open_sections.append(section)
     return outline, sections
+
+
+def _encloses(section: Section, heading: Heading) -> bool:
+    """True if `heading` starts a section inside `section`.
+
+    It must be on a deeper level, and a numbered section only encloses the
+    numbers that start with its own: 2.4 is not inside 1 even if 2 is missing.
+    """
+    if section.level >= heading.level:
+        return False
+    if section.number is None or heading.number is None:
+        return True
+    own = section.number.split(".")
+    return heading.number.split(".")[: len(own)] == own
+
+
+def _with_contents_numbers(
+    headings: list[Heading], blocks: Sequence[Block], document_blocks: Sequence[Block]
+) -> list[Heading]:
+    """Add the headings whose number is printed as an image (see `infer_numbers`).
+
+    The number comes from the order of the table of contents. The heading is
+    the parser's unnumbered heading with the entry's title, found between the
+    numbered headings that come before and after the number.
+    """
+    entries = contents_entries(document_blocks)
+    inferred = [
+        (number, _normalise(entry.title))
+        for entry, number in zip(entries, infer_numbers(entries), strict=True)
+        if entry.number is None and number is not None
+    ]
+    if not inferred:
+        return headings
+    taken = {h.index + offset for h in headings for offset in range(h.consumed)}
+    numbered = sorted(
+        (tuple(int(part) for part in h.number.split(".")), h.index) for h in headings if h.number
+    )
+    added: list[Heading] = []
+    for number, title in inferred:
+        low = max((index for other, index in numbered if other < number), default=-1)
+        high = min((index for other, index in numbered if other > number), default=len(blocks))
+        for index in range(low + 1, high):
+            block = blocks[index]
+            if (
+                block.kind is BlockKind.HEADING
+                and index not in taken
+                and _normalise(block.text) == title
+            ):
+                text = " ".join(block.text.split())
+                added.append(Heading(index, 1, ".".join(map(str, number)), len(number), text))
+                taken.add(index)
+                break
+    return sorted([*headings, *added], key=lambda heading: heading.index)
 
 
 def _questions(blocks: Sequence[Block]) -> list[Heading]:
@@ -349,6 +446,16 @@ def _with_unnumbered_parts(headings: list[Heading], blocks: Sequence[Block]) -> 
 
 def _usable(headings: Sequence[Heading], blocks: Sequence[Block]) -> bool:
     if len(headings) < _MIN_NUMBERED_HEADINGS:
+        return False
+    in_outline = {heading.index for heading in headings}
+    as_list = sum(blocks[heading.index].kind is BlockKind.LIST_ITEM for heading in headings)
+    other_headings = sum(
+        block.kind is BlockKind.HEADING and index not in in_outline
+        for index, block in enumerate(blocks)
+    )
+    if as_list >= _LIST_OUTLINE_SHARE * len(
+        headings
+    ) and other_headings >= _HEADINGS_PER_LIST_HEADING * len(headings):
         return False
     total = sum(len(block.text) for block in blocks)
     before = sum(len(block.text) for block in blocks[: headings[0].index])
