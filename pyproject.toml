@@ -1,0 +1,48 @@
+[project]
+name = "avtalsagent"
+version = "0.1.0"
+description = "Agentic RAG over Statens inköpscentral framework agreements, with verified citations."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.13",
+    "pydantic-settings>=2.15",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4",
+    "pre-commit>=4.6",
+    "pytest>=9.1",
+    "ruff>=0.16",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.17,<0.9"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/F: pycodestyle and pyflakes, I: import order, B: likely bugs, UP: modern syntax,
+# SIM: simplifications, D: docstrings (every module explains What/Why/How).
+select = ["E", "F", "I", "B", "UP", "SIM", "D"]
+# Modules and packages must have a docstring (D100, D104). Classes and functions
+# get one when they need explaining, so the rest of D1xx is off.
+ignore = ["D101", "D102", "D103", "D105", "D106", "D107"]
+pydocstyle.convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"

@@ -1,0 +1,46 @@
+# Continuous integration: runs on every push and pull request.
+# Three jobs, each answering one question:
+#   lint    - does the code follow the style and type rules?
+#   test    - do the tests pass?
+#   compose - does the database in docker-compose.yml start, with pgvector?
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked
+      - run: uv run ruff format --check
+      - run: uv run ruff check
+      - run: uv run mypy
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked
+      - run: uv run pytest
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker compose up -d postgres --wait
+      - name: Check that pgvector is installed
+        run: >
+          docker compose exec -T postgres
+          psql -U avtalsagent -d avtalsagent -tAc
+          "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+          | grep -E '^[0-9]+\.[0-9]+'
+      - if: always()
+        run: docker compose down -v
