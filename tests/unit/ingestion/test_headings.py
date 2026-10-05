@@ -1,0 +1,202 @@
+"""Tests for avtalsagent.ingestion.headings.
+
+The lines are verbatim from avropa.se documents (2026-10-05), mostly from
+"Allmänna villkor" for IT-drift 2023 (23.3-5890-2023).
+"""
+
+import pytest
+
+from avtalsagent.domain.parsed import Block, BlockKind
+from avtalsagent.ingestion.headings import (
+    find_candidates,
+    parse_number,
+    select_outline,
+    step_penalty,
+    toc_entries,
+)
+
+
+def text(line: str, page: int = 1) -> Block:
+    return Block(kind=BlockKind.TEXT, text=line, page=page)
+
+
+def heading(line: str, page: int = 1) -> Block:
+    return Block(kind=BlockKind.HEADING, text=line, page=page)
+
+
+def numbers(blocks: list[Block]) -> list[str | None]:
+    return [h.number for h in select_outline(find_candidates(blocks))]
+
+
+@pytest.mark.parametrize(
+    ("line", "number", "title"),
+    [
+        (
+            "6.21.9 Ramavtalsleverantörens uppsägningsrätt",
+            (6, 21, 9),
+            "Ramavtalsleverantörens uppsägningsrätt",
+        ),
+        ("6. Allmänna villkor", (6,), "Allmänna villkor"),
+        ("1\tPersonuppgiftsbiträdesavtalets syfte", (1,), "Personuppgiftsbiträdesavtalets syfte"),
+        (
+            "2.\tKontaktperson för meddelanden och onlineadministration.",
+            (2,),
+            "Kontaktperson för meddelanden och onlineadministration.",
+        ),
+        ("1.1 ”Avtalet” avser detta ramavtal", (1, 1), "”Avtalet” avser detta ramavtal"),
+    ],
+)
+def test_numbered_lines_are_candidates(line: str, number: tuple[int, ...], title: str) -> None:
+    [candidate] = find_candidates([text(line)])
+    assert candidate.number == number
+    assert candidate.title == title
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "2024-09-25",  # a date
+        "100 000 kronor per år",  # an amount: the title starts with a digit
+        "9241-11 samt kompetens om metoder för användarcentrerad systemutveckling",
+        "30 dagar efter fakturadatum",  # a wrapped line: lower-case title
+        "2. FN:s barnkonvention (artikel 32),",  # a list item ending with a comma
+        "8 X",  # a ticked box, not a title
+        "2021000829",  # an organisation number
+    ],
+)
+def test_lines_that_are_not_headings(line: str) -> None:
+    assert find_candidates([text(line)]) == []
+
+
+def test_a_number_alone_takes_its_title_from_the_next_block() -> None:
+    [candidate] = find_candidates([text("6.21.9"), text("Ramavtalsleverantörens uppsägningsrätt")])
+    assert candidate.number == (6, 21, 9)
+    assert candidate.consumed == 2
+    assert candidate.title == "Ramavtalsleverantörens uppsägningsrätt"
+
+
+def test_parser_headings_score_higher_than_list_items() -> None:
+    as_heading, as_text, as_list = (
+        find_candidates([Block(kind=kind, text="14 Uppsägning", page=1)])[0].score
+        for kind in (BlockKind.HEADING, BlockKind.TEXT, BlockKind.LIST_ITEM)
+    )
+    assert as_heading > as_text > as_list
+
+
+@pytest.mark.parametrize(
+    ("previous", "current", "penalty"),
+    [
+        ("6.6", "6.6.1", 0.0),  # first child
+        ("6.6.8", "6.6.9", 0.0),  # next sibling
+        ("6.6.8", "6.7", 0.0),  # back up one level
+        ("6.21.10", "6.22", 0.0),
+        ("6.9.2.2", "6.10", 0.0),  # back up two levels
+        ("6.2", "6.4", 0.75),  # one number missing
+        ("6", "6.1.1", 1.0),  # a level without its own heading
+        ("2.5.3", "2.7.1", 1.75),  # one number missing and a level skipped
+        ("6.6.8", "6.6.8", None),  # the same number again
+        ("6.6.8", "6.6", None),  # a parent after its child
+        ("6.6.8", "2", None),  # a numbered list item inside 6.6.8
+        ("1.13.3", "1", None),  # numbering never restarts
+        ("4", "4.2.3", None),  # skips 4.2.1 and 4.2.2
+    ],
+)
+def test_step_penalty(previous: str, current: str, penalty: float | None) -> None:
+    assert step_penalty(parse_number(previous), parse_number(current)) == penalty
+
+
+def test_the_outline_skips_a_numbered_list_inside_a_section() -> None:
+    blocks = [
+        heading("1.13 Ersättning till Kammarkollegiet och redovisning av statistik"),
+        heading("1.13.3 Redovisning och statistik"),
+        text("Ramavtalsleverantören ska redovisa:"),
+        text("1 Avropsberättigads ID/referensnummer eller motsvarande"),
+        text("2 Avropsberättigad"),
+        text("3 Avropsordning (förnyad konkurrensutsättning eller särskild fördelningsnyckel)"),
+        heading("1.14 Uppföljning"),
+        heading("1.15 Avtalsbrott och påföljder"),
+    ]
+    assert numbers(blocks) == ["1.13", "1.13.3", "1.14", "1.15"]
+
+
+def test_the_outline_can_start_above_one() -> None:
+    blocks = [
+        heading("6. Allmänna villkor"),
+        heading("6.1 Innehållsförteckning"),
+        heading("6.2 Allmänt"),
+        text("Dessa Allmänna villkor utgör en del av Kammarkollegiets Ramavtal."),
+        heading("6.3 Definitioner"),
+    ]
+    assert numbers(blocks) == ["6", "6.1", "6.2", "6.3"]
+
+
+def test_headings_whose_parents_have_no_number_in_the_text() -> None:
+    # "Vägledning IT-konsulttjänster": 2.1-2.5 are headings without numbers.
+    blocks = [
+        heading("2 IT-konsulttjänster Resurskonsulter och uppdragskonsulter"),
+        heading("Avropsberättigade"),
+        heading("2.5.1 Delområden"),
+        heading("2.5.2 Kompetensområden och exempelroller"),
+        heading("2.7.1 Särskild fördelningsnyckel och avropsblankett"),
+        heading("3 Om avropet"),
+    ]
+    assert numbers(blocks) == ["2", "2.5.1", "2.5.2", "2.7.1", "3"]
+
+
+class TestTableOfContents:
+    TOC = [
+        heading("Innehåll", page=2),
+        text("6. Allmänna villkor 4", page=2),
+        text("6.1 Innehållsförteckning 4", page=2),
+        text("6.2 Allmänt 4", page=2),
+        text("6.3 Definitioner 4", page=2),
+    ]
+    BODY = [
+        heading("6. Allmänna villkor", page=4),
+        heading("6.1 Innehållsförteckning", page=4),
+        heading("6.2 Allmänt", page=4),
+        text("Dessa Allmänna villkor utgör en del av Kammarkollegiets Ramavtal.", page=4),
+        heading("6.3 Definitioner", page=4),
+    ]
+
+    def test_entries_ending_in_page_numbers_are_found(self) -> None:
+        assert toc_entries(self.TOC + self.BODY) == {1, 2, 3, 4}
+
+    def test_entries_are_not_candidates_but_their_numbers_raise_the_body_headings(self) -> None:
+        with_toc = find_candidates(self.TOC + self.BODY)
+        without_toc = find_candidates(self.BODY)
+        assert [c.index for c in with_toc] == [5, 6, 7, 9]
+        assert all(a.score > b.score for a, b in zip(with_toc, without_toc, strict=True))
+
+    def test_tab_and_dot_leaders_mark_a_single_entry(self) -> None:
+        blocks = [
+            text("1\tPersonuppgiftsbiträdesavtalets syfte\t3"),
+            text("Mall för redovisning ....................................... 1"),
+        ]
+        assert toc_entries(blocks) == {0, 1}
+
+    def test_a_single_heading_ending_in_a_number_is_not_an_entry(self) -> None:
+        blocks = [
+            heading("2.4.4 Arbetsorder för konsult- och supporttjänster Bilaga 12 och Bilaga 13"),
+            text("Microsoft erbjuder konsulttjänster enligt Bilaga 12."),
+        ]
+        assert toc_entries(blocks) == set()
+        assert numbers(blocks) == ["2.4.4"]
+
+    def test_a_toc_block_from_the_parser_is_an_entry(self) -> None:
+        block = Block(kind=BlockKind.TOC, text="1 Inledning 2\n2 Kravkatalog 3", page=2)
+        assert toc_entries([block]) == {0}
+
+
+def test_no_candidates_give_no_outline() -> None:
+    assert select_outline([]) == []
+
+
+def test_levels_and_titles() -> None:
+    [first, second] = select_outline(
+        find_candidates(
+            [heading("6.21 Avtalsbrott och påföljder"), heading("6.21.1 Ansvar vid Försening")]
+        )
+    )
+    assert (first.number, first.level, first.title) == ("6.21", 2, "Avtalsbrott och påföljder")
+    assert (second.number, second.level) == ("6.21.1", 3)

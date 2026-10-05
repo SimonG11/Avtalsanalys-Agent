@@ -25,9 +25,18 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    env:
+      # The PDF tests need Docling's layout model. Locally they are skipped when it
+      # cannot be downloaded; in CI a missing model is an error.
+      AVTALSAGENT_REQUIRE_MODELS: "1"
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
+      - name: Cache the layout model downloaded from Hugging Face
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: huggingface-${{ hashFiles('uv.lock') }}
       - run: uv sync --locked
       - run: uv run pytest
 

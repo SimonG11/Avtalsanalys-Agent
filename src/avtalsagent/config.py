@@ -73,6 +73,11 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    @property
+    def parsed_dir(self) -> Path:
+        """Where step 2 stores each parsed file as JSON (M3)."""
+        return self.data_dir / "parsed"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

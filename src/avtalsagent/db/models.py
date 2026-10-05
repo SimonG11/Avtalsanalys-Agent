@@ -5,7 +5,8 @@ What:
     procurement, supplier, supplier name, agreement, sub-area and the link
     between agreements and sub-areas. The document tables (M2): the agreement
     pages on avropa.se, the files downloaded from them and which page links to
-    which file.
+    which file. The section tables (M3): each parsed file, its numbered
+    sections and the chunks they are cut into for search.
 
 Why:
     The Excel list has one row per supplier and sub-area. Splitting it into
@@ -17,8 +18,9 @@ Why:
 
 How:
     Each class is one table. Alembic migrations in `db/migrations/` create
-    the tables; `register/load.py` fills them. The tables mirror the most
-    recently loaded list; `register_version` records every load.
+    the tables; `register/load.py`, `ingestion/catalog.py` and
+    `ingestion/section_store.py` fill them. The register tables mirror the
+    most recently loaded list; `register_version` records every load.
 """
 
 from datetime import date, datetime
@@ -28,6 +30,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     Text,
@@ -169,3 +172,58 @@ class AgreementPageDocument(Base):
     # Set for a document in a supplier's card, e.g. "23.3-5834-2022-018".
     agreement_number: Mapped[str | None] = mapped_column(String(40), index=True)
     site_updated: Mapped[date | None] = mapped_column(Date)  # "Senast uppdaterad"
+
+
+class ParsedFile(Base):
+    """A downloaded file after steps 2 and 3: how it was read and how it was split."""
+
+    __tablename__ = "parsed_file"
+
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)  # as in source_document
+    file_type: Mapped[str] = mapped_column(String(8))
+    parser: Mapped[str] = mapped_column(Text)  # parser and version, e.g. "docling 2.133.0 (...)"
+    page_count: Mapped[int] = mapped_column(Integer)  # 0 for Word files
+    # Scanned pages without a text layer; their text is missing until OCR (M3b).
+    pages_needing_ocr: Mapped[list[int]] = mapped_column(ARRAY(Integer))
+    outline: Mapped[str] = mapped_column(String(16))  # "numbered", "headings" or "none"
+    section_count: Mapped[int] = mapped_column(Integer)
+    chunk_count: Mapped[int] = mapped_column(Integer)
+    chunked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DocumentSection(Base):
+    """A numbered section of a file, or the text before its first heading."""
+
+    __tablename__ = "document_section"
+
+    sha256: Mapped[str] = mapped_column(
+        ForeignKey("parsed_file.sha256", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)  # 0-based order
+    number: Mapped[str | None] = mapped_column(String(32))  # e.g. "6.21.9"
+    title: Mapped[str] = mapped_column(Text)
+    level: Mapped[int] = mapped_column(Integer)  # 0 for the text before the first heading
+    parent_position: Mapped[int | None] = mapped_column(Integer)
+    path: Mapped[list[str]] = mapped_column(ARRAY(Text))  # headings from the top down
+    page_start: Mapped[int | None] = mapped_column(Integer)
+    page_end: Mapped[int | None] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+
+
+class SectionChunk(Base):
+    """A piece of a section, the unit that is searched (parent-child)."""
+
+    __tablename__ = "section_chunk"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["sha256", "section_position"],
+            ["document_section.sha256", "document_section.position"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    section_position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)  # order within the section
+    context_header: Mapped[str] = mapped_column(Text)  # "ramavtal › dokument › rubrikstig"
+    text: Mapped[str] = mapped_column(Text)

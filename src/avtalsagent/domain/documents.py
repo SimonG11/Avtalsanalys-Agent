@@ -16,8 +16,8 @@ Why:
 
 How:
     `ingestion/avropa_pages.py` builds these objects from the page HTML.
-    `ingestion/step1_fetch.py` downloads the linked files. M3 adds the parsed
-    content of a document (sections, references) to this module.
+    `ingestion/step1_fetch.py` downloads the linked files. The parsed content
+    of a file (blocks, sections, chunks) is in `domain/parsed.py`.
 """
 
 from datetime import date

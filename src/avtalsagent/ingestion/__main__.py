@@ -1,31 +1,46 @@
 """Command line for the ingestion workflow.
 
 What:
-    `uv run python -m avtalsagent.ingestion fetch` runs step 1: it reads the
-    agreement pages on avropa.se, downloads the documents of the chosen
-    framework areas and prints a report. `--area` (repeatable) overrides the
-    areas in the settings.
+    One command per step:
+    `fetch` (step 1) reads the agreement pages on avropa.se and downloads the
+    documents of the chosen framework areas; `--area` (repeatable) overrides
+    the areas in the settings.
+    `parse` (step 2) reads every downloaded file with Docling and reports pages
+    without a text layer.
+    `chunk` (step 3) splits the parsed files into sections and chunks and
+    stores them.
+    `outline` prints a file's table of contents as found by step 3, or a list
+    of all files when no hash is given, so the result can be checked by hand.
 
 Why:
     One command per step makes each step easy to run and check on its own.
-    Later milestones add the other steps here.
 
 How:
     The register must be loaded first (M1), since the framework areas are
-    turned into procurement numbers through it. Discovery and downloads happen
-    before the database transaction, so a long download never holds a
-    transaction open; the results are then saved in one transaction.
+    turned into procurement numbers through it. Downloads and parsing happen
+    outside any database transaction, so a long run never holds one open; the
+    results are then saved in one transaction.
 """
 
 import argparse
 from collections import Counter
 
+from sqlalchemy import select
+
 from avtalsagent.config import get_settings
+from avtalsagent.db import models
 from avtalsagent.db.session import create_db_engine, session_factory
 from avtalsagent.ingestion.catalog import (
     load_stored_documents,
     procurements_for_areas,
     save_fetch,
+)
+from avtalsagent.ingestion.parsers.docling_parser import DoclingParser
+from avtalsagent.ingestion.section_store import (
+    document_links,
+    load_outline,
+    save_sections,
+    source_files,
 )
 from avtalsagent.ingestion.step1_fetch import (
     FetchStatus,
@@ -34,6 +49,8 @@ from avtalsagent.ingestion.step1_fetch import (
     fetch_documents,
     select_pages,
 )
+from avtalsagent.ingestion.step2_parse import ParseStatus, load_cached, parse_files
+from avtalsagent.ingestion.step3_chunk import OutlineKind, chunk_document, document_context
 
 
 def fetch(areas: list[str]) -> None:
@@ -71,6 +88,95 @@ def fetch(areas: list[str]) -> None:
             print(f"  failed: {result.link.url}: {result.message}")
 
 
+def parse() -> None:
+    settings = get_settings()
+    with session_factory(create_db_engine())() as session:
+        files = source_files(session, settings.data_dir)
+    parser = DoclingParser()
+    print(f"Parsing {len(files)} files with {parser.name}")
+    counts: Counter[ParseStatus] = Counter()
+    pages = 0
+    for number, result in enumerate(parse_files(files, parser, settings.parsed_dir), start=1):
+        counts[result.status] += 1
+        name = result.file.path.name[:12]
+        if result.document is None:
+            print(f"  [{number}/{len(files)}] {name}: failed: {result.message}", flush=True)
+            continue
+        pages += len(result.document.pages)
+        ocr = result.document.pages_needing_ocr
+        note = f", pages without text layer: {ocr}" if ocr else ""
+        print(
+            f"  [{number}/{len(files)}] {name}: {result.status.value}, "
+            f"{len(result.document.blocks)} blocks{note}",
+            flush=True,
+        )
+    print(f"Files: {len(files)} ({pages} PDF pages)")
+    for status in ParseStatus:
+        print(f"  {status.value}: {counts.get(status, 0)}")
+
+
+def chunk() -> None:
+    settings = get_settings()
+    factory = session_factory(create_db_engine())
+    with factory() as session:
+        files = source_files(session, settings.data_dir)
+        links = document_links(session)
+    parsed = []
+    for file in files:
+        document = load_cached(settings.parsed_dir, file.sha256)
+        if document is None:
+            print(f"  not parsed (run `parse` first): {file.path.name}")
+        elif file.sha256 not in links:
+            print(f"  no page links to it any more, skipped: {file.path.name}")
+        else:
+            parsed.append(document)
+    chunked = [
+        chunk_document(document, document_context(links[document.sha256])) for document in parsed
+    ]
+    with factory.begin() as session:
+        save_sections(session, parsed, chunked)
+
+    outlines = Counter(document.outline for document in chunked)
+    print(f"Files: {len(chunked)} of {len(files)}")
+    for kind in OutlineKind:
+        print(f"  {kind.value}: {outlines.get(kind, 0)}")
+    print(f"Sections: {sum(len(document.sections) for document in chunked)}")
+    print(f"Chunks: {sum(len(document.chunks) for document in chunked)}")
+    for document in parsed:
+        if document.pages_needing_ocr:
+            print(
+                f"  {document.sha256[:12]}: pages without text layer {document.pages_needing_ocr}"
+            )
+
+
+def outline(sha256_prefix: str | None) -> None:
+    factory = session_factory(create_db_engine())
+    with factory() as session:
+        links = document_links(session)
+        if sha256_prefix is None:
+            for row in session.scalars(
+                select(models.ParsedFile).order_by(models.ParsedFile.sha256)
+            ):
+                context = document_context(links.get(row.sha256, []))
+                print(
+                    f"{row.sha256[:12]}  {row.outline:9} {row.section_count:4} sections  "
+                    f"{context.document} | {context.agreement}"
+                )
+            return
+        sections = load_outline(session, sha256_prefix)
+    if not sections:
+        print(f"no sections for a file starting with {sha256_prefix}")
+        return
+    context = document_context(links.get(sections[0].sha256, []))
+    print(f"{context.document} | {context.agreement} | {sections[0].sha256}")
+    for section in sections:
+        heading = f"{section.number} {section.title}" if section.number else section.title
+        pages = f"p. {section.page_start}" if section.page_start else ""
+        if section.page_end and section.page_end != section.page_start:
+            pages += f"-{section.page_end}"
+        print(f"{'  ' * max(section.level - 1, 0)}{heading}  [{pages}]")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ingestion workflow for avropa.se documents.")
     steps = parser.add_subparsers(dest="step", required=True)
@@ -80,9 +186,19 @@ def main() -> None:
         action="append",
         help="framework area as named in the register (repeatable); default from settings",
     )
+    steps.add_parser("parse", help="step 2: read the downloaded files with Docling")
+    steps.add_parser("chunk", help="step 3: split the parsed files into sections and chunks")
+    outline_parser = steps.add_parser("outline", help="print a file's table of contents")
+    outline_parser.add_argument("sha256", nargs="?", help="the file's hash or its beginning")
     args = parser.parse_args()
     if args.step == "fetch":
         fetch(args.area or get_settings().fetch_areas)
+    elif args.step == "parse":
+        parse()
+    elif args.step == "chunk":
+        chunk()
+    elif args.step == "outline":
+        outline(args.sha256)
 
 
 if __name__ == "__main__":
