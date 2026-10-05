@@ -110,9 +110,9 @@ Det svåra i M3. Numrerade listor (`1. FN:s barnkonvention`), innehållsförteck
 (`6.6.1 Dokumentation 8`), klockslag (`17.00. Såvida …`), belopp och citerade punkter börjar
 också med siffror. En regel per rad räcker inte, så rubrikerna väljs som en helhet:
 
-1. **Innehållsförteckningen hittas:** rader med punktlinje eller tabb före sidnumret, och rader
-   som slutar med ett sidnummer och står bland andra sådana rader. Numren i förteckningen ger
-   bonus, eftersom de nästan säkert är rubriker.
+1. **Innehållsförteckningen hittas:** block som Docling kallar innehållsförteckning, rader med
+   punktlinje eller tabb före sidnumret, och rader som slutar med ett sidnummer och står bland
+   andra sådana rader. Numren i förteckningen ger bonus, eftersom de nästan säkert är rubriker.
 2. **Kandidater:** varje block som börjar med ett nummer följt av en titel. Titeln ska börja med
    stor bokstav, ha minst två bokstäver och inte sluta med komma eller semikolon. Ingen del av
    numret får vara 0 eller över 200. Står numret ensamt på sin rad tas titeln från nästa block.
@@ -120,8 +120,10 @@ också med siffror. En regel per rad räcker inte, så rubrikerna väljs som en 
 4. **Den bästa kedjan:** dynamisk programmering väljer den följd av kandidater med högst poäng där
    varje nummer får följa det förra: första barnet (`6.6` → `6.6.1`) eller nästa nummer på samma
    eller högre nivå (`6.6.8` → `6.6.9`, `6.7`, `7`). Saknade nummer och hoppade nivåer kostar
-   poäng men är tillåtna, eftersom Word ibland tappar en nivås nummer (`1` → `1.2.1`). Numreringen
-   får inte börja om, eftersom en omstart nästan alltid är en numrerad lista.
+   poäng men är tillåtna, eftersom Word ibland tappar en nivås nummer (`1` → `1.2.1`). En ny nivå
+   börjar på 1, utom när numret står i dokumentets innehållsförteckning: en mall med strukna
+   avsnitt kan gå från `1.3` till `2.4`. Numreringen får inte börja om, eftersom en omstart
+   nästan alltid är en numrerad lista.
 
 En numrerad lista inuti ett avsnitt förlorar alltså mot de riktiga rubrikerna: den börjar om på 1,
 och dess nummer passar inte in i kedjan.

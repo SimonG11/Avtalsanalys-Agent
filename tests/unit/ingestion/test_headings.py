@@ -9,6 +9,7 @@ import pytest
 from avtalsagent.domain.parsed import Block, BlockKind
 from avtalsagent.ingestion.headings import (
     find_candidates,
+    listed_numbers,
     parse_number,
     select_outline,
     step_penalty,
@@ -128,10 +129,42 @@ def test_parser_headings_score_higher_than_list_items() -> None:
         ("6.6.8", "2", None),  # a numbered list item inside 6.6.8
         ("1.13.3", "1", None),  # numbering never restarts
         ("4", "4.2.3", None),  # skips 4.2.1 and 4.2.2
+        ("1.3", "2.4", None),  # skips 2.1-2.3
     ],
 )
 def test_step_penalty(previous: str, current: str, penalty: float | None) -> None:
     assert step_penalty(parse_number(previous), parse_number(current)) == penalty
+
+
+def test_a_number_in_the_contents_may_skip_numbers_on_a_new_level() -> None:
+    # A template whose sections 2-2.3 were deleted: the contents go from 1.3 to 2.4.
+    # Three missing numbers (2.1-2.3) and a level without its own heading (2).
+    assert step_penalty((1, 3), (2, 4), listed=True) == 3 * 0.75 + 1.0
+    # 4.1, 4.2.1 and 4.2.2 missing, 4.2 without its own heading.
+    assert step_penalty((4,), (4, 2, 3), listed=True) == 3 * 0.75 + 1.0
+
+
+def test_the_outline_follows_the_contents_over_deleted_sections() -> None:
+    contents = [
+        text("1.3 Hållbarhetsmål ........................................ 3"),
+        text("2.4 Särskilda kontraktsvillkor ............................ 4"),
+        text("3 Kravkatalog (krav som kan preciseras eller ställas vid avrop) ...... 4"),
+    ]
+    body = [
+        heading("1 Inledning"),
+        heading("1.1 Dokumentets syfte"),
+        heading("1.2 Definitioner"),
+        heading("1.3 Hållbarhetsmål"),
+        heading("2.4 Särskilda kontraktsvillkor"),
+        heading("2.4.1 Villkor för miljöhänsyn vid fullgörande av ramavtalet"),
+        heading("3 Kravkatalog (krav som kan preciseras eller ställas vid avrop)"),
+    ]
+    listed = listed_numbers(contents)
+    assert listed == {(1, 3), (2, 4), (3,)}
+    found = [h.number for h in select_outline(find_candidates(body, listed))]
+    assert found == ["1", "1.1", "1.2", "1.3", "2.4", "2.4.1", "3"]
+    # Without the contents, 2.4 cannot follow 1.3.
+    assert numbers(body) == ["1", "1.1", "1.2", "1.3", "3"]
 
 
 def test_the_outline_skips_a_numbered_list_inside_a_section() -> None:

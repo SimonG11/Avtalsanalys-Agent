@@ -42,7 +42,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from avtalsagent.domain.parsed import Block, BlockKind, Chunk, ParsedDocument, Section
-from avtalsagent.ingestion.headings import Heading, find_candidates, select_outline, toc_entries
+from avtalsagent.ingestion.headings import (
+    Heading,
+    find_candidates,
+    listed_numbers,
+    select_outline,
+    toc_entries,
+)
 
 MAX_CHUNK_CHARS = 1500  # about 350 words; tuned on the test set in M5
 MAX_TITLE_CHARS = 120  # longer heading text is a numbered clause; its title is cut
@@ -252,7 +258,10 @@ def split_sections(document: ParsedDocument) -> tuple[OutlineKind, list[Section]
     headings = _questions(blocks)
     if len(headings) >= _MIN_QUESTIONS:
         outline = OutlineKind.QUESTIONS
-    elif _usable(headings := select_outline(find_candidates(blocks)), blocks):
+    elif _usable(
+        headings := select_outline(find_candidates(blocks, listed_numbers(document.blocks))),
+        blocks,
+    ):
         headings = _with_unnumbered_parts(headings, blocks)
     else:
         outline = OutlineKind.HEADINGS

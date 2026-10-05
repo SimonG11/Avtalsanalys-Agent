@@ -46,8 +46,10 @@ Det som avgör valet:
    poäng (högre om Docling kallar blocket rubrik, om titeln är kort och om numret finns i dokumentets
    innehållsförteckning). En dynamisk programmering väljer den kedja med högst poäng där varje nummer
    får följa det förra: första barnet (6.6 → 6.6.1) eller nästa nummer på samma eller högre nivå
-   (6.6.8 → 6.6.9, 6.7, 7). Saknade nummer kostar poäng. Numreringen får inte börja om på 1, eftersom
-   en omstart i de här dokumenten nästan alltid är en numrerad lista.
+   (6.6.8 → 6.6.9, 6.7, 7). Saknade nummer kostar poäng. En ny nivå börjar på 1, utom när numret
+   står i innehållsförteckningen (en mall med strukna avsnitt går från 1.3 till 2.4). Numreringen
+   får inte börja om på 1, eftersom en omstart i de här dokumenten nästan alltid är en numrerad
+   lista. Innehållsförteckningens nummer läses innan förteckningen tas bort (beslut 5).
 5. **Innehållsförteckningen tas bort** innan avsnitten byggs. Den upprepar rubrikerna och skulle
    annars hittas av sökningar. Sidnummer och rader som återkommer på minst 30 % av sidorna tas
    också bort. Ett sidhuvud eller en sidfot enligt layoutmodellen tas bort bara om den står på

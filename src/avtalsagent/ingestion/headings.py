@@ -17,14 +17,15 @@ Why:
     most false headings without rules for each kind of document.
 
 How:
-    Each candidate gets a score: higher when the parser marked it as a heading
-    and when it is short like a title, lower for list items and for lines
-    that end with a page number (table-of-contents entries). A dynamic
+    Each candidate gets a score: higher when the parser marked it as a heading,
+    when it is short like a title and when its number is in the document's
+    own table of contents, lower for list items. A dynamic
     programme then finds the chain of candidates with the highest total
     score in which each number may follow the previous one: the first child
     (6.6 -> 6.6.1), the next number at the same or a higher level
-    (6.6.8 -> 6.6.9, 6.7, 7) or, with a penalty, a small gap or a restart at 1
-    (a new appendix). Pure functions on `Block`s, so every rule has a test.
+    (6.6.8 -> 6.6.9, 6.7, 7) or, with a penalty, missing numbers and levels
+    without their own heading (6 -> 6.1.1; 1.3 -> 2.4 only when the table of
+    contents lists 2.4). Pure functions on `Block`s, so every rule has a test.
 """
 
 import re
@@ -82,6 +83,7 @@ class Candidate:
     number: tuple[int, ...]
     title: str
     score: float
+    listed: bool = False  # the number is in the document's own table of contents
 
 
 @dataclass(frozen=True)
@@ -121,16 +123,27 @@ def toc_entries(blocks: Sequence[Block]) -> set[int]:
     return entries
 
 
-def find_candidates(blocks: Sequence[Block]) -> list[Candidate]:
-    """Every block outside the table of contents that starts like a numbered heading."""
-    toc = toc_entries(blocks)
-    # Numbers listed in the document's own table of contents are very likely headings.
-    in_toc = {
+def listed_numbers(blocks: Sequence[Block]) -> frozenset[tuple[int, ...]]:
+    """The section numbers in the document's own table of contents."""
+    return frozenset(
         parse_number(match["number"])
-        for index in toc
+        for index in toc_entries(blocks)
         for line in blocks[index].text.splitlines()
         if (match := _NUMBERED.match(line.strip()))
-    }
+    )
+
+
+def find_candidates(
+    blocks: Sequence[Block], listed: frozenset[tuple[int, ...]] | None = None
+) -> list[Candidate]:
+    """Every block outside the table of contents that starts like a numbered heading.
+
+    `listed` are the numbers in the document's table of contents. Step 3 reads
+    them before it removes the contents; by default they are read from `blocks`.
+    """
+    toc = toc_entries(blocks)
+    # Numbers listed in the document's own table of contents are very likely headings.
+    in_toc = listed_numbers(blocks) if listed is None else listed
     candidates: list[Candidate] = []
     for index, block in enumerate(blocks):
         if index in toc or block.kind not in _CANDIDATE_KINDS:
@@ -154,8 +167,9 @@ def find_candidates(blocks: Sequence[Block]) -> list[Candidate]:
         # Sections are numbered from 1; "17.00" and "1.0" are times and versions.
         if any(part > _MAX_NUMBER_PART or part == 0 for part in number):
             continue
-        score = _score(block, title) + (_IN_TOC_BONUS if number in in_toc else 0.0)
-        candidates.append(Candidate(index, consumed, number, title, score))
+        is_listed = number in in_toc
+        score = _score(block, title) + (_IN_TOC_BONUS if is_listed else 0.0)
+        candidates.append(Candidate(index, consumed, number, title, score, is_listed))
     return candidates
 
 
@@ -185,14 +199,18 @@ def _score(block: Block, title: str) -> float:
     return score
 
 
-def step_penalty(previous: tuple[int, ...], current: tuple[int, ...]) -> float | None:
+def step_penalty(
+    previous: tuple[int, ...], current: tuple[int, ...], listed: bool = False
+) -> float | None:
     """The penalty for `current` following `previous` in an outline; None if it cannot.
 
     `current` must move on at some level: the first child (6.6 -> 6.6.1) or the
     next number at the same or a higher level (6.6.8 -> 6.6.9, 6.7, 7). Missing
     numbers in between (6.2 -> 6.4) and levels that start without their own
     heading (6 -> 6.1.1, or 2 -> 2.5.1 when 2.1-2.5 have no number in the text)
-    cost a penalty each.
+    cost a penalty each. A level without its own heading starts at 1, unless
+    the number is `listed` in the document's table of contents: a template
+    with deleted sections can go from 1.3 to 2.4.
     """
     shared = 0
     while shared < min(len(previous), len(current)) and previous[shared] == current[shared]:
@@ -203,8 +221,12 @@ def step_penalty(previous: tuple[int, ...], current: tuple[int, ...]) -> float |
     start = previous[shared] if shared < len(previous) else 0
     gap = current[shared] - start - 1
     deeper = current[shared + 1 :]
-    if gap < 0 or len(deeper) > _MAX_SKIPPED_LEVELS or any(part != 1 for part in deeper):
+    if gap < 0 or len(deeper) > _MAX_SKIPPED_LEVELS:
         return None
+    missing_below = sum(part - 1 for part in deeper)
+    if missing_below and not listed:
+        return None
+    gap += missing_below
     return min(gap, _MAX_GAP_PENALTY_STEPS) * _GAP_PENALTY + len(deeper) * _SKIPPED_LEVEL_PENALTY
 
 
@@ -225,7 +247,7 @@ def select_outline(candidates: Sequence[Candidate]) -> list[Heading]:
         for j in range(max(0, i - _MAX_LOOKBACK), i):
             if candidates[j].index + candidates[j].consumed > candidate.index:
                 continue  # overlapping blocks (a number alone and its title)
-            penalty = step_penalty(candidates[j].number, candidate.number)
+            penalty = step_penalty(candidates[j].number, candidate.number, candidate.listed)
             if penalty is None:
                 continue
             chained = best[j] + candidate.score - penalty
