@@ -25,7 +25,9 @@ How:
     (6.6 -> 6.6.1), the next number at the same or a higher level
     (6.6.8 -> 6.6.9, 6.7, 7) or, with a penalty, missing numbers and levels
     without their own heading (6 -> 6.1.1; 1.3 -> 2.4 only when the table of
-    contents lists 2.4). Pure functions on `Block`s, so every rule has a test.
+    contents lists 2.4). If the best chain leaves out numbers the contents
+    lists, the chain with the most listed numbers is chosen instead. Pure
+    functions on `Block`s, so every rule has a test.
 """
 
 import re
@@ -347,13 +349,46 @@ def _start_penalty(number: tuple[int, ...]) -> float:
 
 
 def select_outline(candidates: Sequence[Candidate]) -> list[Heading]:
-    """The chain of candidates with the highest total score that forms a valid outline."""
+    """The chain of candidates with the highest total score that forms a valid outline.
+
+    Numbers quoted from another document can outscore a real heading: after
+    "5 Tekniska krav" a document quotes requirements 4.6.1-4.6.6, and the chain
+    4, 4.6.1 ... 4.6.6, 6 has more headings than 4, 5, 6. So when the best chain
+    leaves out numbers that the table of contents lists, the chain is chosen
+    again with as many listed numbers as possible, and only then the highest
+    score. The second chain is used if it has more listed numbers.
+    """
     if not candidates:
         return []
+    chain = _best_chain(candidates, listed_bonus=0.0)
+    listed = {c.number for c in candidates if c.listed}
+    if listed - {c.number for c in chain}:
+        # A bonus larger than all scores together: one more listed number always wins.
+        second = _best_chain(candidates, listed_bonus=1.0 + sum(c.score for c in candidates))
+        if _listed_count(second) > _listed_count(chain):
+            chain = second
+    return [
+        Heading(
+            index=c.index,
+            consumed=c.consumed,
+            number=".".join(str(part) for part in c.number),
+            level=len(c.number),
+            title=c.title,
+        )
+        for c in chain
+    ]
+
+
+def _best_chain(candidates: Sequence[Candidate], listed_bonus: float) -> list[Candidate]:
+    """The highest scoring valid chain, with `listed_bonus` added for listed numbers."""
+
+    def score(candidate: Candidate) -> float:
+        return candidate.score + (listed_bonus if candidate.listed else 0.0)
+
     best: list[float] = []
     previous: list[int | None] = []
     for i, candidate in enumerate(candidates):
-        value = candidate.score - _start_penalty(candidate.number)
+        value = score(candidate) - _start_penalty(candidate.number)
         link: int | None = None
         for j in range(max(0, i - _MAX_LOOKBACK), i):
             if candidates[j].index + candidates[j].consumed > candidate.index:
@@ -361,7 +396,7 @@ def select_outline(candidates: Sequence[Candidate]) -> list[Heading]:
             penalty = step_penalty(candidates[j].number, candidate.number, candidate.listed)
             if penalty is None:
                 continue
-            chained = best[j] + candidate.score - penalty
+            chained = best[j] + score(candidate) - penalty
             if chained > value:
                 value, link = chained, j
         best.append(value)
@@ -373,13 +408,8 @@ def select_outline(candidates: Sequence[Candidate]) -> list[Heading]:
         chain.append(candidates[end])
         end = previous[end]
     chain.reverse()
-    return [
-        Heading(
-            index=c.index,
-            consumed=c.consumed,
-            number=".".join(str(part) for part in c.number),
-            level=len(c.number),
-            title=c.title,
-        )
-        for c in chain
-    ]
+    return chain
+
+
+def _listed_count(chain: Sequence[Candidate]) -> int:
+    return len({c.number for c in chain if c.listed})

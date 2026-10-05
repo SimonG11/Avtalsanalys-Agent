@@ -79,7 +79,10 @@ _HEADER_KINDS = (BlockKind.PAGE_HEADER, BlockKind.PAGE_FOOTER)
 # rutiner ·"), when the marker sits a little lower on the line than the text. A number
 # or letter is moved to the front when list items end with 1, 2, 3 ... or a, b, c ... in
 # order; a single item ending with one ("se punkt 6.") is left as it is. A bullet at
-# the end is always moved.
+# the end is always moved. The model also calls such items headings ("Miljöpolicy 2."),
+# so headings take part too, but not text: sentences end with numbers in order as well
+# ("... i steg 1." and later "... i detta steg 2.").
+_MARKER_KINDS = (BlockKind.LIST_ITEM, BlockKind.HEADING)
 _TRAILING_MARKER = re.compile(r"^(?P<text>.*\S)\s+(?P<marker>\d{1,3}|[a-z])(?P<dot>[.)])$", re.S)
 _TRAILING_BULLET = re.compile(r"^(?P<text>.*\S)\s+(?P<marker>[·•▪◦●])$", re.DOTALL)
 _LEADING_MARKER = re.compile(r"^(?:\(?(?:\d{1,3}|[a-zA-Z])[.)]|[·•▪◦●\-–])\s")
@@ -224,9 +227,10 @@ def _markers_first(blocks: list[Block]) -> list[Block]:
     # lettered list inside item 2 does not break the numbered list around it.
     runs: dict[bool, list[list[tuple[int, re.Match[str], int]]]] = {True: [], False: []}
     for index, block in enumerate(blocks):
-        if block.kind is not BlockKind.LIST_ITEM or _LEADING_MARKER.match(block.text):
+        if block.kind not in _MARKER_KINDS or _LEADING_MARKER.match(block.text):
             continue
-        if bullet := _TRAILING_BULLET.match(block.text):
+        bullet = _TRAILING_BULLET.match(block.text)
+        if bullet and block.kind is BlockKind.LIST_ITEM:
             moved[index] = bullet
         elif match := _TRAILING_MARKER.match(block.text):
             marker = match["marker"]

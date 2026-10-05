@@ -170,6 +170,39 @@ def test_the_outline_follows_the_contents_over_deleted_sections() -> None:
     assert numbers(body) == ["1", "1.1", "1.2", "1.3", "3"]
 
 
+def test_numbers_quoted_from_another_document_do_not_hide_a_listed_section() -> None:
+    # A Kammarkollegiet summary of information security requirements: section 5 quotes
+    # requirements 4.6.1-4.6.6 from the tender's requirement specification.
+    contents = [
+        text(f"{number} {title} ........................................ {page}")
+        for number, title, page in [
+            (4, "Begränsningskriterier", 6),
+            (5, "Tekniska krav", 7),
+            (6, "Tilldelningskriterier", 8),
+        ]
+    ]
+    quoted = [
+        "4.6.1 Autentisering och auktorisering",
+        "4.6.2 Skydd mot skadlig kod",
+        "4.6.3 Krypterad lagringsmedia",
+        "4.6.4 Krypterad datorkommunikation",
+        "4.6.5 Säkerhetskopiering",
+        "4.6.6 Loggning",
+    ]
+    body = [
+        heading("4 Begränsningskriterier"),
+        heading("5 Tekniska krav"),
+        text("Ur Anbudsinbjudan, kapitel Kravspecifikation:"),
+        *[heading(line) for line in quoted],
+        heading("6 Tilldelningskriterier"),
+    ]
+    listed = listed_numbers(contents)
+    found = [h.number for h in select_outline(find_candidates(body, listed))]
+    assert found == ["4", "5", "6"]
+    # Without the contents the quoted numbers win, since they are more headings.
+    assert numbers(body) == ["4", "4.6.1", "4.6.2", "4.6.3", "4.6.4", "4.6.5", "4.6.6", "6"]
+
+
 def test_the_outline_skips_a_numbered_list_inside_a_section() -> None:
     blocks = [
         heading("1.13 Ersättning till Kammarkollegiet och redovisning av statistik"),

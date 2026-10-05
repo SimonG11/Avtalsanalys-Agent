@@ -127,6 +127,28 @@ class TestCleanBlocks:
             "Leverans sker enligt bilaga 1.",
         ]
 
+    def test_list_markers_of_items_called_headings_are_moved_but_not_in_text(self) -> None:
+        blocks = [
+            heading("Miljöledningssystemets omfattning 1.", 31),
+            block("Miljöledningssystemet ska innehålla en beskrivning av dess omfattning.", 31),
+            heading("Miljöpolicy 2.", 31),
+            block(
+                "Avsnitt Upplysningar med avseende särskilt på EU-sanktioner 3.",
+                32,
+                BlockKind.LIST_ITEM,
+            ),
+            block("Referensuppdraget ska ha utförts av anbudsgivaren i steg 1.", 33),
+            block("Fler referensuppdrag kan anges i detta steg 2.", 33),
+        ]
+        assert [b.text for b in clean_blocks(document(*blocks))] == [
+            "1. Miljöledningssystemets omfattning",
+            "Miljöledningssystemet ska innehålla en beskrivning av dess omfattning.",
+            "2. Miljöpolicy",
+            "3. Avsnitt Upplysningar med avseende särskilt på EU-sanktioner",
+            "Referensuppdraget ska ha utförts av anbudsgivaren i steg 1.",
+            "Fler referensuppdrag kan anges i detta steg 2.",
+        ]
+
     def test_text_repeated_in_the_middle_of_pages_is_kept(self) -> None:
         # A running header is at the top of every page; the role description repeats
         # in the middle of every page and is body text.
