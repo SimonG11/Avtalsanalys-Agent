@@ -20,3 +20,6 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+
+# Downloaded data (Excel, PDFs)
+data/

@@ -2,7 +2,8 @@
 
 What:
     One `Settings` class that lists every setting the system uses: the database
-    address, the OpenAI key and which model plays which role.
+    address, the OpenAI key, which model plays which role and where data is
+    downloaded from and stored.
 
 Why:
     Settings in one typed place make it easy to see what the system depends on,
@@ -18,6 +19,7 @@ How:
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, PostgresDsn, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,7 +36,9 @@ class Settings(BaseSettings):
 
     # Matches the postgres service in docker-compose.yml with its default values.
     database_url: PostgresDsn = Field(
-        default=PostgresDsn("postgresql://avtalsagent:avtalsagent@localhost:5432/avtalsagent"),
+        default=PostgresDsn(
+            "postgresql+psycopg://avtalsagent:avtalsagent@localhost:5432/avtalsagent"
+        ),
     )
 
     # SecretStr hides the value in repr() and logs. Optional until the first
@@ -45,6 +49,11 @@ class Settings(BaseSettings):
     agent_model: str = "gpt-6.1-sol"
     reviewer_model: str = "gpt-6-astra"
     extraction_model: str = "gpt-6-luna"
+
+    # Where the Excel master list "Alla giltiga ramavtal" is published (M1).
+    register_excel_url: str = "https://www.avropa.se/giltigaramavtal/excel"
+    # Downloaded files (Excel, later PDFs). Not committed to git.
+    data_dir: Path = Path("data")
 
     log_level: str = "INFO"
 
