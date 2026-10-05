@@ -9,40 +9,19 @@ Why:
     the delete-and-insert order and that loading twice gives the same result.
 
 How:
-    The `database_url` fixture starts one container for the whole module, with
-    the same image as docker-compose.yml. Requires Docker.
+    The `engine` fixture in tests/integration/conftest.py starts one container
+    for the whole test session. Requires Docker.
 """
 
-from collections.abc import Iterator
 from pathlib import Path
 
-import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import Engine, func, select, text
-from testcontainers.community.postgres import PostgresContainer
 
 from avtalsagent.db import models
-from avtalsagent.db.session import create_db_engine, session_factory
+from avtalsagent.db.session import session_factory
 from avtalsagent.register.load import LoadReport, load_register
 from avtalsagent.register.normalize import normalize_rows
 from avtalsagent.register.read_excel import read_register
-
-IMAGE = "pgvector/pgvector:0.8.7-pg17-bookworm"  # same as docker-compose.yml
-ROOT = Path(__file__).parents[2]
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    with PostgresContainer(IMAGE, driver="psycopg") as postgres:
-        url = postgres.get_connection_url()
-        config = Config(ROOT / "alembic.ini")
-        config.set_main_option("script_location", str(ROOT / "src/avtalsagent/db/migrations"))
-        config.set_main_option("sqlalchemy.url", url)
-        command.upgrade(config, "head")
-        engine = create_db_engine(url)
-        yield engine
-        engine.dispose()
 
 
 def load_sample(engine: Engine, xlsx: Path) -> LoadReport:
