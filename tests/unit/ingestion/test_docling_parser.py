@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 
 import pytest
+from docling.models.stages.page_assemble.page_assemble_model import PageAssembleOptions
+from docling_core.types.doc import ContentLayer, DocItemLabel, DoclingDocument, TableCell, TableData
 from docx import Document
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -18,7 +20,11 @@ from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from avtalsagent.domain.parsed import Block, BlockKind
-from avtalsagent.ingestion.parsers.docling_parser import DoclingParser
+from avtalsagent.ingestion.parsers.docling_parser import (
+    DoclingParser,
+    _blocks,
+    _KeepHyphensAssembleModel,
+)
 
 
 @pytest.fixture(scope="module")
@@ -152,3 +158,87 @@ def test_a_pdf_table_gets_its_cells_from_the_table_model(
         "Kompetensnivå | Takpris per timme\nNivå 1 | 650 kr\nNivå 2 | 850 kr\nNivå 3 | 1 150 kr"
     ]
     assert any(b.kind is BlockKind.HEADING and b.text == "3.2 Takpriser" for b in blocks)
+
+
+# How Docling's items become blocks, tested on documents built in code (no model).
+
+
+def test_a_hyphen_at_a_line_break_is_kept() -> None:
+    assemble = _KeepHyphensAssembleModel(options=PageAssembleOptions())
+    lines = ["Ramavtalet är giltigt från och med 2025-", "08-19 för kompetensnivå 1-", "4."]
+    assert assemble.sanitize_text(lines) == (
+        "Ramavtalet är giltigt från och med 2025-08-19 för kompetensnivå 1-4."
+    )
+    assert assemble.sanitize_text(["Leverantören ska", "- föra en förteckning"]) == (
+        "Leverantören ska - föra en förteckning"
+    )
+
+
+def test_text_inside_a_picture_is_kept() -> None:
+    # TendSign draws its question boxes, which the layout model calls pictures.
+    document = DoclingDocument(name="upphandlingsdokument")
+    box = document.add_picture()
+    document.add_text(DocItemLabel.TEXT, "Accepterar anbudsgivaren villkoren?", parent=box)
+    document.add_text(DocItemLabel.TEXT, "Ja/Nej. Ja krävs", parent=box)
+    assert [b.text for b in _blocks(document, None)] == [
+        "Accepterar anbudsgivaren villkoren?",
+        "Ja/Nej. Ja krävs",
+    ]
+
+
+def test_table_cells_with_the_same_text_and_the_footnote_are_kept() -> None:
+    rows = [
+        ["Onlinetjänst", "SSAE 18 SOC 1 Typ II", "SSAE 18 SOC 2 Typ II"],
+        ["Office 365-tjänster", "Ja", "Ja"],
+        ["Microsoft Azure Core Services", "", "Varierar*"],
+    ]
+    cells = [
+        TableCell(
+            text=text,
+            start_row_offset_idx=r,
+            end_row_offset_idx=r + 1,
+            start_col_offset_idx=c,
+            end_col_offset_idx=c + 1,
+        )
+        for r, row in enumerate(rows)
+        for c, text in enumerate(row)
+    ]
+    # A heading row that spans all three columns appears in the grid once per column.
+    title = TableCell(
+        text="Certifieringar",
+        col_span=3,
+        start_row_offset_idx=0,
+        end_row_offset_idx=1,
+        start_col_offset_idx=0,
+        end_col_offset_idx=3,
+    )
+    cells = [title] + [
+        cell.model_copy(
+            update={
+                "start_row_offset_idx": cell.start_row_offset_idx + 1,
+                "end_row_offset_idx": cell.end_row_offset_idx + 1,
+            }
+        )
+        for cell in cells
+    ]
+    document = DoclingDocument(name="produktvillkor")
+    table = document.add_table(data=TableData(num_rows=4, num_cols=3, table_cells=cells))
+    note = "*Aktuell omfattning beskrivs i granskningsrapporten."
+    document.add_text(DocItemLabel.FOOTNOTE, note, parent=table)
+    assert [b.text for b in _blocks(document, None)] == [
+        "Certifieringar\n"
+        "Onlinetjänst | SSAE 18 SOC 1 Typ II | SSAE 18 SOC 2 Typ II\n"
+        "Office 365-tjänster | Ja | Ja\n"
+        "Microsoft Azure Core Services |  | Varierar*",
+        note,
+    ]
+
+
+def test_word_headers_and_footers_are_page_furniture() -> None:
+    document = DoclingDocument(name="pub")
+    document.add_text(DocItemLabel.TEXT, "Sida 3 (13)", content_layer=ContentLayer.FURNITURE)
+    document.add_text(DocItemLabel.TEXT, "Parterna ska ange varsin kontaktperson.")
+    assert [(b.kind, b.text) for b in _blocks(document, None)] == [
+        (BlockKind.PAGE_HEADER, "Sida 3 (13)"),
+        (BlockKind.TEXT, "Parterna ska ange varsin kontaktperson."),
+    ]

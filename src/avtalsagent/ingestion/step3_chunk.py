@@ -188,7 +188,7 @@ def clean_blocks(document: ParsedDocument) -> list[Block]:
         and not _PAGE_NUMBER.match(block.text.strip())
         and not _is_page_label(block.text)
         and _normalise(block.text) not in repeated
-        and not (block.kind in _HEADER_KINDS and _is_running_header(block.text, running))
+        and not (block.kind in _HEADER_KINDS and _is_running_header(block, running))
     ]
     toc = toc_entries(kept)
     return _numbers_first([block for index, block in enumerate(kept) if index not in toc])
@@ -232,8 +232,10 @@ def _running_headers(blocks: Sequence[Block]) -> set[str]:
     return {text for text, seen in pages.items() if len(seen) > 1}
 
 
-def _is_running_header(text: str, running: set[str]) -> bool:
-    return _normalise(text) in running or _PAGE_COUNTER.search(text) is not None
+def _is_running_header(block: Block, running: set[str]) -> bool:
+    if block.page is None:
+        return True  # a Word file's own header or footer, not a layout model's guess
+    return _normalise(block.text) in running or _PAGE_COUNTER.search(block.text) is not None
 
 
 def _normalise(text: str) -> str:
