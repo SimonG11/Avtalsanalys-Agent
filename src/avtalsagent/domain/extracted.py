@@ -52,6 +52,7 @@ class DocumentType(StrEnum):
     CALL_OFF_GUIDANCE = "call_off_guidance"  # "Vägledning", "Snabbguide", "Checklista"
     REQUIREMENTS_REPORT = "requirements_report"  # "Redovisning av hållbarhetskrav"
     TEMPLATE = "template"  # "Avropsmall", "Utkast till personuppgiftsbiträdesavtal"
+    UNKNOWN = "unknown"  # no rule matched the link; reported for a person to look at
 
 
 class DocumentGroup(StrEnum):
@@ -75,6 +76,7 @@ DOCUMENT_GROUPS: dict[DocumentType, DocumentGroup] = {
     DocumentType.CALL_OFF_GUIDANCE: DocumentGroup.SUPPORT,
     DocumentType.REQUIREMENTS_REPORT: DocumentGroup.SUPPORT,
     DocumentType.TEMPLATE: DocumentGroup.SUPPORT,
+    DocumentType.UNKNOWN: DocumentGroup.SUPPORT,
 }
 
 
@@ -99,6 +101,10 @@ class DocumentMetadata(BaseModel):
     is_template: bool  # has unfilled fields such as "[DATUM]" or "XXXXXX-XXXX"
     version_date: date | None  # when the document was written or last changed, if it says so
     version_rule: str | None  # where version_date comes from, e.g. "file_name"
+    # When the document was first published, for matching a question in a questions log
+    # to the procurement document it is about. None when the document says it is a later
+    # version ("Version 3: publicerad ..."), since earlier versions were then out before it.
+    published_on: date | None
     site_updated: date | None  # the latest "Senast uppdaterad" of its links on avropa.se
 
     @property
@@ -138,16 +144,20 @@ class Fact(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: FactKind
-    value: str  # normalised: "23.3-2940-2020", "556866-4444", "2024-11-14", "48"
+    # Normalised: "23.3-2940-20" (a number in the register's spelling when the register
+    # has it, otherwise its key), "556866-4444", "2024-11-14", "48".
+    value: str
     raw: str  # the text it was read from, as written
     rule: str  # the rule that found it, e.g. "P3" (see the modules in ingestion/extract/)
     block: int  # index in ParsedDocument.blocks
     page: int | None  # 1-based; None for Word files
-    # Position of the section the block ended up in; None for blocks that step 3
-    # removes (page headers and footers, the table of contents).
-    section: int | None = None
     role: FactRole | None = None  # set for case and agreement numbers
     name: str | None = None  # set for a party: the name as written
+    # For an agreement period: the sub-area it is stated for, as written ("område 3 -
+    # IT-säkerhet", "AO3", "Systemutveckling"), when the document has periods for several.
+    scope: str | None = None
+    # The facts of one clause or table row share a number, so a start goes with its end.
+    statement: int | None = None
 
 
 class ReferenceKind(StrEnum):
@@ -187,6 +197,8 @@ class ReferenceMention(BaseModel):
     key: str  # the number, title, annex number or document name the text points to
     rule: str  # the pattern that found it, e.g. "R1"
     document_name: str | None = None  # the document named with it: "p. 6.19.7 i Allmänna villkor"
+    # A topic given instead of a section: "villkor i Allmänna villkor gällande viten".
+    topic: str | None = None
     # In a sentence that replaces or removes the target ("ersätter avsnitt 7.19.1.3").
     replaces: bool = False
     # Set when the text alone decides the outcome (LAW, PLACEHOLDER, LIST_ITEM).
@@ -212,7 +224,9 @@ class Reference(BaseModel):
     mention: ReferenceMention
     status: ReferenceStatus
     rule: str | None  # the rule that resolved it, e.g. "R4" or "R4-llm"; None if unresolved
-    targets: tuple[ReferenceTarget, ...] = ()  # one per page, or the candidates when AMBIGUOUS
+    # One per page when RESOLVED; the candidates when AMBIGUOUS; the file that was
+    # searched (section None) when NUMBER_MISSING or TITLE_MISSING.
+    targets: tuple[ReferenceTarget, ...] = ()
 
 
 class Severity(StrEnum):
@@ -240,8 +254,12 @@ class Finding(BaseModel):
 
     @property
     def key(self) -> str:
-        """Identifies the finding across runs, e.g. "party_org:7a49e1a61b31...:556866-4444"."""
-        return f"{self.check}:{self.sha256 or '-'}:{self.subject}"
+        """Identifies the finding across runs, e.g. "supplier_party:7a49e1a6...:556866-4444".
+
+        A finding about a section names the section by its number or heading in
+        `subject`, never by its position, so the key survives a new split.
+        """
+        return f"{self.check}:{self.sha256 or self.page_url or '-'}:{self.subject}"
 
     @property
     def quarantines(self) -> bool:
