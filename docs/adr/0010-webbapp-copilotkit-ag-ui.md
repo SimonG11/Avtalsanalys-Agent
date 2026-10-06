@@ -4,9 +4,9 @@
 
 ## Kontext
 
-Arkitekturen (avsnitt 5 i arkitekturplanen) säger att användaren ska se agentens steg live, att
-ett klick på en källa ska öppna PDF:en på rätt sida med citatet markerat, och att agenten ska kunna
-fråga användaren mitt i en körning. Valideringen (fas 3) valde protokollet AG-UI mellan agent och
+Arkitekturen (`docs/arkitektur.md`, avsnitt 7 och 5.3) säger att användaren ska se agentens steg
+live, att ett klick på en källa ska öppna PDF:en på rätt sida med citatet markerat, och att
+agenten ska kunna fråga användaren mitt i en körning (`fraga_anvandaren`). Valideringen (fas 3) valde protokollet AG-UI mellan agent och
 webbapp. Backend använder `ag-ui-langgraph`, som gör en LangGraph-graf till en AG-UI-tjänst i
 FastAPI.
 
@@ -33,20 +33,22 @@ Det som avgör valet:
    Svarstextens `[1]` blir knappar till källorna. Ett svar som bryter mot schemat visas som ett fel
    med fältets namn.
 4. **PDF:en visas med `react-pdf` (PDF.js) och sitt textlager.** Citatet söks i sidans text efter
-   normalisering (blanksteg, bindestreck, citattecken, ligaturer och avstavning vid radslut) och
-   markeras med `<mark>`. Hittas bara början eller slutet av citatet visas det med en förklaring.
+   normalisering (blanksteg, bindestreck, citattecken, ligaturer, accenter och avstavning vid
+   radslut) och markeras med `<mark>`. Fortsätter citatet på nästa sida markeras den del som finns,
+   med en förklaring. En del mitt på sidan markeras inte, så att ett felcitat inte ser bekräftat ut.
 5. **En mock av agenten** i `web/mock/` skickar samma AG-UI-händelser som `ag-ui-langgraph`, med en
    påhittad PDF. Webbläsartesterna i CI körs mot den, både mot en lokal build och mot Docker-imagarna.
-6. **Docker-image med Next.js `standalone`.** Servern behöver inga `node_modules` i imagen. Basimagen
-   finns för `linux/arm64` och `linux/amd64`.
+6. **Docker-image med Next.js `standalone`.** Imagen får bara de filer ur `node_modules` som
+   servern använder, inte hela installationen. Basimagen finns för `linux/arm64` och `linux/amd64`.
 
 ## Konsekvenser
 
 - Webbappen kan visas och testas utan backend, OpenAI-nyckel eller databas.
 - Frågedialogen fungerar med båda formerna av interrupt som `ag-ui-langgraph` kan skicka, så
   backend kan välja.
-- Kontraktet är skrivet en gång, i `web/src/lib/contract.ts`, och kontrolleras när appen kör. Ett
-  fel i backend syns som ett tydligt fel i stället för en tom sida.
+- Kontraktet beskrivs i `docs/steg/10-webbapp.md` och finns som kod i `web/src/lib/contract.ts`,
+  som kontrolleras när appen kör. Ett fel i backend syns som ett tydligt fel i stället för en tom
+  sida.
 - CopilotKit är ett ramverk till att förstå. Det används bara genom fyra hooks, providern och
   chattkomponenten, så det mesta av gränssnittet är egna komponenter som går att läsa utan att
   känna CopilotKit.

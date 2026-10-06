@@ -10,8 +10,11 @@
  *   - termination without an area -> the agent asks which area first (ask_user interrupt)
  *   - "vite" -> an answer with a reservation and one unverified citation
  *   - anything else -> no answer
- * A question containing "[legacy]" gets the older on_interrupt event only, the shape
- * ag-ui-langgraph sends by default, so both interrupt shapes can be tested.
+ * The question is sent as ag-ui-langgraph does with `emit_interrupt_outcome=True`: the older
+ * on_interrupt event and the AG-UI standard outcome on RUN_FINISHED. "[legacy]" in the question
+ * sends only the older event (ag-ui-langgraph's default) and "[outcome]" only the standard one
+ * (`enable_legacy_on_interrupt_event=False`), so each shape is tested on its own.
+ * A question containing "[fel]" ends in RUN_ERROR after one step, as when the backend fails.
  * The events follow the order ag-ui-langgraph uses: RUN_STARTED, STEP_STARTED per node, tool
  * calls with their results, STATE_SNAPSHOT, MESSAGES_SNAPSHOT and RUN_FINISHED.
  */
@@ -29,6 +32,9 @@ export interface TimedEvent {
 export interface MockContext {
   documentSha256: string;
 }
+
+/** Which interrupt events a run sends: both (the default), the older event only, or the outcome only. */
+type InterruptShape = "both" | "legacy" | "outcome";
 
 const AREAS = ["IT-drift", "Programvaror och tjänster", "Bemanningstjänster"];
 
@@ -147,28 +153,41 @@ class RunBuilder {
     } as BaseEvent);
   }
 
-  interrupt(value: { question: string; options: string[] }, legacyOnly: boolean): void {
+  interrupt(value: { question: string; options: string[] }, shape: InterruptShape): void {
     const interruptId = this.nextId("interrupt");
-    this.push({
-      type: EventType.CUSTOM,
-      name: "on_interrupt",
-      value: JSON.stringify(value),
-    } as BaseEvent);
-    const outcome = legacyOnly
-      ? undefined
-      : {
-          type: "interrupt",
-          interrupts: [
-            {
-              id: interruptId,
-              reason: "langgraph:interrupt",
-              metadata: {
-                langgraph: { raw: value, ns: ["research_agent"], resumable: true, when: "during" },
+    if (shape !== "outcome") {
+      this.push({
+        type: EventType.CUSTOM,
+        name: "on_interrupt",
+        value: JSON.stringify(value),
+      } as BaseEvent);
+    }
+    const outcome =
+      shape === "legacy"
+        ? undefined
+        : {
+            type: "interrupt",
+            interrupts: [
+              {
+                id: interruptId,
+                reason: "langgraph:interrupt",
+                metadata: {
+                  langgraph: {
+                    raw: value,
+                    ns: ["research_agent"],
+                    resumable: true,
+                    when: "during",
+                  },
+                },
               },
-            },
-          ],
-        };
+            ],
+          };
     this.finish(outcome);
+  }
+
+  /** Ends the run with an error instead of RUN_FINISHED, without sending any state. */
+  fail(message: string): void {
+    this.push({ type: EventType.RUN_ERROR, message } as BaseEvent);
   }
 
   finish(outcome?: unknown): void {
@@ -269,6 +288,14 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
   const run = new RunBuilder(input);
   const resumed = resumeAnswer(input);
 
+  if (lower.includes("[fel]")) {
+    run.step("research_agent", () => {
+      run.toolCall("search_documents", { query: question.slice(0, 80) }, { hits: [] });
+    });
+    run.fail("Mocken avbröt körningen.");
+    return run.events;
+  }
+
   if (resumed !== null) {
     // The person answered which area the question is about.
     answerNoticePeriod(run, context, resumed || AREAS[0]);
@@ -285,10 +312,12 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
         run.toolCall("search_register", { query: "uppsägning" }, { framework_areas: AREAS });
       });
       run.messagesSnapshot();
-      run.interrupt(
-        { question: "Vilket ramavtalsområde gäller frågan?", options: AREAS },
-        lower.includes("[legacy]"),
-      );
+      const shape: InterruptShape = lower.includes("[legacy]")
+        ? "legacy"
+        : lower.includes("[outcome]")
+          ? "outcome"
+          : "both";
+      run.interrupt({ question: "Vilket ramavtalsområde gäller frågan?", options: AREAS }, shape);
       return run.events;
     } else if (lower.includes("vite")) {
       run.step("research_agent", () => {

@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // A self-contained server in .next/standalone, so the Docker image needs no node_modules.
+  // A self-contained server in .next/standalone with only the node_modules files it uses, so the
+  // Docker image does not need the whole installation.
   output: "standalone",
   turbopack: {
     resolveAlias: {

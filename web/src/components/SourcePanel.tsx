@@ -25,7 +25,7 @@ const PdfViewer = dynamic(() => import("./PdfViewer"), {
 
 const MATCH_NOTES: Record<QuoteMatch["kind"], string | null> = {
   full: null,
-  partial: "Bara en del av citatet finns på den här sidan. Det kan fortsätta på nästa sida.",
+  partial: "Bara en del av citatet finns på den här sidan. Resten finns på sidan före eller efter.",
   none: "Citatet hittades inte i sidans text.",
 };
 

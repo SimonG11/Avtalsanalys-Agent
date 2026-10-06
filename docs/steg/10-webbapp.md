@@ -19,6 +19,7 @@ sida med citatet markerat. När agenten behöver veta mer frågar den i en dialo
 | Svarskortet | Status (**Verifierat**, **Med reservation** eller **Inget svar**), svarstexten där `[1]` och `[2]` är knappar, och en lista med källorna: dokument, avsnitt, sida och citat. Ett citat som inte kunde kontrolleras mot avtalstexten får en varning. |
 | Källpanelen | Öppnas till höger när man klickar på en källa. PDF:en visas på den citerade sidan och citatet är markerat i gult. Om citatet inte finns på sidan står det i panelen. |
 | Frågedialogen | När agenten anropar `ask_user` öppnas en dialog med frågan och svarsalternativen som knappar. Man kan också skriva ett eget svar. Agenten fortsätter med svaret. |
+| Fel | Om agenten inte kan svara, till exempel när API:t inte svarar, står det under frågan i stället för ett svarskort. |
 
 ## Flödet
 
@@ -52,24 +53,82 @@ agentens körningar och PDF:erna. Det ger tre saker:
 
 ## Kontraktet med backend
 
-Kontraktet ägs av tråden som bygger backend
-(`case-tokentek/implementering/webbapp-kontrakt.md` i projektets filer). Webbappen läser det så här:
+Webbappen och backend (API:t i M9 och agenten i M7) byggdes samtidigt i två trådar. Det här är
+gränssnittet mellan dem, som båda trådarna kom överens om 2026-10-06. `src/lib/contract.ts`
+kontrollerar svaret och frågan mot det medan appen kör.
 
-- **Händelserna** är AG-UI 1.0, som `ag-ui-langgraph` skickar dem: `RUN_STARTED`, `STEP_STARTED`
-  per nod, `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END` och `TOOL_CALL_RESULT` per
-  verktygsanrop, `STATE_SNAPSHOT`, `MESSAGES_SNAPSHOT` och `RUN_FINISHED`.
-- **Svaret** läses ur det delade tillståndets nyckel `answer` när körningen är klar. Det kontrolleras
-  mot schemat i `src/lib/contract.ts`. Ett svar som inte följer schemat visas som ett fel som säger
-  vilket fält som är fel, till exempel `citations.0.page`.
-- **Frågan till användaren** kan komma i två former, och webbappen klarar båda:
-  - AG-UI:s standardform, där `RUN_FINISHED` har `outcome: {type: "interrupt", interrupts: [...]}`
-    och värdet `{question, options}` ligger i `metadata.langgraph.raw`;
-  - den äldre formen, en `CUSTOM`-händelse `on_interrupt` vars värde är `{question, options}` som
-    JSON-text. Det är vad `ag-ui-langgraph` skickar om inget annat anges.
-- **Svaret på frågan** skickas tillbaka som en vanlig sträng, alternativet eller det man skrev.
-- **PDF:en** hämtas från `GET /api/documents/{sha256}/pdf`.
+**Adresser.** API:t är en FastAPI-tjänst. Webbappen når den på `API_URL` (standard
+`http://localhost:8000`, i Docker Compose `http://api:8000`).
 
-Förslag på förtydliganden har skickats till backend-tråden, se [Förslag till backend](#förslag-till-backend).
+| Adress | Vad |
+|---|---|
+| `POST /agui` | Kör LangGraph-agenten `avtalsagent` via FastAPI-adaptern i `ag-ui-langgraph` och svarar med AG-UI-händelser (SSE). |
+| `GET /api/documents/{sha256}/pdf` | Ger PDF:en. |
+
+**Händelserna** är AG-UI 1.0 som `ag-ui-langgraph` skickar dem: `RUN_STARTED`, `STEP_STARTED` per
+nod, `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END` och `TOOL_CALL_RESULT` per verktygsanrop,
+`STATE_SNAPSHOT`, `MESSAGES_SNAPSHOT` och till sist `RUN_FINISHED`, eller `RUN_ERROR` om något gick
+fel. CopilotKit skickar hela meddelandehistoriken i varje körning.
+
+**Verktygen** har engelska namn i koden. `docs/arkitektur.md` (avsnitt 5.3) kallar dem vid sina
+svenska namn från planen:
+
+| I koden | I arkitekturplanen | Steg i webbappen |
+|---|---|---|
+| `search_documents` | `sok_dokument` | Söker i dokumenten |
+| `read_section` | `las_avsnitt` | Läser avsnitt |
+| `get_outline` | `visa_innehall` | Hämtar innehållsförteckning |
+| `resolve_reference` | `folj_hanvisning` | Följer hänvisning |
+| `list_documents` | `lista_dokument` | Listar dokument |
+| `search_register` | `sok_register` | Söker i registret |
+| `find_amendments` | `hitta_andringar` | Letar efter ändringar |
+| `calculate_date` | `berakna_datum` | Räknar ut datum |
+| `ask_user` | `fraga_anvandaren` | Frågedialogen |
+
+Argumenten `query`, `agreement_number`, `framework_area`, `sha256`, `section_number`, `reference`
+och `limit` får svenska namn i stegen. Andra argument visas under sina egna namn.
+
+**Svaret** ligger i agentens delade tillstånd under nyckeln `answer`, och bara där. Backend
+strömmar inte svaret som ett chattmeddelande (metadata `emit-messages: False` på det modellanropet)
+och sätter `answer` till `null` i början av varje ny fråga.
+
+```json
+{
+  "text": "Uppsägningstiden är tre månader [1].",
+  "status": "verified | with_reservation | no_answer",
+  "citations": [
+    {
+      "id": 1,
+      "sha256": "…",
+      "file_title": "Allmänna villkor",
+      "page_title": "IT-drift Större, fler än 200 anställda",
+      "section_number": "6.21.9",
+      "section_title": "Uppsägning",
+      "page": 14,
+      "quote": "…",
+      "verified": true
+    }
+  ]
+}
+```
+
+Texten hänvisar till källorna som `[1]` och `[2]`. `verified` säger om citatet klarade
+citatkontrollen. Formatet skiljer sig från agentens strukturerade output i `docs/arkitektur.md`
+(avsnitt 6, med påståenden och källor per påstående). Det är backend som lägger svaret i den här
+formen i `answer`.
+
+**Frågan till användaren** är en LangGraph-interrupt med värdet `{question, options?}`, där
+`options` är en lista med strängar eller saknas (`null` räknas som saknas). Backend skapar agenten
+med `LangGraphAgent(..., emit_interrupt_outcome=True)`. Då skickar `ag-ui-langgraph` frågan på två
+sätt, och webbappen klarar vart och ett för sig:
+
+- AG-UI:s standardform: `RUN_FINISHED` har `outcome: {type: "interrupt", interrupts: [...]}` och
+  värdet ligger i `metadata.langgraph.raw`;
+- den äldre formen: en `CUSTOM`-händelse `on_interrupt` vars värde är `{question, options}` som
+  JSON-text. Den är `ag-ui-langgraph`s standard.
+
+En interrupt som inte har den formen öppnar ingen dialog. Svaret skickas tillbaka som en vanlig
+sträng, alternativet eller det man skrev, och körningen fortsätter med det.
 
 ## Vad som byggdes, fil för fil
 
@@ -103,13 +162,16 @@ citat sträcker sig oftast över flera. Därför:
 1. Alla bitar på sidan slås ihop till en lång text där varje tecken minns vilken bit och vilken
    position det kom från.
 2. Både sidans text och citatet normaliseras: blanksteg tas bort, olika bindestreck och
-   citattecken görs lika, ligaturer som `ﬁ` skrivs ut och mjuka bindestreck försvinner. Agentens
-   citat och PDF:ens text skiljer sig ofta just där.
+   citattecken görs lika, ligaturer som `ﬁ` skrivs ut, mjuka bindestreck försvinner och `ä` skrivs
+   som `a` med prickar, den form en del PDF:er lagrar. Agentens citat och PDF:ens text skiljer sig
+   ofta just där.
 3. Citatet söks i den normaliserade texten. Hittas det inte görs ett nytt försök där bindestreck i
    slutet av en rad tas bort (`upp-` + `sägning`).
-4. Hittas det fortfarande inte markeras den längsta början eller det längsta slutet av citatet som
-   finns på sidan, minst 24 tecken. Ett citat kan fortsätta på nästa sida. Panelen säger då att bara
-   en del av citatet finns på sidan.
+4. Hittas det fortfarande inte kan citatet fortsätta på nästa sida, eller ha börjat på sidan före.
+   Då markeras den längsta början av citatet som slutar en rad nära sidans slut, eller det längsta
+   slutet som börjar en rad nära sidans början, minst 24 tecken. Panelen säger att bara en del av
+   citatet finns på sidan. En början eller ett slut mitt på sidan markeras inte. Det skulle få ett
+   felcitat ("sex månader" där avtalet säger "tre") att se delvis bekräftat ut.
 5. Positionerna räknas tillbaka till textbitarna, och `markItem` gör varje bit till HTML med
    `<mark>` runt de träffade tecknen.
 
@@ -137,11 +199,11 @@ vidare. Om API:t inte svarar blir det `502`, och en fil som saknas blir `404`.
 | `AgentApp.tsx` | Sidan: CopilotKit, rubriken, chatten och källpanelen bredvid varandra (under varandra på smala skärmar). |
 | `Chat.tsx` | CopilotKits chatt med svenska texter, exempelfrågorna och `useRenderTool` som ritar varje verktygsanrop som ett steg. |
 | `AgentSteps.tsx` | Ett steg: etikett, argument, en snurra medan verktyget arbetar och verktygets svar. |
-| `Answers.tsx` | Sparar varje frågas svar när körningen är klar och placerar svarskortet i chatten. |
+| `Answers.tsx` | Sparar varje frågas svar när körningen är klar och placerar svarskortet i chatten. Svaret sparas bara om körningen lyckades och skickade tillstånd, annars skulle en misslyckad fråga få förra frågans svar. En misslyckad körning får ett felmeddelande. |
 | `AnswerCard.tsx` | Svarskortet: status, text med hänvisningar och källistan. |
 | `SourcePanel.tsx` | Källpanelen: källans uppgifter, citatet och PDF:en. |
 | `PdfViewer.tsx` | PDF:en med `react-pdf` (PDF.js). Sidan ritas med sitt textlager, citatet markeras och panelen rullar till markeringen. |
-| `ClarifyDialog.tsx` | Frågedialogen, med `useInterrupt`. Den kan inte stängas utan svar, eftersom agenten väntar på det. |
+| `ClarifyDialog.tsx` | Frågedialogen, med `useInterrupt`. Den kan inte stängas utan svar, eftersom agenten väntar på det: Escape är avstängt (`closedby="none"`), och dialogen öppnas igen om den ändå stängs. |
 | `SourceContext.tsx` | Låter en hänvisning i ett svarskort öppna källpanelen. |
 
 ### 9. `mock/` – en låtsasagent
@@ -153,8 +215,9 @@ samma ordning som `ag-ui-langgraph` skickar händelserna:
 | Fråga som innehåller | Vad mocken gör |
 |---|---|
 | uppsägning och ett område (IT-drift, Programvaror, Bemanningstjänster) | Söker, läser avsnittet och svarar **Verifierat** med två källor. |
-| uppsägning utan område | Söker i registret och frågar vilket ramavtalsområde som menas. Fortsätter sedan med svaret. Med `[legacy]` i frågan kommer frågan i den äldre formen. |
+| uppsägning utan område | Söker i registret och frågar vilket ramavtalsområde som menas, med båda händelserna. Fortsätter sedan med svaret. Med `[legacy]` i frågan kommer bara den äldre händelsen, med `[outcome]` bara standardformen. |
 | vite | Svarar **Med reservation**. Den andra källans citat finns inte i PDF:en. |
+| `[fel]` | Gör ett steg och avslutar med `RUN_ERROR`, som när backend fallerar. |
 | allt annat | Svarar **Inget svar**. |
 
 PDF:en som mocken citerar skapas av `mock/fixture-pdf.ts`. Den är påhittad, säger på varje sida att
@@ -163,8 +226,9 @@ finns i repot.
 
 ### 10. Docker
 
-`web/Dockerfile` har fyra steg. `deps` installerar paketen, `build` bygger Next.js till en server
-utan `node_modules` (`output: "standalone"`) och `runner` är den image som körs (480 MB). `mock` är
+`web/Dockerfile` har fyra steg. `deps` installerar paketen, `build` bygger Next.js till en
+fristående server (`output: "standalone"`) som bara tar med de filer ur `node_modules` som servern
+använder, och `runner` är den image som körs (480 MB). `mock` är
 en egen liten image för mocken, med bara de tre paket den behöver. Node-imagen finns för både
 `linux/arm64` och `linux/amd64`, så samma fil fungerar på en Mac med M1 eller M2 och i CI.
 
@@ -186,11 +250,11 @@ Två nya jobb i `.github/workflows/ci.yml`:
   v1-API:t finns kvar för äldre appar.
 - **Svaret ritas av webbappen, inte av CopilotKit.** CopilotKit kan rita tillståndet i chatten, men
   i våra tester med version 1.77 knöt den ibland samma tillstånd till flera körningar, så
-  svarskortet visades flera gånger. Webbappen sparar i stället svaret när körningen är klar (`onRunFinalized`) och bestämmer
-  själv var kortet hamnar.
+  svarskortet visades flera gånger. Webbappen sparar i stället svaret när körningen är klar
+  (`RUN_FINISHED`) och bestämmer själv var kortet hamnar.
 - **PDF.js äldre bygge (`legacy`).** PDF.js 6 använder nya JavaScript-funktioner som inte alla
-  webbläsare har ännu. Chromium 141, som testerna kör, saknar `Map.getOrInsertComputed`. Det
-  äldre bygget har ersättningar för dem.
+  webbläsare har ännu. Chromium 141 saknar till exempel `Map.getOrInsertComputed`, och PDF:en
+  kunde inte visas där. Det äldre bygget har ersättningar för funktionerna.
 - **Mocken är TypeScript som Node kör direkt.** Node 22.18 och senare tar bort typerna när filen
   laddas, så mocken behöver inget byggsteg. Samma sak gäller enhetstesterna, som körs med Nodes
   egen testkörare i stället för ett testramverk.
@@ -199,35 +263,13 @@ Två nya jobb i `.github/workflows/ci.yml`:
 - **Svaren sparas bara i webbläsaren.** Laddar man om sidan är tidigare frågor borta. Det räcker
   för demot. Att spara trådar kräver lagring i backend.
 
-## Förslag till backend
-
-Det här behöver backend för att webbappen ska fungera fullt ut. Förslagen är skickade till
-backend-tråden via koordinatorn.
-
-1. Skapa agenten med `LangGraphAgent(..., emit_interrupt_outcome=True)` så att frågan till
-   användaren kommer i AG-UI:s standardform. Den äldre formen fungerar också.
-2. Lägg det slutliga svaret bara i tillståndets `answer`. Strömma inte JSON-svaret som ett
-   chattmeddelande (metadata `emit-messages: False` på det modellanropet), annars syns rå JSON i
-   chatten.
-3. Sätt `answer` till `null` i början av varje ny fråga, så att ett gammalt svar inte visas för en
-   ny fråga.
-4. Ta emot svaret på `ask_user` som en vanlig sträng.
-5. Argumentnamnen i `src/lib/tools.ts` (`query`, `agreement_number`, `framework_area`, `sha256`,
-   `section_number`, `reference`) är gissningar tills verktygen finns. Andra namn visas ändå, men
-   utan svensk etikett.
-6. Webbappen läser `API_URL` (standard `http://localhost:8000`, i Docker Compose
-   `http://api:8000`). När tjänsten `api` finns i `docker-compose.yml` bör `web` få
-   `depends_on: api`.
-7. CopilotKit skickar hela meddelandehistoriken i varje körning. Agenten kan använda den eller sina
-   egna checkpoints.
-
 ## Tester
 
 | Var | Vad | Antal |
 |---|---|---|
-| `src/lib/*.test.ts` | Kontraktet, verktygens etiketter, hänvisningarna i texten, var korten hamnar och markeringen av citat (radbrytningar, bindestreck, ligaturer, delvis träff) | 27 |
-| `mock/scenarios.test.ts` | Mockens händelser: ordningen, att varje verifierat citat finns på sin sida i test-PDF:en, båda formerna av interrupt och båda sätten att svara | 6 |
-| `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, steg, svarskort, källpanel med markerat citat över två rader, dialogen i båda formerna, eget svar, reservation och flera frågor efter varandra | 7 |
+| `src/lib/*.test.ts` | Kontraktet, verktygens etiketter, hänvisningarna i texten, var korten hamnar och markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan) | 30 |
+| `mock/scenarios.test.ts` | Mockens händelser: ordningen, att varje verifierat citat finns på sin sida i test-PDF:en, de tre formerna av interrupt, båda sätten att svara och en körning som misslyckas | 7 |
+| `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, steg, svarskort, källpanel med markerat citat över två rader, dialogen i alla tre formerna, att Escape inte stänger den, eget svar, reservation, flera frågor efter varandra och en fråga vars körning misslyckas | 9 |
 
 ## Så verifierar du M10 själv
 

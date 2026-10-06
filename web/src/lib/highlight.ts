@@ -7,11 +7,13 @@
  * string search on one item is not enough.
  *
  * How: every character of every item is folded (whitespace dropped, dashes and quotation marks
- * unified, ligatures expanded) into one long string that remembers where each character came
- * from. The folded quote is searched in that string. If the quote is not found, a second pass
- * also drops hyphens at line ends ("upp-" + "sägning"), and a third pass marks the longest
- * found start or end of the quote (a quote can continue on the next page). PdfViewer turns the
- * result into <mark> elements through `markItem`.
+ * unified, ligatures expanded, accents split off) into one long string that remembers where
+ * each character came from. The folded quote is searched in that string. If the quote is not
+ * found, a second pass also drops hyphens at line ends ("upp-" + "sägning"), and a third pass
+ * marks the longest start of the quote that ends a line near the end of the page, or the
+ * longest end that starts a line near its start: a quote can continue on the next page. A start
+ * or end found anywhere else is not marked, since it would make a misquote look partly
+ * confirmed. PdfViewer turns the result into <mark> elements through `markItem`.
  */
 
 /**
@@ -38,6 +40,12 @@ export interface QuoteMatch {
 /** A partial match shorter than this many folded characters is not shown. */
 const MIN_PARTIAL_LENGTH = 24;
 
+/**
+ * How far from the end (or start) of the page a partial match may lie, in folded characters.
+ * It leaves room for a page footer (or header), about two lines without spaces.
+ */
+const MAX_EDGE_DISTANCE = 200;
+
 const FOLD: Record<string, string> = {
   "­": "", // soft hyphen
   "‐": "-",
@@ -62,7 +70,8 @@ const FOLD: Record<string, string> = {
 
 function fold(char: string): string {
   if (/\s/u.test(char)) return "";
-  return FOLD[char] ?? char.normalize("NFC");
+  // NFD splits "ä" into "a" and a combining mark, the form some PDFs store, so both forms match.
+  return FOLD[char] ?? char.normalize("NFD");
 }
 
 export function foldText(text: string): string {
@@ -85,7 +94,7 @@ function buildHaystack(items: readonly TextItemLike[], dropLineEndHyphens: boole
     let offset = 0;
     for (const char of str) {
       const isLineEndHyphen =
-        dropLineEndHyphens && hasEOL && offset === lastVisible && char === "-";
+        dropLineEndHyphens && hasEOL && offset === lastVisible && fold(char) === "-";
       const folded = isLineEndHyphen ? "" : fold(char);
       for (const out of folded) {
         text += out;
@@ -106,6 +115,29 @@ function rangesFor(haystack: Haystack, start: number, end: number): ItemRanges {
     else ranges.set(itemIndex, [[offset, offset + length]]);
   }
   return ranges;
+}
+
+/** Whether the source character behind folded character `k` is the last one on its line. */
+function endsLine(items: readonly TextItemLike[], haystack: Haystack, k: number): boolean {
+  const [itemIndex, offset, length] = haystack.origin[k];
+  const { str, hasEOL } = textOf(items[itemIndex]);
+  const rest = str.trimEnd().slice(offset + length);
+  // A hyphen the second pass dropped may still follow at the line end.
+  if (rest !== "" && !(hasEOL && foldText(rest) === "-")) return false;
+  const laterText = items.slice(itemIndex + 1).some((item) => textOf(item).str.trim() !== "");
+  return hasEOL || !laterText;
+}
+
+/** Whether the source character behind folded character `k` is the first one on its line. */
+function startsLine(items: readonly TextItemLike[], haystack: Haystack, k: number): boolean {
+  const [itemIndex, offset] = haystack.origin[k];
+  const { str } = textOf(items[itemIndex]);
+  if (str.slice(0, offset).trim() !== "") return false;
+  for (let i = itemIndex - 1; i >= 0; i--) {
+    const previous = textOf(items[i]);
+    if (previous.str.trim() !== "") return previous.hasEOL;
+  }
+  return true;
 }
 
 /** Length of the longest prefix (or suffix) of `needle` that occurs in `text`, by bisection. */
@@ -135,14 +167,34 @@ export function findQuote(items: readonly TextItemLike[], quote: string): QuoteM
   }
 
   const haystack = buildHaystack(items, true);
-  const prefix = longestFound(haystack.text, needle, false);
-  const suffix = longestFound(haystack.text, needle, true);
-  const length = Math.max(prefix, suffix);
-  if (length < Math.min(MIN_PARTIAL_LENGTH, needle.length)) {
-    return { kind: "none", ranges: new Map() };
+  const text = haystack.text;
+  const minLength = Math.min(MIN_PARTIAL_LENGTH, needle.length);
+  const candidates: [start: number, length: number][] = [];
+
+  // The quote's start, as late on the page as it occurs, must end a line near the page's end.
+  const prefix = longestFound(text, needle, false);
+  const prefixStart = text.lastIndexOf(needle.slice(0, prefix));
+  const prefixEnd = prefixStart + prefix;
+  if (
+    prefix >= minLength &&
+    text.length - prefixEnd <= MAX_EDGE_DISTANCE &&
+    endsLine(items, haystack, prefixEnd - 1)
+  ) {
+    candidates.push([prefixStart, prefix]);
   }
-  const part = prefix >= suffix ? needle.slice(0, length) : needle.slice(needle.length - length);
-  const start = haystack.text.indexOf(part);
+  // The quote's end, as early on the page as it occurs, must start a line near the page's start.
+  const suffix = longestFound(text, needle, true);
+  const suffixStart = text.indexOf(needle.slice(needle.length - suffix));
+  if (
+    suffix >= minLength &&
+    suffixStart <= MAX_EDGE_DISTANCE &&
+    startsLine(items, haystack, suffixStart)
+  ) {
+    candidates.push([suffixStart, suffix]);
+  }
+
+  if (candidates.length === 0) return { kind: "none", ranges: new Map() };
+  const [start, length] = candidates.reduce((best, next) => (next[1] > best[1] ? next : best));
   return { kind: "partial", ranges: rangesFor(haystack, start, start + length) };
 }
 

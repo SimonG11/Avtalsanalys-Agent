@@ -59,11 +59,11 @@ test("answers with verified sources and opens the cited page with the quote mark
   await expect(panel).toHaveCount(0);
 });
 
-for (const variant of ["standard", "legacy"] as const) {
-  test(`asks which area is meant and continues with the answer (${variant} interrupt)`, async ({
-    page,
-  }) => {
-    const suffix = variant === "legacy" ? " [legacy]" : "";
+// ag-ui-langgraph sends the older on_interrupt event, the standard outcome, or both.
+const INTERRUPT_SHAPES = { both: "", legacy: " [legacy]", outcome: " [outcome]" };
+
+for (const [shape, suffix] of Object.entries(INTERRUPT_SHAPES)) {
+  test(`asks which area is meant and continues with the answer (${shape})`, async ({ page }) => {
     await ask(page, `Vilken uppsägningstid gäller för ett kontrakt?${suffix}`);
 
     const dialog = page.getByTestId("clarify-dialog");
@@ -82,6 +82,10 @@ for (const variant of ["standard", "legacy"] as const) {
 test("accepts an answer in the person's own words", async ({ page }) => {
   await ask(page, "Vilken uppsägningstid gäller för ett kontrakt?");
   const dialog = page.getByTestId("clarify-dialog");
+  // The run waits for an answer, so Escape does not close the dialog.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
   await dialog.getByLabel("Eller svara med egna ord").fill("Bemanningstjänster");
   await dialog.getByRole("button", { name: "Svara" }).click();
   await expect(page.getByTestId("answer-card")).toContainText(
@@ -113,4 +117,16 @@ test("keeps earlier answers when a new question is asked", async ({ page }) => {
   await expect(cards.nth(0)).toHaveAttribute("data-status", "verified");
   await expect(cards.nth(1)).toHaveAttribute("data-status", "no_answer");
   await expect(cards.nth(1)).toContainText("Inget svar");
+});
+
+test("does not show an earlier answer for a question whose run failed", async ({ page }) => {
+  await ask(page, "Hur säger kunden upp ett kontrakt inom IT-drift?");
+  await expect(page.getByTestId("answer-card")).toHaveCount(1);
+
+  await ask(page, "Vad gäller för underleverantörer? [fel]");
+  await expect(page.getByTestId("agent-step")).toHaveCount(3);
+  await expect(page.getByTestId("agent-step").nth(2)).toHaveAttribute("data-status", "complete");
+  // The failed run gets an error, not a card, and not the first question's card.
+  await expect(page.getByTestId("run-failed")).toBeVisible();
+  await expect(page.getByTestId("answer-card")).toHaveCount(1);
 });

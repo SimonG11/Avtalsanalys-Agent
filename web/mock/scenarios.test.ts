@@ -74,7 +74,7 @@ describe("planRun", () => {
     }
   });
 
-  it("asks which area is meant, as a standard interrupt and as the older event", () => {
+  it("asks which area is meant with both interrupt events, or with one of them", () => {
     const question = "Vilken uppsägningstid gäller för ett kontrakt?";
     const standard = events(input(question)).at(-1);
     const outcome = standard?.outcome as { type: string; interrupts: { metadata: unknown }[] };
@@ -91,9 +91,22 @@ describe("planRun", () => {
       },
     });
 
+    assert.ok(events(input(question)).some((event) => event.type === EventType.CUSTOM));
+
     const legacy = events(input(`${question} [legacy]`));
     assert.equal(legacy.at(-1)?.outcome, undefined);
     assert.ok(legacy.some((event) => event.type === EventType.CUSTOM));
+
+    const outcomeOnly = events(input(`${question} [outcome]`));
+    assert.equal((outcomeOnly.at(-1)?.outcome as { type: string }).type, "interrupt");
+    assert.ok(!outcomeOnly.some((event) => event.type === EventType.CUSTOM));
+  });
+
+  it("ends a failed run with RUN_ERROR and no state", () => {
+    const list = events(input("Vad gäller för underleverantörer? [fel]"));
+    assert.equal(list.at(-1)?.type, EventType.RUN_ERROR);
+    assert.ok(!list.some((event) => event.type === EventType.STATE_SNAPSHOT));
+    assert.ok(!list.some((event) => event.type === EventType.RUN_FINISHED));
   });
 
   it("continues with the answer from either resume channel", () => {

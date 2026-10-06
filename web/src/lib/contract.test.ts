@@ -62,14 +62,21 @@ describe("parseAskUser", () => {
     assert.deepEqual(parseAskUser(null, JSON.stringify(value)), value);
   });
 
-  it("falls back to the interrupt message when the raw value is missing", () => {
-    assert.deepEqual(parseAskUser({ id: "i1", message: "Vilket år?" }, undefined), {
-      question: "Vilket år?",
-    });
+  it("treats options sent as null (Python's None) as no options", () => {
+    assert.deepEqual(
+      parseAskUser(null, JSON.stringify({ question: "Vilket år?", options: null })),
+      {
+        question: "Vilket år?",
+        options: null,
+      },
+    );
   });
 
   it("returns null for an interrupt that is not ask_user", () => {
     assert.equal(parseAskUser(null, "not json"), null);
     assert.equal(parseAskUser(null, { approve: true }), null);
+    // An interrupt with only a message, such as an approval, is not ask_user either.
+    const approval = { id: "i2", message: "Godkänn verktygsanropet?", metadata: {} };
+    assert.equal(parseAskUser(approval, approval), null);
   });
 });

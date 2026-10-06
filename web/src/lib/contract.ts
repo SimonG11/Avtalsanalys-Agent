@@ -3,8 +3,9 @@
  * the answer in the shared state (`answer`) and the payload of the ask_user interrupt.
  *
  * Why: the backend and the web app are built in separate milestones (M7/M9 and M10). The
- * contract in docs/steg/10-webbapp.md is the only thing they share, so it is written down once
- * here and checked at runtime. A malformed answer is shown as an error instead of crashing.
+ * contract between them is described in docs/steg/10-webbapp.md ("Kontraktet med backend"); this
+ * file is its code form, checked at runtime. A malformed answer is shown as an error instead of
+ * crashing.
  *
  * How: AnswerCard reads the run's state through `parseAnswer`, and ClarifyDialog reads the
  * interrupt through `parseAskUser`. Both are pure functions with tests next to them.
@@ -58,7 +59,8 @@ export function parseAnswer(state: unknown): ParsedAnswer {
 
 export const AskUserSchema = z.object({
   question: z.string().min(1),
-  options: z.array(z.string().min(1)).optional(),
+  // Python sends `options=None` as null, so null counts as no options.
+  options: z.array(z.string().min(1)).nullish(),
 });
 
 export type AskUser = z.infer<typeof AskUserSchema>;
@@ -69,7 +71,8 @@ export type AskUser = z.infer<typeof AskUserSchema>;
  * ag-ui-langgraph delivers the interrupt in one of two shapes, and CopilotKit passes both on:
  * - the AG-UI standard interrupt, where the graph's value is in `metadata.langgraph.raw`;
  * - the older `on_interrupt` custom event, where the value is a JSON string.
- * The first shape that matches the schema wins. Returns null when neither does.
+ * The first shape that matches the schema wins. Returns null when neither does, so an
+ * interrupt that is not ask_user never opens the dialog.
  */
 export function parseAskUser(standard: unknown, legacyValue: unknown): AskUser | null {
   const candidates: unknown[] = [];
@@ -77,9 +80,6 @@ export function parseAskUser(standard: unknown, legacyValue: unknown): AskUser |
     const metadata = standard.metadata;
     if (isRecord(metadata) && isRecord(metadata.langgraph)) {
       candidates.push(metadata.langgraph.raw);
-    }
-    if (typeof standard.message === "string") {
-      candidates.push({ question: standard.message });
     }
   }
   candidates.push(typeof legacyValue === "string" ? parseJson(legacyValue) : legacyValue);

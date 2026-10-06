@@ -17,7 +17,10 @@ export interface ToolLabel {
   done: string;
 }
 
-/** One label per MCP tool in avtal-mcp (plan section 1, tool names). */
+/**
+ * One label per tool, under the English names the code uses. docs/arkitektur.md (5.3) lists the
+ * same tools under their Swedish plan names, e.g. sok_dokument for search_documents.
+ */
 export const TOOL_LABELS: Record<string, ToolLabel> = {
   search_documents: { running: "Söker i dokumenten", done: "Sökte i dokumenten" },
   read_section: { running: "Läser avsnitt", done: "Läste avsnitt" },

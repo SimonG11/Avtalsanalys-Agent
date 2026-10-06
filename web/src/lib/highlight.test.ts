@@ -61,6 +61,25 @@ describe("findQuote", () => {
     assert.deepEqual(marked(PAGE, quote), ["6.21.9 Uppsägning", "Kunden har rätt"]);
   });
 
+  it("does not mark the start of a misquote that is found in the middle of the page", () => {
+    // The page says "tre (3) månaders"; the quote says six months.
+    const quote = "Kunden har rätt att säga upp Kontraktet med sex (6) månaders uppsägningstid.";
+    assert.equal(findQuote(PAGE, quote).kind, "none");
+  });
+
+  it("matches letters stored as a base letter and a combining accent", () => {
+    const decomposed = [{ str: "Kunden har ra\u0308tt att sa\u0308ga upp", hasEOL: true }];
+    assert.equal(findQuote(decomposed, "har rätt att säga").kind, "full");
+  });
+
+  it("drops a Unicode hyphen at a line end", () => {
+    const items = [
+      { str: "tre månaders upp\u2010", hasEOL: true },
+      { str: "sägningstid", hasEOL: true },
+    ];
+    assert.equal(findQuote(items, "tre månaders uppsägningstid").kind, "full");
+  });
+
   it("reports nothing when the quote is not on the page", () => {
     assert.equal(findQuote(PAGE, "Vite utgår med 0,5 procent per påbörjad vecka.").kind, "none");
     assert.equal(findQuote(PAGE, "   ").kind, "none");

@@ -9,7 +9,9 @@
  *
  * How: on the backend, ask_user is a LangGraph interrupt, which ag-ui-langgraph sends as an
  * AG-UI interrupt. CopilotKit's `useInterrupt` hands it to this component; `resolve(answer)`
- * starts a new run that resumes the graph with the answer as the interrupt's value.
+ * starts a new run that resumes the graph with the answer as the interrupt's value. The run
+ * waits for the answer, so the dialog cannot be closed without one: `closedby="none"` turns
+ * off Escape where browsers support it, and the dialog reopens if it is closed anyway.
  */
 import { useInterrupt } from "@copilotkit/react-core/v2";
 import { useEffect, useRef, useState } from "react";
@@ -44,6 +46,7 @@ function AskUserDialog({
   onAnswer: (answer: string) => Promise<unknown>;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const answered = useRef(false);
   const [own, setOwn] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -54,10 +57,16 @@ function AskUserDialog({
 
   async function answer(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || sending) return;
+    if (!trimmed || answered.current) return;
+    answered.current = true;
     setSending(true);
     dialog.current?.close();
-    await onAnswer(trimmed);
+    try {
+      await onAnswer(trimmed);
+    } catch (error) {
+      // CopilotKit has already closed the interrupt, and Answers shows the failed run.
+      console.error("The answer to the agent's question could not be sent", error);
+    }
   }
 
   return (
@@ -66,8 +75,11 @@ function AskUserDialog({
       className={styles.dialog}
       aria-labelledby="clarify-question"
       data-testid="clarify-dialog"
-      // The run waits for an answer, so Escape does not close the dialog.
+      closedby="none"
       onCancel={(event) => event.preventDefault()}
+      onClose={() => {
+        if (!answered.current) dialog.current?.showModal();
+      }}
     >
       <p className={styles.eyebrow}>Agenten behöver veta mer</p>
       <h2 id="clarify-question" className={styles.question}>
