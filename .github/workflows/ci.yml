@@ -1,8 +1,10 @@
 # Continuous integration: runs on every push and pull request.
-# Three jobs, each answering one question:
-#   lint    - does the code follow the style and type rules?
-#   test    - do the tests pass?
-#   compose - does the database in docker-compose.yml start, with pgvector?
+# Five jobs, each answering one question:
+#   lint       - does the code follow the style and type rules?
+#   test       - do the tests pass?
+#   compose    - does the database in docker-compose.yml start, with pgvector?
+#   web        - does the web app pass its checks and tests, and work in a browser?
+#   web-docker - do the web app's container images work, as on the demo computer?
 name: CI
 
 on:
@@ -53,3 +55,47 @@ jobs:
           | grep -E '^[0-9]+\.[0-9]+'
       - if: always()
         run: docker compose down -v
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      # Starts the mock agent and the built app, then runs the browser tests against them.
+      - run: npm run test:e2e
+
+  web-docker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: docker compose -f compose.mock.yaml up -d --build --wait
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # The same browser tests, against the containers instead of a local build.
+      - run: npm run test:e2e
+        env:
+          E2E_BASE_URL: http://localhost:3000
+      - if: always()
+        run: docker compose -f compose.mock.yaml down
