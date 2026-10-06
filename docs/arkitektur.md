@@ -20,6 +20,10 @@
 >   dokuments egna rubriker. Ett dokument hålls i karantän när dess egen identitet strider mot
 >   registret; andra avvikelser rapporteras eller noteras, och en person kan godkänna en
 >   avvikelse i `accepted_findings.toml` ([M4](steg/04-extraktion.md)).
+> - [ADR 0011](adr/0011-hybridsokning.md): sökningen är exakt vektorsökning med
+>   `text-embedding-3-large` (1 536 dimensioner) och BM25 som räknas i Python och lagras som
+>   pgvector `sparsevec`, sammanslagna med RRF över avsnitt med samma text. Postgres fulltext och
+>   omrankningen används inte i MVP:n; valen bygger på mätningen i [M5](steg/05-sokning.md).
 
 ---
 

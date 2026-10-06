@@ -14,6 +14,7 @@ Ett beslut ändras aldrig i efterhand. Ändras beslutet skrivs en ny ADR som ers
 | [0007](0007-hamtning-av-dokument.md) | Hämtning av dokumenten från avropa.se | Godkänt (PR #3) |
 | [0008](0008-tolkning-och-uppdelning.md) | Tolkning med Docling och uppdelning i numrerade avsnitt | Godkänt (PR #4), rättelser i PR #5 |
 | [0009](0009-extraktion-avstamning-och-karantan.md) | Extraktion, avstämning mot registret och karantän | Föreslaget (PR #6) |
+| [0011](0011-hybridsokning.md) | Hybridsökning med exakt vektorsökning, BM25 och rangfusion | Föreslaget (PR #8) |
 
 Mall: *Status*, *Kontext* (problemet), *Beslut*, *Konsekvenser* (vad vi vinner och vad det kostar),
 *Alternativ som valts bort*.

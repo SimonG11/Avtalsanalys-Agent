@@ -15,13 +15,21 @@ dependencies = [
     "httpx>=0.28.1",
     # OpenAI models through LangChain (ADR 0005). M4 uses one to choose section headings.
     "langchain-openai>=1.6.7",
-    # Imported directly for its error type (ingestion/llm_title_matcher.py).
+    # Vectors in memory for the offline measurement of the search (evals/, M5).
+    "numpy>=2.3",
+    # Imported directly for its error type (ingestion/llm_title_matcher.py) and for
+    # embeddings (retrieval/embedder.py, M5).
     "openai>=3.24",
     "openpyxl>=3.1.5",
+    # pgvector's types in SQLAlchemy and psycopg: embeddings and BM25 weights (M5).
+    "pgvector>=0.5.0",
     "psycopg[binary]>=3.3.6",
     "pydantic>=2.13",
     "pydantic-settings>=2.15",
     "pypdfium2>=5.0",
+    # The Swedish stemmer of the search's word index (retrieval/swedish_text.py, M5). A new
+    # major version changes stems, so the index records the version it was built with.
+    "snowballstemmer>=3.1.1,<4",
     "sqlalchemy>=2.1.3",
     # Listed so that [tool.uv.sources] below picks their CPU build on Linux.
     "torch>=2.2.2",
@@ -88,7 +96,7 @@ pydocstyle.convention = "google"
 strict = true
 python_version = "3.12"
 plugins = ["pydantic.mypy"]
-files = ["src", "tests"]
+files = ["src", "tests", "evals"]
 # Module names come from these roots: src/avtalsagent -> avtalsagent, tests/... -> tests....
 mypy_path = ["src", "."]
 explicit_package_bases = true
