@@ -128,7 +128,7 @@ _SENTENCE_END = re.compile(r"(?<=[.!?:;])\s+(?=[A-ZÅÄÖ0-9\"”(])")
 # A heading the layout model ran into the paragraph before it: "... försenas eller
 # innehållas. 1.7 Gällande lagar och geografisk omfattning Varje part ...". Only
 # numbers with a dot count, after a sentence that ends with a word of at least four
-# letters, so "kl. 17.00", "p. 5.15.3" and "steg 2. Leverantören" are not split.
+# letters, so "kl. 17.00", "p. 5.15.3" and "tilldelningsbeslut. 2. Efter" are not split.
 _RUN_IN_HEADING = re.compile(r"(?<=[a-zåäö]{4}[.!?])\s+(?=\d{1,3}(?:\.\d{1,3}){1,5}\.?\s+[A-ZÅÄÖ])")
 # A heading whose number the layout model read on its own, with the title at the end of
 # the next paragraph: "4." followed by "Om Kunden gör detta ... för Valda program.
@@ -664,7 +664,9 @@ def _with_trailing_parts(headings: list[Heading], blocks: Sequence[Block]) -> li
     section and without numbers. Without this they would be part of that
     section ("10 Upphävande av IBM SaaS och uppsägning"). The first heading the
     parser found without a number that starts a page starts the part, when the
-    document goes on to at least the next page. A heading on the last page is
+    document goes on to at least the next page. When that heading repeats the
+    document's title ("IBM Användningsvillkor") and another heading follows on
+    the same page, the part is named after the second. A heading on the last page is
     more often a subheading of the last section ("Block 6 - Säkerhetstjänster"
     under "6 Särskilda kontraktsvillkor") or a signature page. Later headings
     stay in the part: the country headings in IBM's amendments only sometimes
@@ -688,9 +690,27 @@ def _with_trailing_parts(headings: list[Heading], blocks: Sequence[Block]) -> li
             and not _LEADING_MARKER.match(block.text)
             and _normalise(block.text) not in _CONTENTS_TITLES
         ):
-            part = Heading(index, 1, None, 1, " ".join(block.text.split()))
+            name = block
+            following = blocks[index + 1] if index + 1 < len(blocks) else None
+            if (
+                following is not None
+                and following.kind is BlockKind.HEADING
+                and following.page == block.page
+                and _repeats_title(block, blocks)
+            ):
+                name = following
+            part = Heading(index, 1, None, 1, " ".join(name.text.split()))
             return sorted([*headings, part], key=lambda heading: heading.index)
     return headings
+
+
+def _repeats_title(block: Block, blocks: Sequence[Block]) -> bool:
+    """Whether `block` repeats the start of the document's first heading or title."""
+    first = next(
+        (b for b in blocks if b.kind in (BlockKind.TITLE, BlockKind.HEADING) and b is not block),
+        None,
+    )
+    return first is not None and _normalise(first.text).startswith(_normalise(block.text))
 
 
 def _usable(headings: Sequence[Heading], blocks: Sequence[Block], word: bool) -> bool:
@@ -768,16 +788,23 @@ def chunk_sections(
     directly by 6.1) gets no chunk; its text is in its subsections. A heading
     that is a whole clause ("3.4 Avtalet gäller i två år.") does get one, and so
     does a numbered section without subsections ("1.1 För närvarande har inga
-    ändringar gjorts till bilagorna 6.1-6.2"), since it has nothing else. Headings
-    without numbers have no reliable levels, so for them a short heading is
-    always only a heading ("Licensmodell", followed by "Per kärna/CAL").
+    ändringar gjorts till bilagorna 6.1-6.2"), since it has nothing else. The
+    exception is a section for the removed table of contents ("6.1
+    Innehållsförteckning"): it is kept so the check against the contents works,
+    but searches should not find it. Headings without numbers have no reliable
+    levels, so for them a short heading is always only a heading ("Licensmodell",
+    followed by "Per kärna/CAL").
     """
     parents = {section.parent for section in sections if section.parent is not None}
     chunks: list[Chunk] = []
     for section in sections:
         if not section.text.strip():
             continue
-        leaf = section.number is not None and section.position not in parents
+        leaf = (
+            section.number is not None
+            and section.position not in parents
+            and _normalise(section.title) not in _CONTENTS_TITLES
+        )
         if _heading_only(section.text) and not leaf:
             continue
         header = context_header(context, section)

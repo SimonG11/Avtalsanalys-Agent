@@ -21,7 +21,7 @@ efter självkontrollen 2026-10-06 (se Stickprov).
 | Rubriker utan nummer | 25 | 2 | 1 738 |
 | Inga rubriker: hela filen ett avsnitt, eller inget alls i en skannad fil | 2 | 1 | 1 |
 
-Det blev 13 175 avsnitt och 14 022 bitar. Ett avsnitt är i mitten 512 tecken långt och en bit
+Det blev 13 175 avsnitt och 13 992 bitar. Ett avsnitt är i mitten 512 tecken långt och en bit
 högst 1 500. Dokumenten med rubriker utan nummer är främst Microsofts och IBM:s villkor,
 prisbilagor och blanketter. Microsofts produktvillkor (222 sidor, 1 505 avsnitt) får nivåer ur sin
 innehållsförteckning, så `Användningsrättigheter` hamnar under sin produkt.
@@ -32,16 +32,17 @@ innehållsförteckning, så `Användningsrättigheter` hamnar under sin produkt.
 |---|---|---|
 | Varje nummer i dokumentets egen innehållsförteckning är ett avsnitt | `chunk` | 104 av 104 filer med förteckning (78 PDF, 26 Word) |
 | Varje fråga i en fråge- och svarslogg är ett eget avsnitt | `verify` | 1 462 av 1 463 frågor |
-| Raderna i PDF:ernas textlager (minst 25 tecken) finns i avsnitten | `verify` | 99,5 % av 119 159 rader |
+| Raderna i PDF:ernas textlager (minst 25 bokstäver eller siffror) finns i avsnitten | `verify` | 95,1 % av 119 159 rader; 4,4 % finns bara i sidhuvuden, sidfötter och innehållsförteckningar som steg 3 tar bort; 0,5 % saknas |
 | Ingen numrerad rad i textlagret passar mellan två avsnitt utan att själv vara ett | `verify` | 3 rader i 3 filer, se nedan |
 
 Kontrollen mot innehållsförteckningen täcker hälften av filerna. De andra 103 är 58 numrerade
 PDF, 2 numrerade Word-filer, 13 frågeloggar och 30 filer utan numrerade rubriker. `verify`
 kontrollerar alla 176 PDF:er mot textlagret, alltså också de 98 PDF:erna utan förteckning. De fem
 Word-filerna utan förteckning har inget textlager och gicks igenom för hand i självkontrollen. De tre numrerade raderna som inte blev avsnitt är 2.2.2 i mallen för
-hållbarhetskrav (se Kända begränsningar) och två nummer som citeras ur ett annat dokument:
-`1.1.1 Exempelprogramvara Konsultkompetens` i ett upphandlingsdokument och `10.3 Suppliers and
-Program Developers` i IBM:s landsspecifika tillägg.
+hållbarhetskrav (se Kända begränsningar) och två nummer som inte är dokumentets egna avsnitt:
+`1.1.1 Exempelprogramvara Konsultkompetens`, ett exempel på kravnumrering i ett
+upphandlingsdokument, och `10.3 Suppliers and Program Developers` i IBM:s landsspecifika tillägg,
+som skriver om avsnitt 10 i samma avtal för vissa länder.
 
 Den fråga som saknas (fråga 29 i en logg) har sitt nummer i ett sidhuvud som layoutmodellen
 slagit ihop med annan text. Av de 582 rader som inte hittas är 500 sidfötter med adresser,
@@ -72,8 +73,8 @@ i `chunk` inte når, och hittade fel i tio av dem. De är rättade och har teste
   numret stod före slutet av 3.9 och titeln efter. Nu finns alla fyra avsnitten, och 4 har rätt
   titel.
 - I tre IBM-dokument och tre av Microsofts registreringar hamnade en del utan nummer efter sista
-  punkten (landsspecifika villkor, registreringsblanketten) under den punkten, 25–49 % av texten.
-  Nu är delen ett eget avsnitt.
+  punkten (landsspecifika villkor, registreringsblanketten) under den punkten. Delen är 17–42 %
+  av dokumentets text. Nu är delen ett eget avsnitt.
 - Två Word-mallar för kontraktstecknande delades efter uppräkningen av kontraktets handlingar
   (1–10) i stället för efter sina rubriker.
 - I två av Microsofts registreringar i Word blev meningar mitt i dokumentet (`Välj språk för
@@ -103,8 +104,8 @@ förblir markerade, och OCR kan läggas till senare som en parser bakom `Documen
 - Docling ersätter typografiska citattecken och tankstreck med raka tecken (`”` blir `"`), så
   citatkontrollen i M8 måste jämföra normaliserad text.
 - I Allmänna villkor för Systemutveckling (e04bad6a0ced) är 22 av 31 sidor skannade. Den läsbara
-  texten efter de skannade sidorna hamnar under den senaste rubriken före dem (7.16 och 7.25),
-  eftersom rubrikerna däremellan saknas. M4 sätter sådana avsnitt i karantän tills OCR finns.
+  texten efter de skannade sidorna hamnar i avsnittet före dem: i texten före första rubriken
+  (s. 2–14, bland annat definitionerna), i 7.16 och i 7.25, eftersom rubrikerna däremellan saknas. M4 sätter sådana avsnitt i karantän tills OCR finns.
 - En rubrik som layoutmodellen kört ihop med stycket före får ett eget avsnitt, men titeln
   fortsätter in i texten, eftersom gränsen mellan rubrik och text inte syns i blocket (`1.7
   Gällande lagar och geografisk omfattning Varje part är …`). Titeln kortas till 120 tecken.
@@ -295,10 +296,12 @@ och dess nummer passar inte in i kedjan.
    (`5.4.1.4 Terroristbrott eller brott med anknytning till` + `terroristverksamhet`) slås ihop.
 3. `chunk_sections` delar ett avsnitt längre än 1 500 tecken mellan stycken, och ett mycket långt
    stycke mellan meningar. Ett avsnitt som bara är en kort rubrik och har underavsnitt får ingen
-   bit, eftersom dess text finns i underavsnitten. Ett numrerat avsnitt utan underavsnitt får
-   alltid en bit, också när det är kort (`1.1 För närvarande har inga ändringar gjorts till
-   bilagorna 6.1-6.2`), annars går det inte att söka fram. En rubrik utan nummer har ingen
-   säker nivå, så en kort sådan räknas alltid som bara rubrik.
+   bit, eftersom dess text finns i underavsnitten. Ett numrerat avsnitt utan underavsnitt får en
+   bit, också när det är kort (`1.1 För närvarande har inga ändringar gjorts till bilagorna
+   6.1-6.2`), annars går det inte att söka fram. Undantaget är avsnittet för den borttagna
+   innehållsförteckningen (`6.1 Innehållsförteckning` i villkoren för IT-drift), som finns kvar
+   för kontrollen mot förteckningen. En rubrik utan nummer har ingen säker nivå, så en kort sådan
+   räknas alltid som bara rubrik.
 4. `document_context` och `context_header` bygger kontextrubriken utan språkmodell, t.ex.
    `Programvaror och tjänster (23.3-2649-2022) › Ramavtal 23.3-2649-2022-006 (Pulsen AB) ›
    1 Ramavtalets Huvuddokument › 1.3 Parter och Avropsberättigade › 1.3.1 Parter`. Området
@@ -325,14 +328,16 @@ en fils innehållsförteckning med sidor, så att den kan jämföras med PDF:en.
 `verify` behöver ingen databas. Den delar upp de sparade tolkningarna på nytt och jämför med
 varje PDF:s textlager, som `ingestion/text_layer_check.py` läser med pypdfium2:
 
-- hur stor del av textlagrets rader (minst 25 tecken) som finns i avsnitten, och de tio filer
-  där flest saknas
+- hur stor del av textlagrets rader (minst 25 bokstäver eller siffror) som finns i avsnitten,
+  hur många som bara finns i det steg 3 tar bort med avsikt och hur många som saknas, och de tio
+  filer där flest saknas
 - att varje fråga i en fråge- och svarslogg är ett eget avsnitt
 - numrerade rader i textlagret som passar mellan två avsnitt (föräldern och föregående syskon
   finns) utan att själva vara ett avsnitt
 
-Rader som steg 3 tar bort med avsikt (sidhuvuden, sidfötter, innehållsförteckningen) räknas inte
-som saknade.
+Rader som steg 3 tar bort med avsikt (sidhuvuden, sidfötter, innehållsförteckningen) räknas för
+sig och inte som saknade. En del som hamnat i fel avsnitt behåller alla sina rader, så det felet
+syns inte i `verify`. Självkontrollen hittade sådana fel genom att läsa avsnitten.
 
 ## Tester
 

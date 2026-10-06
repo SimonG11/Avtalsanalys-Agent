@@ -211,18 +211,23 @@ def verify() -> None:
             continue
         checks.append(check_document(document, text_layer(pdf)))
 
-    lines = sum(check.lines for check in checks)
-    missing = sum(len(check.missing) for check in checks)
+    lines = sum(check.lines.checked for check in checks)
+    removed = sum(check.lines.removed for check in checks)
+    missing = sum(len(check.lines.missing) for check in checks)
+    in_sections = lines - removed - missing
     print(f"PDF files: {len(checks)}")
-    print(
-        f"Text-layer lines: {lines}, in a section: {lines - missing} "
-        f"({(lines - missing) / max(lines, 1):.1%})"
-    )
-    worst = sorted(checks, key=lambda check: len(check.missing), reverse=True)
+    print(f"Text-layer lines: {lines}")
+    print(f"  in a section: {in_sections} ({in_sections / max(lines, 1):.1%})")
+    print(f"  only in text step 3 removes on purpose (headers, footers, contents): {removed}")
+    print(f"  missing: {missing} ({missing / max(lines, 1):.1%})")
+    worst = sorted(checks, key=lambda check: len(check.lines.missing), reverse=True)
     for check in worst[:_SHOWN_FILES]:
-        if check.missing:
-            print(f"  {check.sha256[:12]}: {len(check.missing)} of {check.lines} lines missing")
-            for line in check.missing[:_SHOWN_LINES]:
+        if check.lines.missing:
+            print(
+                f"  {check.sha256[:12]}: {len(check.lines.missing)} of "
+                f"{check.lines.checked} lines missing"
+            )
+            for line in check.lines.missing[:_SHOWN_LINES]:
                 print(f"      p. {line.page}: {line.text[:100]}")
 
     logs = [check for check in checks if check.questions is not None]

@@ -1,6 +1,7 @@
 # ADR 0008: Tolkning och uppdelning av dokumenten
 
-**Status:** Förslag (M3), granskas av Simon i PR:en
+**Status:** Godkänt av Simon 2026-10-06 (PR #4). Rättelserna från självkontrollen samma dag
+(beslut 2, 5, 6 och 7) granskas i PR #5.
 
 ## Kontext
 
@@ -84,16 +85,19 @@ Det som avgör valet:
    är det rubriker på högsta nivån (t.ex. "Instruktion till Personuppgiftsbiträdesavtalet" efter
    "16 Tvistelösning"). I en PDF är det den första rubriken utan nummer som börjar en sida, om
    dokumentet fortsätter minst en sida till (IBM:s "Del 2 - Landsspecifika villkor", Microsofts
-   "Registreringsinformation"). En rubrik på sista sidan är oftare en underrubrik eller en
-   signatursida och stannar i sitt avsnitt.
+   "Registreringsinformation"). Upprepar rubriken dokumentets titel ("IBM Användningsvillkor")
+   och följs av en rubrik till på samma sida, får delen den andras namn. En rubrik på sista sidan
+   är oftare en underrubrik eller en signatursida och stannar i sitt avsnitt.
    **En Word-fil vars nummer bara är listpunkter** delas vid sina Word-rubriker. I Word har
    avsnitten rubrikformat, så en sådan lista är en uppräkning (kontraktets handlingar i
    rangordning under rubriken "Kontraktets omfattning").
 7. **Föräldra–barn.** Avsnittet är det agenten läser och citerar. Ett avsnitt längre än 1 500 tecken
    delas i bitar mellan stycken (och mellan meningar i mycket långa stycken). Bitarna är det som
    söks, och varje bit pekar på sitt avsnitt. Ett avsnitt som bara är en kort rubrik får ingen
-   bit när dess text finns i underavsnitten. Ett numrerat avsnitt utan underavsnitt får alltid en
-   bit, eftersom rubriken då är hela klausulen (`1.1 För närvarande har inga ändringar …`).
+   bit när dess text finns i underavsnitten. Ett numrerat avsnitt utan underavsnitt får en bit,
+   eftersom rubriken då kan vara hela klausulen (`1.1 För närvarande har inga ändringar …`).
+   Undantaget är avsnittet för den borttagna innehållsförteckningen (`6.1
+   Innehållsförteckning`): det finns kvar för kontrollen mot förteckningen men ska inte sökas fram.
 8. **Kontextrubriken byggs utan språkmodell:** `ramavtalsområde (diarienummer) › dokument ›
    rubrikstig`. Området kommer från registret via sidans diarienummer. Dokumentnamnet är länktexten,
    och ett leverantörsavtal får avtalsnummer och leverantör, t.ex. `Ramavtal 23.3-2940-20:010
@@ -110,13 +114,15 @@ Det som avgör valet:
   blev ett avsnitt. Alla 104 filer med egen förteckning (78 PDF och 26 Word) klarar kontrollen.
   Kommandot `verify` jämför avsnitten i varje PDF med dess textlager: rader som inget avsnitt
   har, frågor i fråge- och svarsloggar och numrerade rader mellan två avsnitt som inte själva
-  blev avsnitt. Så kontrolleras också filerna utan egen förteckning.
+  blev avsnitt. Så kontrolleras också PDF:erna utan egen förteckning, men bara på förlorad text
+  och missade numrerade rubriker under en befintlig förälder. En del som hamnat i fel avsnitt
+  behåller alla sina rader och syns inte där, och Word-filerna har inget textlager.
 - PyTorch för CPU tar ungefär 1 GB. Modellerna laddas ner från Hugging Face första gången. CI
   sparar dem i en cache och kräver att PDF-testerna körs. Miljön måste nå `download.pytorch.org`
   (och `download-r2.pytorch.org`, där paketen ligger) och Hugging Face filservrar (`*.hf.co`).
 - Text i skannade sidor och i bilder saknas tills OCR finns. Läsbar text efter skannade sidor
-  inom ett avsnitt hamnar under den senaste rubriken före dem, eftersom rubrikerna på de skannade
-  sidorna saknas. Det gäller en fil (Allmänna villkor för Systemutveckling). M4 sätter sådana
+  hamnar i avsnittet före dem (också i texten före första rubriken), eftersom rubrikerna på de
+  skannade sidorna saknas. Det gäller en fil (Allmänna villkor för Systemutveckling). M4 sätter sådana
   avsnitt i karantän.
 - Doclings läsordning och tabellmodell gör ibland fel (marginaletiketter, försättsblad, en
   rubrik i en mall, tabeller med sammanslagna celler). Felen och var de finns står i
