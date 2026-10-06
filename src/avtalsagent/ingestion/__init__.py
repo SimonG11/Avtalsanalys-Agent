@@ -9,5 +9,6 @@ Why:
 
 How:
     Each step reads what the previous one stored and writes its own result.
-    M2 adds the first step, fetching documents from avropa.se.
+    M2 added step 1, fetching documents from avropa.se. M3 adds step 2,
+    parsing them (`parsers/`), and step 3, splitting them into sections.
 """
