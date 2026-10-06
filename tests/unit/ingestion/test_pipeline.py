@@ -232,13 +232,16 @@ def test_a_link_to_a_file_that_was_not_parsed_holds_that_file_back(
     unparsed = "ef" * 32
     links = [main_link(), main_link(unparsed).model_copy(update={"title": "Allmänna villkor"})]
 
-    validation = process([parsed_document()], links, register, [AREA], {}).validation
+    result = process([parsed_document()], links, register, [AREA], {})
 
+    validation = result.validation
     not_parsed = [f for f in validation.findings if f.sha256 == unparsed]
     assert [(f.check, f.subject, f.severity) for f in not_parsed] == [
         (missing_text.CHECK, missing_text.NOT_PARSED, Severity.QUARANTINE)
     ]
     assert validation.quarantine.files == {MAIN, unparsed}
+    # Kept in the result too, so the report can name the pages of every link.
+    assert result.links == links
 
 
 def test_the_context_header_names_the_register_area_and_a_card_its_supplier(
@@ -322,11 +325,14 @@ def assert_report_shows_quarantine_coverage_and_rate(result: IngestionResult, sh
     assert f"Ramavtalets huvuddokument (`{sha256[:12]}`)" in held
     assert f"Nyckel: `{org_key(sha256)}`" in held
 
-    assert [gap.agreement_number for gap in report.coverage.gaps] == [AGREEMENT]
+    [group] = report.coverage.groups
+    assert [gap.agreement_number for gap in group.agreements] == [AGREEMENT]
     covered = part(markdown, "Täckning")
-    assert f"| {AREA} | 1 | 0 | 0 | 0 | 0 | 1 | 0 |" in covered
-    assert f"bara Ramavtalets huvuddokument (`{sha256[:12]}`), i karantän." in covered
-    assert f"  - {AGREEMENT} (A Hub Group AB)" in covered
+    assert f"| {AREA} | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |" in covered
+    assert (
+        f"- **Bara dokument i karantän: {AREA}, 1 avtal** ({AGREEMENT}, A Hub Group AB): "
+        f"Ramavtalets huvuddokument (`{sha256[:12]}`), i karantän, på sidan {PAGE_TITLE}."
+    ) in covered
 
     assert report.references.rate == 1.0
     assert f"= 1 / (1 − 0 − 0 − 0 − 0 − 0) = 1 / 1 = **100,0{NBSP}%**" in part(

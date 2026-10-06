@@ -27,7 +27,8 @@ How:
     document's content (coverage gaps, a page whose period differs from the
     register, a document no type rule matched); NOTE for what is worth
     knowing but no deviation (a citation of another procurement, a supplier
-    name written differently, a file with some scanned pages).
+    name written differently, a file with some scanned pages, agreements read
+    from the procurement's version of their main document).
 
     The document checks run first. Coverage runs last, since a main document
     in quarantine does not cover its agreements. A finding is identified

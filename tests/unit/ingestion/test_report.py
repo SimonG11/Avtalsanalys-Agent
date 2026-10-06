@@ -8,9 +8,12 @@ section "7.16 Prismodeller", 21dd4fde89d5 "Volymavtal" with no text, 19c85c74c3b
 "Nuts 2 indelning" typed by the fallback rule F1, 34d71a7e4da0 the TendSign printout
 of Bemanningstjänster's main document). The findings' messages and evidence are those
 of the pilot's checks (185c8246e536 p1 "23.3-1688-2024 IT-konsulttjänster -
-IT-säkerhet"; the coverage of 6765/05). The references' texts are from the M4
-survey, references.md §1 and §4. Which agreement is covered how, the reviewer's name
-and the "*utkast*" title are made up.
+IT-säkerhet"; the coverage of 6765/05 and of Bemanningstjänster). The pages are the
+pilot's (34d71a7e4da0 on two of the four Bemanningstjänster pages, 65d611d12eab on
+"IT-konsulttjänster 3. IT-säkerhet"). The references' texts are from the M4 survey,
+references.md §1 and §4. Which agreement is covered how, the reviewer's name and the
+"*utkast*" title are made up. 23.3-2940-20:018's card ee6107229c37 and the printout cbe12fd30683
+of its sub-area are named, but not counted among the files of the run.
 """
 
 import json
@@ -20,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from avtalsagent.domain.documents import CatalogLink
 from avtalsagent.domain.extracted import (
     DocumentExtraction,
     DocumentMetadata,
@@ -34,13 +38,20 @@ from avtalsagent.domain.extracted import (
 )
 from avtalsagent.domain.parsed import Chunk, PageInfo, ParsedDocument, Section
 from avtalsagent.domain.register import RegisterVersion
-from avtalsagent.ingestion.checks.coverage import AgreementCoverage, CoverageStatus
+from avtalsagent.ingestion.checks.coverage import (
+    NOT_COUNTED_NAMES,
+    AgreementCoverage,
+    CoverageStatus,
+    NotCounted,
+    NotCountedFile,
+)
 from avtalsagent.ingestion.checks.procurement_number import NumberStatus
 from avtalsagent.ingestion.extract.reference_resolver import counts_in_rate, resolution_rate
 from avtalsagent.ingestion.extract.title_matcher import MatchStats
 from avtalsagent.ingestion.pipeline import IngestionResult
 from avtalsagent.ingestion.report import (
     CHECK_NAMES,
+    COVERAGE_STATUS_NAMES,
     DOCUMENT_TYPE_NAMES,
     NUMBER_STATUS_NAMES,
     OUTLINE_NAMES,
@@ -77,6 +88,8 @@ CALL = sha("54211e718d8e")  # Ansökningsinbjudan
 PRINTOUT = sha("34d71a7e4da0")  # Ramavtalets huvuddokument of Bemanningstjänster, TendSign
 MICROSOFT = sha("171a3cacf5fd")  # Volymavtalets huvudavtal 1.0
 UNLINKED = sha("5c9b05f2cc79")
+CARD_018 = sha("ee6107229c37")  # Ramavtal 23.3-2940-20:018, not among the files of the run
+PRINTOUT_ITK2020 = sha("cbe12fd30683")  # the TendSign printout of 23.3-2940-20, likewise
 
 AREAS = (
     "IT-drift",
@@ -88,6 +101,7 @@ PAGE = (
     "https://www.avropa.se/ramavtal/ramavtalsomraden/konsulttjanster---bemanning-och-"
     "rekrytering/bemanningstjanster/bemanningstjanster---kontorstjanster-upp-till-1000-timmar/"
 )
+PAGE_TITLE = "Bemanningstjänster - Kontorstjänster upp till 1000 timmar"
 START = datetime(2026, 10, 6, 14, 3, 12, tzinfo=timezone(timedelta(hours=2)))
 
 
@@ -406,7 +420,7 @@ def agreement(
     status: CoverageStatus,
     cards: tuple[str, ...] = (),
     main_documents: tuple[str, ...] = (),
-    held_back: tuple[str, ...] = (),
+    not_counted: tuple[NotCountedFile, ...] = (),
 ) -> AgreementCoverage:
     return AgreementCoverage(
         agreement_number=number,
@@ -416,25 +430,45 @@ def agreement(
         status=status,
         cards=cards,
         main_documents=main_documents,
-        held_back=held_back,
+        not_counted=not_counted,
     )
 
 
+def not_counted(sha256: str, reason: NotCounted, own: bool = False) -> NotCountedFile:
+    return NotCountedFile(sha256, reason, own)
+
+
 IT_KONSULT, BEMANNING, PROGRAMVAROR = AREAS[2], AREAS[1], AREAS[3]
+TENDSIGN = not_counted(PRINTOUT, NotCounted.TENDSIGN_PRINTOUT)
 COVERAGE = [
+    # As in the pilot: its own card in quarantine, the area's main document a printout.
+    # First in the register, but its area comes after Bemanningstjänster in the run.
+    AgreementCoverage(
+        agreement_number="23.3-2940-20:018",
+        procurement_number="23.3-2940-20",
+        framework_area=IT_KONSULT,
+        supplier_name="AFRY Sweden AB",
+        status=CoverageStatus.PROCUREMENT_VERSION,
+        cards=(),
+        main_documents=(),
+        not_counted=(
+            not_counted(CARD_018, NotCounted.QUARANTINED, own=True),
+            not_counted(PRINTOUT_ITK2020, NotCounted.TENDSIGN_PRINTOUT),
+        ),
+    ),
     agreement(
         "23.3-14537-2023-001",
         BEMANNING,
         "A Hub Group AB",
-        CoverageStatus.HELD_BACK,
-        held_back=(PRINTOUT,),
+        CoverageStatus.PROCUREMENT_VERSION,
+        not_counted=(TENDSIGN,),
     ),
     agreement(
         "23.3-14537-2023-002",
         BEMANNING,
         "Academic Work Sweden AB",
-        CoverageStatus.HELD_BACK,
-        held_back=(PRINTOUT,),
+        CoverageStatus.PROCUREMENT_VERSION,
+        not_counted=(TENDSIGN,),
     ),
     agreement(
         "23.3-2940-20:033", IT_KONSULT, "AFRY Sweden AB", CoverageStatus.COVERED, cards=(CARD,)
@@ -453,16 +487,63 @@ COVERAGE = [
         CoverageStatus.COVERED,
         cards=(CARD,),
         main_documents=(MAIN,),
-        held_back=(DRAFT,),
+        not_counted=(not_counted(DRAFT, NotCounted.TEMPLATE),),
     ),
     agreement(
         "23.5-3718-2024",
         PROGRAMVAROR,
         "Microsoft AB",
         CoverageStatus.HELD_BACK,
-        held_back=(MICROSOFT,),
+        not_counted=(not_counted(MICROSOFT, NotCounted.QUARANTINED),),
     ),
     agreement("6765/05", PROGRAMVAROR, "IBM Svenska AB", CoverageStatus.NOT_COVERED),
+]
+
+
+def link(sha256: str, title: str, page_title: str, page_url: str) -> CatalogLink:
+    return CatalogLink(
+        sha256=sha256,
+        url=f"https://www.avropa.se/globalassets/{sha256[:12]}.pdf",
+        title=title,
+        category="Avtal",
+        agreement_number=None,
+        site_updated=None,
+        page_url=page_url,
+        page_title=page_title,
+        page_procurement_numbers=(),
+        page_period=None,
+    )
+
+
+IT_PAGE = PAGE.replace("kontorstjanster", "it-tjanster")
+ITK2_PAGE = "https://www.avropa.se/ramavtal/it-konsulttjanster-2.-ledning-av-it-projekt/"
+LINKS = [
+    link(PRINTOUT, "Ramavtalets huvuddokument", PAGE_TITLE, PAGE),
+    link(CARD_018, "Ramavtal", "IT-konsulttjänster 2. Ledning av IT-projekt", ITK2_PAGE),
+    link(
+        PRINTOUT_ITK2020,
+        "Ramavtalets huvuddokument",
+        "IT-konsulttjänster 2. Ledning av IT-projekt",
+        ITK2_PAGE,
+    ),
+    link(
+        PRINTOUT,
+        "Ramavtalets huvuddokument",
+        "Bemanningstjänster - IT-tjänster upp till 1000 timmar",
+        IT_PAGE,
+    ),
+    link(
+        DRAFT,
+        "Ramavtalets huvuddokument",
+        "IT-konsulttjänster 3. IT-säkerhet",
+        "https://www.avropa.se/ramavtal/it-konsulttjanster-3.-it-sakerhet/",
+    ),
+    link(
+        MICROSOFT,
+        "Volymavtalets huvudavtal 1.0",
+        "Volymavtal för Microsoft",
+        "https://www.avropa.se/ramavtal/volymavtal-for-microsoft/",
+    ),
 ]
 
 NUMBER_STATUS = {
@@ -480,6 +561,25 @@ NUMBER_STATUS = {
 }
 
 
+# Files the coverage lines name but the hand-made run does not count: their metadata only.
+NAMED_ONLY = [
+    metadata(
+        CARD_018,
+        "Ramavtal",
+        DocumentType.SUPPLIER_AGREEMENT,
+        "R01",
+        agreement_number="23.3-2940-20:018",
+    ),
+    metadata(
+        PRINTOUT_ITK2020,
+        "Ramavtalets huvuddokument",
+        DocumentType.MAIN_DOCUMENT,
+        "R05",
+        tendsign_cover="Upphandlingsdokument",
+    ),
+]
+
+
 STATS = MatchStats(asked=3, answered=2, calls=1, cache_hits=2)
 
 
@@ -488,6 +588,7 @@ def run_result(
     references: list[Reference] = REFERENCES,
     stats: MatchStats | None = STATS,
     quarantine: Quarantine | None = None,
+    links: list[CatalogLink] = LINKS,
 ) -> IngestionResult:
     parsed, chunked, extractions = [], [], []
     for meta, file_type, (ocr, page_count), outline, sections, chunk_count, missing in FILES:
@@ -504,6 +605,7 @@ def run_result(
             ChunkedDocument(meta.sha256, outline, sections, chunks(chunk_count), missing)
         )
         extractions.append(DocumentExtraction(metadata=meta, facts=(), mentions=()))
+    extractions += [DocumentExtraction(metadata=m, facts=(), mentions=()) for m in NAMED_ONLY]
     held = quarantine or Quarantine(
         files=frozenset({PRICE, MICROSOFT}), sections=frozenset({(TERMS, 1)})
     )
@@ -515,7 +617,7 @@ def run_result(
         unused_acceptances=[STALE],
     )
     corpus = CorpusExtraction(extractions, references, rules_rate=7 / 13, match_stats=stats)
-    return IngestionResult(parsed, chunked, [UNLINKED], corpus, validation)
+    return IngestionResult(parsed, chunked, [UNLINKED], corpus, validation, list(links))
 
 
 RUN = RunInfo(
@@ -622,9 +724,21 @@ def test_templates_by_type_are_counted_and_the_others_listed_with_their_type(
     assert [ref.sha256 for ref in report.documents.templates] == [TEMPLATE, DRAFT, PRINTOUT]
     documents = part(markdown, "Dokument")
     assert "**Mallar och utkast:** 3 filer." in documents
-    assert "1 har typen Mall; de övriga 2 har ett tomt datumfält:" in documents
-    assert "- Ramavtalets huvuddokument (`65d611d12eab`), huvuddokument\n" in documents
+    assert "1 har typen Mall och 2 har ett tomt datumfält:" in documents
     assert "Avropsmall (`232f65cf161a`)" not in documents  # the link says it is a template
+
+
+def test_a_template_is_listed_with_the_pages_that_link_to_it(markdown: str) -> None:
+    # Five pilot templates are called "Ramavtalets huvuddokument"; the page tells them apart.
+    documents = part(markdown, "Dokument")
+    assert (
+        "- Ramavtalets huvuddokument (`65d611d12eab`), huvuddokument, på sidan "
+        "IT-konsulttjänster 3. IT-säkerhet\n" in documents
+    )
+    assert (
+        "- Ramavtalets huvuddokument (`34d71a7e4da0`), huvuddokument, på sidorna "
+        f"{PAGE_TITLE} och Bemanningstjänster - IT-tjänster upp till 1000 timmar\n" in documents
+    )
 
 
 def test_files_with_scanned_pages_list_the_pages_in_runs(
@@ -712,32 +826,85 @@ def test_coverage_is_counted_per_area_and_by_how_it_is_covered(report: Ingestion
         1,
         1,
     )
+    assert konsult.procurement_version == 1
+    assert areas[BEMANNING].procurement_version == 2
     programvaror = areas[PROGRAMVAROR]
-    assert (programvaror.held_back, programvaror.not_covered) == (1, 1)
+    assert (programvaror.procurement_version, programvaror.held_back) == (0, 1)
+    assert programvaror.not_covered == 1
 
 
-def test_an_agreement_not_covered_is_listed_with_why_its_documents_do_not_count(
+def test_agreements_not_covered_come_in_the_coverage_checks_groups(
     report: IngestionReport,
 ) -> None:
-    gaps = {gap.agreement_number: gap for gap in report.coverage.gaps}
-    assert list(gaps) == ["23.3-14537-2023-001", "23.3-14537-2023-002", "23.5-3718-2024", "6765/05"]
-    # The reasons are the coverage check's own (coverage.held_back_reason).
-    assert [item.reason for item in gaps["23.3-14537-2023-001"].held_back] == [
-        "upphandlingens version från TendSign"
+    groups = report.coverage.groups
+    # By status, then in the order of the run's areas.
+    assert [(group.status, group.subject) for group in groups] == [
+        (CoverageStatus.PROCUREMENT_VERSION, "23.3-14537-2023"),
+        (CoverageStatus.PROCUREMENT_VERSION, "23.3-2940-20:018"),
+        (CoverageStatus.HELD_BACK, "23.5-3718-2024"),
+        (CoverageStatus.NOT_COVERED, "6765/05"),
     ]
-    assert [item.reason for item in gaps["23.5-3718-2024"].held_back] == ["i karantän"]
-    assert gaps["6765/05"].held_back == ()
+    bemanning, afry, microsoft, ibm = groups
+    assert [gap.agreement_number for gap in bemanning.agreements] == [
+        "23.3-14537-2023-001",
+        "23.3-14537-2023-002",
+    ]
+    assert [(item.file.sha256, item.reason) for item in bemanning.files] == [
+        (PRINTOUT, NotCounted.TENDSIGN_PRINTOUT)
+    ]
+    # The file the group is formed by first, then its own card in quarantine.
+    assert [(item.file.sha256, item.reason) for item in afry.files] == [
+        (PRINTOUT_ITK2020, NotCounted.TENDSIGN_PRINTOUT),
+        (CARD_018, NotCounted.QUARANTINED),
+    ]
+    assert [(item.file.sha256, item.reason) for item in microsoft.files] == [
+        (MICROSOFT, NotCounted.QUARANTINED)
+    ]
+    assert (ibm.framework_areas, ibm.files) == ((PROGRAMVAROR,), ())
 
 
-def test_agreements_held_back_by_the_same_files_share_one_line(markdown: str) -> None:
+def test_coverage_has_a_column_and_a_line_per_group_for_each_status(markdown: str) -> None:
     text = part(markdown, "Täckning")
     assert (
-        "- **Bemanningstjänster, 2 avtal:** bara Ramavtalets huvuddokument (`34d71a7e4da0`), "
-        "upphandlingens version från TendSign." in text
+        "| Ramavtalsområde | Avtal | Täckta | via leverantörsavtal | via huvuddokument "
+        "| via båda | Bara upphandlingens version | Bara dokument i karantän | Inte täckta |"
+    ) in text
+    assert "| **Totalt** | **8** | **3** | **1** | **1** | **1** | **3** | **1** | **1** |" in text
+    assert (
+        "- **Bara upphandlingens version: Bemanningstjänster, 2 avtal** (23.3-14537-2023): "
+        "Ramavtalets huvuddokument (`34d71a7e4da0`), upphandlingens version från TendSign, på "
+        f"sidorna {PAGE_TITLE} och Bemanningstjänster - IT-tjänster upp till 1000 timmar." in text
     )
-    assert "  - 23.3-14537-2023-001 (A Hub Group AB), 23.3-14537-2023-002 (Academic Work" in text
-    assert "- **Programvaror och tjänster, 1 avtal:** inget inläst huvuddokument." in text
-    assert "| **Totalt** | **7** | **3** | **1** | **1** | **1** | **3** | **1** |" in text
+    # A supplier's own agreement is named by its number, not its page.
+    assert (
+        "- **Bara upphandlingens version: IT-konsulttjänster Resurskonsulter, 1 avtal** "
+        "(23.3-2940-20:018, AFRY Sweden AB): Ramavtalets huvuddokument (`cbe12fd30683`), "
+        "upphandlingens version från TendSign, på sidan IT-konsulttjänster 2. Ledning av "
+        "IT-projekt; Ramavtal 23.3-2940-20:018 (`ee6107229c37`), i karantän.\n" in text
+    )
+    assert (
+        "- **Bara dokument i karantän: Programvaror och tjänster, 1 avtal** (23.5-3718-2024, "
+        "Microsoft AB): Volymavtalets huvudavtal 1.0 (`171a3cacf5fd`), i karantän, på sidan "
+        "Volymavtal för Microsoft." in text
+    )
+    assert (
+        "- **Inte täckt: Programvaror och tjänster, 1 avtal** (6765/05, IBM Svenska AB): inget "
+        "inläst huvuddokument." in text
+    )
+
+
+def test_coverage_says_why_the_procurements_version_is_what_is_indexed(markdown: str) -> None:
+    text = part(markdown, "Täckning")
+    assert (
+        "den undertecknade versionen av de avtalen publiceras inte på avropa.se, så det är "
+        "upphandlingens version som indexeras." in text
+    )
+    summary = part(markdown, "Sammanfattning")
+    assert (
+        "- Täckning: 3 av 8 avtal är täckta; 3 har bara upphandlingens version av "
+        "huvuddokumentet (den undertecknade publiceras inte på avropa.se), 1 bara dokument i "
+        "karantän och 1 är inte täckt." in summary
+    )
 
 
 # --- Hänvisningar --------------------------------------------------------------------------
@@ -766,7 +933,7 @@ def test_the_formula_is_spelled_out_with_swedish_numbers(markdown: str) -> None:
     formula = f"= 8 / (20 − 2 − 2 − 1 − 2 − 0) = 8 / 13 = **61,5{NBSP}%**"
     assert formula in text
     assert f"**Bara med regler:** 53,8{NBSP}%" in text
-    assert "valde rubriken för 1 hänvisningar där reglerna bara hittade filen (R4-llm)" in text
+    assert "valde rubriken för 1 hänvisning där reglerna bara hittade filen (R4-llm)" in text
     assert "**Självhänvisningar:** 2, räknas inte." in text
     assert "**Ej publicerade:** 2, räknas som ej upplösta" in text
 
@@ -838,11 +1005,30 @@ def test_each_finding_is_printed_under_its_severity_and_check(markdown: str) -> 
 
 def test_a_finding_about_a_page_or_an_agreement_is_named_by_it(markdown: str) -> None:
     text = part(markdown, "Avvikelser")
+    assert f"- Sidan [{PAGE_TITLE}]({PAGE}): 2025-04-22 - 2029-04-21" in text
+    assert "- Avtal 6765/05\n" in text  # the subject is the agreement; not repeated
+
+
+def test_a_page_no_link_of_the_run_is_on_is_named_by_its_address() -> None:
+    markdown = render_markdown(build_report(run_result(links=[]), RUN))
     assert (
         "- Sidan [bemanningstjanster---kontorstjanster-upp-till-1000-timmar]"
-        f"({PAGE}): 2025-04-22 - 2029-04-21" in text
+        f"({PAGE}): 2025-04-22 - 2029-04-21" in part(markdown, "Avvikelser")
     )
-    assert "- Avtal 6765/05\n" in text  # the subject is the agreement; not repeated
+
+
+def test_a_coverage_finding_about_a_group_is_named_by_its_procurement() -> None:
+    group = Finding(
+        check="coverage",
+        severity=Severity.NOTE,
+        subject="23.3-14537-2023",
+        message=(
+            "33 avtal inom Bemanningstjänster täcks bara av huvuddokument som indexeras men inte "
+            "är det undertecknade avtalet: 34d71a7e4da0 (upphandlingens version från TendSign)."
+        ),
+    )
+    markdown = render_markdown(build_report(run_result(findings=[group]), RUN))
+    assert "- Avtal i 23.3-14537-2023\n  - 33 avtal inom" in part(markdown, "Avvikelser")
 
 
 # --- Karantän ------------------------------------------------------------------------------
@@ -931,6 +1117,80 @@ def test_acceptances_that_match_nothing_are_listed_without_the_reviewer(
 # --- Formatting, JSON and files ------------------------------------------------------------
 
 
+def test_a_count_of_one_takes_the_singular(report: IngestionReport) -> None:
+    # A run of one of everything: every count phrase of the report in the singular.
+    documents = report.documents.model_copy(
+        update={
+            "files": 1,
+            "pdf_pages": 1,
+            "templates": report.documents.templates[:1],
+            "ocr_files": report.documents.ocr_files[:1],
+        }
+    )
+    sections = report.sections.model_copy(
+        update={
+            "chunks": 1,
+            "with_contents": 1,
+            "by_outline": {kind: int(kind is OutlineKind.NUMBERED) for kind in OutlineKind},
+        }
+    )
+    by_status = {**report.references.by_status, ReferenceStatus.NOT_PUBLISHED: 1}
+    references = report.references.model_copy(
+        update={"references": 1, "model_titles": 1, "model_topics": 1, "by_status": by_status}
+    )
+    run = report.run.model_copy(
+        update={"matching": MatchStats(asked=1, answered=1, calls=1, cache_hits=0)}
+    )
+    findings = report.findings.model_copy(update={"open": report.findings.open[:1]})
+    quarantine = report.quarantine.model_copy(
+        update={"files": (), "unchecked": (report.quarantine.files[0].file,)}
+    )
+    [konsult] = [area for area in report.coverage.areas if area.framework_area == IT_KONSULT]
+    one_each = konsult.model_copy(
+        update={
+            "agreements": 2,
+            "covered": 1,
+            "procurement_version": 0,
+            "held_back": 0,
+            "not_covered": 1,
+        }
+    )
+    coverage = report.coverage.model_copy(update={"areas": (one_each,)})
+    single = report.model_copy(
+        update={
+            "documents": documents,
+            "sections": sections,
+            "references": references,
+            "run": run,
+            "findings": findings,
+            "quarantine": quarantine,
+            "coverage": coverage,
+        }
+    )
+
+    markdown = render_markdown(single)
+
+    for phrase in (
+        "- 1 fil lästes in och gav 12 avsnitt och 1 chunk.",
+        "- 1 avvikelse: karantän 1, rapport 0, notering 0. 1 godkänd.",
+        "- I karantän: 1 fil och 1 avsnitt.",
+        "- Täckning: 1 av 2 avtal är täckt; 0 har bara upphandlingens version",
+        "0 bara dokument i karantän och 1 är inte täckt.",
+        "1 fråga, 1 besvarad med en av rubrikerna.",
+        "1 fil lästes in (PDF 10, Word 1), med sammanlagt 1 PDF-sida.",
+        "**Mallar och utkast:** 1 fil.",
+        "**Filer med sidor utan textlager:** 1 fil.",
+        "Steg 3 delade 1 fil i 12 avsnitt och 1 chunk.",
+        "**Innehållsförteckning:** 1 fil har en. I den saknas:",
+        "Steg 4 hittade 1 hänvisning i avsnittens text",
+        "valde rubriken för 1 hänvisning där reglerna bara hittade filen",
+        "och avsnittet för 1 hänvisning till ett dokument med ett ämne",
+        "**Ej publicerade:** 1, räknas som ej upplöst:",
+        "Steg 4 och 5 har inte körts på den här filen sedan steg 3 senast sparade den:",
+    ):
+        assert phrase in markdown, phrase
+
+
 def test_numbers_are_written_the_swedish_way(report: IngestionReport) -> None:
     sections = report.sections.model_copy(update={"sections": 13175, "chunks": 13979})
     references = report.references.model_copy(update={"rate": 0.7444})
@@ -959,6 +1219,8 @@ def test_every_enum_value_has_a_swedish_name() -> None:
     assert set(REFERENCE_KIND_NAMES) == set(ReferenceKind)
     assert set(REFERENCE_STATUS_NAMES) == set(ReferenceStatus)
     assert set(SEVERITY_NAMES) == set(Severity)
+    assert set(COVERAGE_STATUS_NAMES) == set(CoverageStatus)
+    assert set(NOT_COUNTED_NAMES) == set(NotCounted)
     assert set(CHECK_NAMES) == {check.CHECK for check in DOCUMENT_CHECKS} | {"coverage"}
 
 

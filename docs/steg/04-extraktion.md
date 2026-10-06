@@ -73,7 +73,8 @@ de sidor som länkar till filen:
 | Dokumenttyp | | | 3 |
 | Text som saknas | 5 | | 2 |
 | Inte längre publicerad | | | |
-| Täckning | | {{T-R}} | {{T-N}} |
+| Täckning | | 3 | 4 |
+| **Totalt** | **15** | **5** | **11** |
 
 **I karantän: 12 filer och 3 avsnitt.** Varje fil har en avvikelse som en person bör titta på. Är
 den rätt skrivs den in i `accepted_findings.toml` (se nedan), och filen släpps.
@@ -94,7 +95,27 @@ De tre avsnitten är i Allmänna villkor för Systemutveckling (`e04bad6a0ced`):
 rubriken (s. 2–14), 7.16 Prismodeller (s. 14–22) och 7.25 Uppföljning (s. 23–31). De omfattar
 skannade sidor, så deras text är ofullständig. Filens övriga avsnitt läses in.
 
-**Täckning.** {{TÄCKNING}}
+**Täckning.** Av registrets 121 avtal i de fyra områdena har 61 ett inläst huvuddokument som
+indexeras: 21 genom leverantörens eget ramavtal i leverantörskortet och 40 genom huvuddokumentet
+för sitt delområde.
+
+| Ramavtalsområde | Avtal | Täckta | Bara upphandlingens version | Bara i karantän | Inte täckta |
+|---|---:|---:|---:|---:|---:|
+| IT-drift | 15 | 15 | | | |
+| Bemanningstjänster | 33 | | 33 | | |
+| IT-konsulttjänster Resurskonsulter | 44 | 32 | 4 | 8 | |
+| Programvaror och tjänster | 29 | 14 | 13 | 1 | 1 |
+| **Totalt** | **121** | **61** | **50** | **9** | **1** |
+
+50 avtal har bara upphandlingens version av huvuddokumentet, utskriven från TendSign med
+försättsbladet "Upphandlingsdokument" (`34d71a7e4da0` för alla 33 i Bemanningstjänster,
+`80578a77ea47` och `64204ca73ffb` för 13 i Programvaror och tjänster, och `cbe12fd30683` för 4 avtal
+i 23.3-2940-20 vars egna leverantörsavtal ligger i karantän). Den undertecknade versionen
+publiceras inte på avropa.se, så det är upphandlingens version som indexeras; rapporten noterar
+det. 9 avtal täcks bara av dokument i karantän: de 8 för IT-säkerhet av `65d611d12eab` och
+Microsofts volymavtal av `171a3cacf5fd`. IBM:s volymavtal 6765/05 har inget inläst huvuddokument.
+Täckningen ger ett fynd per grupp av avtal som täcks av samma filer, så de 33 avtalen i
+Bemanningstjänster är en notering och inte 33.
 
 **Hänvisningar.** Steg 4 hittade 14 759 hänvisningar i avsnitten och följde dem till fil och
 avsnitt bland filerna på samma avtalssidor.
@@ -224,7 +245,7 @@ En kontroll per modul. `checks/context.py` ger dem samma uppslag: registrets rad
 | `document_type` | Ingen fil saknar typ; en typ från en reservregel noteras | Rapport / notering |
 | `missing_text` | Ett avsnitt på skannade sidor, en fil utan avsnitt eller en fil som inte tolkats hålls tillbaka; en fil med några skannade sidor noteras | Karantän / notering |
 | `still_published` | Någon sida på avropa.se länkar fortfarande till filen | Karantän |
-| `coverage` | Varje avtal i körningens områden har ett inläst huvuddokument | Rapport / notering |
+| `coverage` | Varje avtal i körningens områden har ett inläst huvuddokument som indexeras. Bara upphandlingens version noteras; bara dokument i karantän eller inget rapporteras. Ett fynd per grupp av avtal med samma filer | Rapport / notering |
 
 `step5_validate.validate` kör dokumentkontrollerna först och täckningen sist, eftersom ett
 huvuddokument i karantän inte täcker sina avtal. Därefter markeras de fynd som en person godkänt.

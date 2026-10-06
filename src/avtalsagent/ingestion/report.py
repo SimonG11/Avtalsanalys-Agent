@@ -18,21 +18,26 @@ Why:
     quarantine with the reason, and it states the share of resolved references.
     The model holds numbers and lists only, so tests check the content without
     reading text, and two runs can be compared in their JSON. The report reads
-    what the steps concluded and repeats no check: a held-back main document is
-    explained by the coverage check's own reason (`coverage.held_back_reason`).
+    what the steps concluded and repeats no check: the agreements that are not
+    covered are grouped and explained as the coverage check does it
+    (`coverage.groups`, `AgreementCoverage.not_counted`).
 
 How:
     - A file is named by the title step 4 gave it (the link text used most
       often), with the agreement number for a supplier's own agreement, and the
       first 12 characters of its hash: many files share a title (25 are called
       "Ramavtal"), and the hash names the file in data/documents/ and in every
-      command.
+      command. Where the title alone does not say which file it is (the
+      templates, the main documents of the coverage groups: 10 files are called
+      "Ramavtalets huvuddokument"), the titles of its pages follow. A page is
+      named by its title, from the run's links.
     - The model and the JSON keep the enum values as the database stores them;
       the markdown gives them Swedish names (`DOCUMENT_TYPE_NAMES` and the
       other tables below).
     - Numbers are written the Swedish way: a space between thousands ("13 175"),
       a decimal comma and a space before the percent sign ("74,4 %"). The space
-      is a no-break space, so a number never breaks over two lines.
+      is a no-break space, so a number never breaks over two lines. A count of
+      one takes the singular ("1 fil", "1 hänvisning").
     - Nothing personal is printed. Findings carry no names or contact details
       (the checks see to that), and of an acceptance in accepted_findings.toml
       only the reason and date are shown, not the reviewer.
@@ -43,9 +48,9 @@ How:
       prints adds up to the rate's denominator.
     - Every finding is printed with its key (`Finding.key`), which is what a
       person writes in accepted_findings.toml to accept it. Findings are listed
-      by severity and check; agreements that lack a main document for the same
-      reason share one line (33 in the pilot have only the same TendSign
-      printout).
+      by severity and check. The coverage check gives one finding per group of
+      agreements (33 in the pilot have only the same TendSign printout), named
+      by the group's procurement: "Avtal i 23.3-14537-2023".
 """
 
 from collections import Counter, defaultdict
@@ -80,7 +85,13 @@ from avtalsagent.ingestion.checks import (
     still_published,
     supplier_party,
 )
-from avtalsagent.ingestion.checks.coverage import AgreementCoverage, CoverageStatus
+from avtalsagent.ingestion.checks.coverage import (
+    NOT_COUNTED_NAMES,
+    AgreementCoverage,
+    CoverageGroup,
+    CoverageStatus,
+    NotCounted,
+)
 from avtalsagent.ingestion.checks.procurement_number import NumberStatus
 from avtalsagent.ingestion.extract.document_type import FALLBACK_RULES, NO_RULE
 from avtalsagent.ingestion.extract.reference_resolver import counts_in_rate, resolution_rate
@@ -179,6 +190,15 @@ REFERENCE_RULE_NAMES: dict[str, str] = {
 }
 _TEXT_RULE = "texten avgör (lag, mallfält, listpunkt, självhänvisning)"  # Reference.rule None
 
+# The statuses of the coverage check, as the report writes them after a count ("1 avtal är
+# täckt") or capitalised at the start of a line.
+COVERAGE_STATUS_NAMES: dict[CoverageStatus, str] = {
+    CoverageStatus.COVERED: "täckt",
+    CoverageStatus.PROCUREMENT_VERSION: "bara upphandlingens version",
+    CoverageStatus.HELD_BACK: "bara dokument i karantän",
+    CoverageStatus.NOT_COVERED: "inte täckt",
+}
+
 SEVERITY_NAMES: dict[Severity, str] = {
     Severity.QUARANTINE: "Karantän",
     Severity.REPORT: "Rapport",
@@ -260,6 +280,7 @@ class FileRef(_Frozen):
     title: str | None  # DocumentMetadata.title; None for a file step 4 did not read
     document_type: DocumentType | None = None
     agreement_number: str | None = None  # set for a supplier's own agreement
+    pages: tuple[str, ...] = ()  # the titles of the pages that link to it, each once
 
 
 class RunSummary(_Frozen):
@@ -333,31 +354,45 @@ class AreaCoverage(_Frozen):
     by_card: int  # covered by its own supplier agreement only
     by_main_document: int  # covered by the sub-area's main document only
     by_both: int
-    held_back: int  # only by documents that do not count
+    procurement_version: int  # only by the procurement's version of a main document, or a template
+    held_back: int  # only by documents in quarantine
     not_covered: int
 
 
-class HeldBackFile(_Frozen):
+class NotCountedRef(_Frozen):
+    """A file that covers agreements but does not count as their main document, and why."""
+
     file: FileRef
-    reason: str | None  # the coverage check's reason in Swedish; None for a file not read
+    reason: NotCounted
+    own: bool  # an agreement's own supplier agreement (supplier card); else an area document
 
 
 class CoverageGap(_Frozen):
-    """An agreement no indexed main document covers."""
+    """An agreement no main document indexed as its own covers."""
 
     agreement_number: str
     procurement_number: str
     framework_area: str
     supplier_name: str
-    status: CoverageStatus
-    held_back: tuple[HeldBackFile, ...]
+
+
+class GapGroup(_Frozen):
+    """Agreements not covered for the same reason: one finding of the coverage check."""
+
+    status: CoverageStatus  # not COVERED
+    subject: str  # the subject of the group's finding: an agreement or procurement number
+    framework_areas: tuple[str, ...]
+    # The files that cover them but do not count: those the group is formed by first, then
+    # others of its agreements (their own supplier agreements in quarantine).
+    files: tuple[NotCountedRef, ...]
+    agreements: tuple[CoverageGap, ...]
 
 
 class CoverageSummary(_Frozen):
     """Täckning."""
 
     areas: tuple[AreaCoverage, ...]  # the run's areas first, in their order
-    gaps: tuple[CoverageGap, ...]
+    groups: tuple[GapGroup, ...]  # by status, then in the order of the areas
 
 
 class ReferenceTally(_Frozen):
@@ -404,6 +439,7 @@ class ReportedFinding(_Frozen):
     key: str  # Finding.key, for accepted_findings.toml
     file: FileRef | None  # None for a finding about a page or an agreement
     section_heading: str | None  # "7.16 Prismodeller", for a finding about one section
+    page_title: str | None  # the title of `Finding.page_url`, when a link of the run has it
 
 
 class CheckCount(_Frozen):
@@ -473,20 +509,40 @@ class IngestionReport(_Frozen):
 
 @dataclass(frozen=True)
 class _Files:
-    """The metadata and sections of the files of the run, to name them in the report."""
+    """The metadata, sections and pages of the files of the run, to name them in the report."""
 
     metadata: Mapping[str, DocumentMetadata]
     headings: Mapping[tuple[str, int], str]  # (sha256, section position) -> heading
+    pages: Mapping[str, tuple[str, ...]]  # sha256 -> the titles of the pages linking to it
+    page_titles: Mapping[str, str]  # page_url -> title
+
+    @classmethod
+    def of(cls, result: IngestionResult) -> "_Files":
+        pages: defaultdict[str, dict[str, None]] = defaultdict(dict)
+        for link in result.links:
+            pages[link.sha256][link.page_title] = None
+        return cls(
+            metadata={e.metadata.sha256: e.metadata for e in result.corpus.extractions},
+            headings={
+                (chunked.sha256, section.position): section.heading
+                for chunked in result.chunked
+                for section in chunked.sections
+            },
+            pages={sha256: tuple(titles) for sha256, titles in pages.items()},
+            page_titles={link.page_url: link.page_title for link in result.links},
+        )
 
     def ref(self, sha256: str) -> FileRef:
         metadata = self.metadata.get(sha256)
+        pages = self.pages.get(sha256, ())
         if metadata is None:
-            return FileRef(sha256=sha256, title=None)
+            return FileRef(sha256=sha256, title=None, pages=pages)
         return FileRef(
             sha256=sha256,
             title=metadata.title,
             document_type=metadata.document_type,
             agreement_number=metadata.agreement_number,
+            pages=pages,
         )
 
     def reported(self, finding: Finding) -> ReportedFinding:
@@ -498,19 +554,13 @@ class _Files:
             key=finding.key,
             file=self.ref(finding.sha256) if finding.sha256 else None,
             section_heading=heading,
+            page_title=self.page_titles.get(finding.page_url) if finding.page_url else None,
         )
 
 
 def build_report(result: IngestionResult, run: RunInfo) -> IngestionReport:
     """The numbers and lists of the ingestion report for one run."""
-    files = _Files(
-        metadata={e.metadata.sha256: e.metadata for e in result.corpus.extractions},
-        headings={
-            (chunked.sha256, section.position): section.heading
-            for chunked in result.chunked
-            for section in chunked.sections
-        },
-    )
+    files = _Files.of(result)
     validation = result.validation
     return IngestionReport(
         run=RunSummary(
@@ -614,34 +664,24 @@ def _coverage(validation: Validation, areas: Sequence[str], files: _Files) -> Co
     by_area: defaultdict[str, list[AgreementCoverage]] = defaultdict(list)
     for item in validation.coverage:
         by_area[item.framework_area].append(item)
-
-    def held_back(sha256: str) -> HeldBackFile:
-        metadata = files.metadata.get(sha256)
-        reason = coverage.held_back_reason(metadata, validation.quarantine) if metadata else None
-        return HeldBackFile(file=files.ref(sha256), reason=reason)
-
-    gaps = sorted(
-        (item for item in validation.coverage if item.status is not CoverageStatus.COVERED),
-        key=lambda item: names.index(item.framework_area),
+    # The coverage check's groups, which are its findings: by status, then area.
+    statuses = list(CoverageStatus)
+    groups = sorted(
+        coverage.groups(validation.coverage),
+        key=lambda group: (
+            statuses.index(group.status),
+            min(names.index(item.framework_area) for item in group.agreements),
+        ),
     )
     return CoverageSummary(
         areas=tuple(_area_coverage(name, by_area[name]) for name in names),
-        gaps=tuple(
-            CoverageGap(
-                agreement_number=item.agreement_number,
-                procurement_number=item.procurement_number,
-                framework_area=item.framework_area,
-                supplier_name=item.supplier_name,
-                status=item.status,
-                held_back=tuple(held_back(sha256) for sha256 in item.held_back),
-            )
-            for item in gaps
-        ),
+        groups=tuple(_gap_group(group, files) for group in groups),
     )
 
 
 def _area_coverage(name: str, items: Sequence[AgreementCoverage]) -> AreaCoverage:
     covered = [item for item in items if item.status is CoverageStatus.COVERED]
+    statuses = Counter(item.status for item in items)
     return AreaCoverage(
         framework_area=name,
         agreements=len(items),
@@ -649,8 +689,36 @@ def _area_coverage(name: str, items: Sequence[AgreementCoverage]) -> AreaCoverag
         by_card=sum(1 for item in covered if item.cards and not item.main_documents),
         by_main_document=sum(1 for item in covered if item.main_documents and not item.cards),
         by_both=sum(1 for item in covered if item.cards and item.main_documents),
-        held_back=sum(1 for item in items if item.status is CoverageStatus.HELD_BACK),
-        not_covered=sum(1 for item in items if item.status is CoverageStatus.NOT_COVERED),
+        procurement_version=statuses[CoverageStatus.PROCUREMENT_VERSION],
+        held_back=statuses[CoverageStatus.HELD_BACK],
+        not_covered=statuses[CoverageStatus.NOT_COVERED],
+    )
+
+
+def _gap_group(group: CoverageGroup, files: _Files) -> GapGroup:
+    not_counted = {f.sha256: f for item in group.agreements for f in item.not_counted}
+    ordered = [*group.files, *(sha256 for sha256 in not_counted if sha256 not in group.files)]
+    return GapGroup(
+        status=group.status,
+        subject=group.subject,
+        framework_areas=tuple(dict.fromkeys(item.framework_area for item in group.agreements)),
+        files=tuple(
+            NotCountedRef(
+                file=files.ref(sha256),
+                reason=not_counted[sha256].reason,
+                own=not_counted[sha256].own,
+            )
+            for sha256 in ordered
+        ),
+        agreements=tuple(
+            CoverageGap(
+                agreement_number=item.agreement_number,
+                procurement_number=item.procurement_number,
+                framework_area=item.framework_area,
+                supplier_name=item.supplier_name,
+            )
+            for item in group.agreements
+        ),
     )
 
 
@@ -821,26 +889,32 @@ def _md_summary(report: IngestionReport) -> list[str]:
     lines = [
         "## Sammanfattning",
         "",
-        f"- {_files_text(report.documents.files)} lästes in och gav {_n(report.sections.sections)} "
-        f"avsnitt och {_n(report.sections.chunks)} chunkar.",
+        f"- {_count(report.documents.files, 'fil', 'filer')} lästes in och gav "
+        f"{_n(report.sections.sections)} avsnitt och "
+        f"{_count(report.sections.chunks, 'chunk', 'chunkar')}.",
         f"- {_percent(refs.rate)} av hänvisningarna är upplösta "
         f"({_n(refs.resolved)} av {_n(refs.counted)}; bara med regler "
         f"{_percent(refs.rules_rate)}).",
-        f"- {_n(len(report.findings.open))} avvikelser: "
+        # The severities as labels ("rapport 62"), so no noun takes a number.
+        f"- {_count(len(report.findings.open), 'avvikelse', 'avvikelser')}: "
         + ", ".join(
-            f"{_n(open_counts[severity])} {SEVERITY_NAMES[severity].lower()}"
+            f"{SEVERITY_NAMES[severity].lower()} {_n(open_counts[severity])}"
             for severity in Severity
         )
-        + f". {_n(len(report.accepted.findings))} godkända.",
-        f"- I karantän: {_files_text(len(held.files) + len(held.unchecked))} och "
+        + f". {_count(len(report.accepted.findings), 'godkänd', 'godkända')}.",
+        f"- I karantän: {_count(len(held.files) + len(held.unchecked), 'fil', 'filer')} och "
         f"{_n(len(held.sections))} avsnitt.",
     ]
     if total:
         covered = sum(area.covered for area in areas)
+        not_covered = sum(area.not_covered for area in areas)
         lines.append(
-            f"- Täckning: {_n(covered)} av {_n(total)} avtal har ett inläst huvuddokument som "
-            f"räknas; {_n(sum(a.held_back for a in areas))} har bara dokument som inte räknas och "
-            f"{_n(sum(a.not_covered for a in areas))} har inget."
+            f"- Täckning: {_n(covered)} av {_n(total)} avtal är "
+            f"{_word(covered, 'täckt', 'täckta')}; "
+            f"{_n(sum(a.procurement_version for a in areas))} har bara upphandlingens version av "
+            "huvuddokumentet (den undertecknade publiceras inte på avropa.se), "
+            f"{_n(sum(a.held_back for a in areas))} bara dokument i karantän och "
+            f"{_n(not_covered)} är {_word(not_covered, 'inte täckt', 'inte täckta')}."
         )
     return lines
 
@@ -858,7 +932,8 @@ def _md_run(report: IngestionReport) -> list[str]:
         stats = run.matching
         model = (
             f"{run.model or 'okänd modell'} valde avsnitt där reglerna bara hittade filen: "
-            f"{_n(stats.asked)} frågor, {_n(stats.answered)} besvarade med en av rubrikerna. "
+            f"{_count(stats.asked, 'fråga', 'frågor')}, "
+            f"{_count(stats.answered, 'besvarad', 'besvarade')} med en av rubrikerna. "
             f"{_n(stats.calls)} anrop till modellen och {_n(stats.cache_hits)} svar från cachen."
         )
     return [
@@ -882,11 +957,12 @@ def _md_documents(report: IngestionReport) -> list[str]:
     lines = [
         "## Dokument",
         "",
-        f"{_files_text(documents.files)} lästes in ({file_types or 'inga'}), med "
-        f"sammanlagt {_n(documents.pdf_pages)} PDF-sidor. Dokumenttypen sätts av den första "
-        "regeln som passar länken till filen (ingestion/extract/document_type.py): R01–R14 "
-        "läser länktexten, filnamnet eller leverantörskortet, och reservreglerna F1–F3 bara "
-        f"rubriken som länken står under. ”{NO_RULE}” betyder att ingen regel passade.",
+        f"{_count(documents.files, 'fil', 'filer')} lästes in ({file_types or 'inga'}), med "
+        f"sammanlagt {_count(documents.pdf_pages, 'PDF-sida', 'PDF-sidor')}. Dokumenttypen "
+        "sätts av den första regeln som passar länken till filen "
+        "(ingestion/extract/document_type.py): R01–R14 läser länktexten, filnamnet eller "
+        "leverantörskortet, och reservreglerna F1–F3 bara rubriken som länken står under. "
+        f"”{NO_RULE}” betyder att ingen regel passade.",
         "",
         "| Dokumenttyp | Del av | Filer | Typregler |",
         "|---|---|---:|---|",
@@ -907,20 +983,25 @@ def _md_documents(report: IngestionReport) -> list[str]:
     others = [ref for ref in templates if ref.document_type is not DocumentType.TEMPLATE]
     lines += [
         "",
-        f"**Mallar och utkast:** {_files_text(len(templates))}. En fil är en mall när länken "
-        "säger det (typen Mall) eller när den har ett tomt datumfält (”[DATUM]”) och inte anger "
-        "någon avtalsperiod; ett tomt fält för leverantör eller avtalsnummer räcker inte, "
+        f"**Mallar och utkast:** {_count(len(templates), 'fil', 'filer')}. En fil är en mall när "
+        "länken säger det (typen Mall) eller när den har ett tomt datumfält (”[DATUM]”) och inte "
+        "anger någon avtalsperiod; ett tomt fält för leverantör eller avtalsnummer räcker inte, "
         f"eftersom områdets huvuddokument alltid har det. {_n(len(typed))} har typen Mall"
-        + (f"; de övriga {_n(len(others))} har ett tomt datumfält:" if others else "."),
+        + (f" och {_n(len(others))} har ett tomt datumfält:" if others else "."),
     ]
     if others:
         lines.append("")
-        for ref in others:  # with the type, when the title does not say it
+        for ref in others:  # with the type when the title does not say it, and the pages
             kind = DOCUMENT_TYPE_NAMES[ref.document_type] if ref.document_type else ""
             other = kind.casefold() != (ref.title or "").casefold()
-            lines.append(f"- {_file(ref)}" + (f", {kind.lower()}" if kind and other else ""))
+            lines.append(
+                f"- {_file(ref)}" + (f", {kind.lower()}" if kind and other else "") + _on_pages(ref)
+            )
 
-    lines += ["", f"**Filer med sidor utan textlager:** {_files_text(len(documents.ocr_files))}."]
+    lines += [
+        "",
+        f"**Filer med sidor utan textlager:** {_count(len(documents.ocr_files), 'fil', 'filer')}.",
+    ]
     if documents.ocr_files:
         lines += [
             "Texten på de sidorna saknas tills de läses med OCR (ADR 0008).",
@@ -948,10 +1029,10 @@ def _md_sections(report: IngestionReport) -> list[str]:
     lines = [
         "## Avsnitt och chunkar",
         "",
-        f"Steg 3 delade {_files_text(files)} i {_n(sections.sections)} avsnitt och "
-        f"{_n(sections.chunks)} chunkar. Ett avsnitt är ett numrerat avsnitt i dokumentet "
-        "(”14.2 Leverantörens uppsägning”); ett långt avsnitt delas i flera chunkar för "
-        "sökningen. Dispositionen säger hur filen delades:",
+        f"Steg 3 delade {_count(files, 'fil', 'filer')} i {_n(sections.sections)} avsnitt och "
+        f"{_count(sections.chunks, 'chunk', 'chunkar')}. Ett avsnitt är ett numrerat avsnitt i "
+        "dokumentet (”14.2 Leverantörens uppsägning”); ett långt avsnitt delas i flera chunkar "
+        "för sökningen. Dispositionen säger hur filen delades:",
         "",
         "| Disposition | Filer |",
         "|---|---:|",
@@ -967,11 +1048,16 @@ def _md_sections(report: IngestionReport) -> list[str]:
             + ".",
         ]
     complete = sections.with_contents - len(sections.contents_gaps)
+    if sections.with_contents == 1:  # "I 1 av dem" would not do
+        which = "Varje nummer i den är ett avsnitt." if complete else "I den saknas:"
+    else:
+        which = f"I {_n(complete)} av dem är varje nummer i förteckningen ett avsnitt" + (
+            "; i de övriga saknas:" if sections.contents_gaps else "."
+        )
     lines += [
         "",
-        f"**Innehållsförteckning:** {_files_text(sections.with_contents)} har en. I "
-        f"{_n(complete)} av dem är varje nummer i förteckningen ett avsnitt"
-        + ("; i de övriga saknas:" if sections.contents_gaps else "."),
+        f"**Innehållsförteckning:** {_count(sections.with_contents, 'fil', 'filer')} har en. "
+        + which,
     ]
     if sections.contents_gaps:
         lines.append("")
@@ -1017,61 +1103,64 @@ def _md_coverage(report: IngestionReport) -> list[str]:
     lines = [
         "## Täckning",
         "",
-        "Varje avtal i registret inom körningens ramavtalsområden ska ha minst ett inläst "
+        "Varje avtal i registret inom körningens ramavtalsområden ska ha ett inläst "
         "huvuddokument: leverantörens eget ramavtal i leverantörskortet, eller huvuddokumentet "
-        "på avtalssidan för avtalets delområde. Ett huvuddokument räknas inte när det ligger i "
-        "karantän, är en mall eller ett utkast, eller är upphandlingens version från TendSign.",
+        "på avtalssidan för avtalets delområde. För en del avtal finns bara upphandlingens "
+        "version (en utskrift från TendSign, ”Upphandlingsdokument”) eller en mall: den "
+        "undertecknade versionen av de avtalen publiceras inte på avropa.se, så det är "
+        "upphandlingens version som indexeras. Ett dokument i karantän indexeras inte.",
         "",
     ]
     if not sum(area.agreements for area in summary.areas):
         return [*lines, "Registret har inga avtal i körningens ramavtalsområden."]
+    columns = (
+        "agreements",
+        "covered",
+        "by_card",
+        "by_main_document",
+        "by_both",
+        "procurement_version",
+        "held_back",
+        "not_covered",
+    )
     lines += [
         "| Ramavtalsområde | Avtal | Täckta | via leverantörsavtal | via huvuddokument "
-        "| via båda | Bara dokument som inte räknas | Inte täckta |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| via båda | Bara upphandlingens version | Bara dokument i karantän | Inte täckta |",
+        "|---|" + "---:|" * len(columns),
     ]
     for area in summary.areas:
-        lines.append(
-            f"| {_md(area.framework_area)} | {_n(area.agreements)} | {_n(area.covered)} "
-            f"| {_n(area.by_card)} | {_n(area.by_main_document)} | {_n(area.by_both)} "
-            f"| {_n(area.held_back)} | {_n(area.not_covered)} |"
-        )
+        values = " | ".join(_n(getattr(area, name)) for name in columns)
+        lines.append(f"| {_md(area.framework_area)} | {values} |")
     if len(summary.areas) > 1:
-        sums = [
-            sum(getattr(area, name) for area in summary.areas)
-            for name in (
-                "agreements",
-                "covered",
-                "by_card",
-                "by_main_document",
-                "by_both",
-                "held_back",
-                "not_covered",
-            )
-        ]
+        sums = [sum(getattr(area, name) for area in summary.areas) for name in columns]
         lines.append("| **Totalt** | " + " | ".join(f"**{_n(value)}**" for value in sums) + " |")
-    if not summary.gaps:
+    if not summary.groups:
         return [*lines, "", "Alla avtal är täckta."]
 
-    # Agreements that lack a main document for the same reason come in groups: all 33
-    # agreements of Bemanningstjänster (23.3-14537-2023) have only 34d71a7e4da0, a TendSign
-    # printout. One line per group keeps the list readable.
-    groups: dict[tuple[str, CoverageStatus, tuple[HeldBackFile, ...]], list[CoverageGap]] = {}
-    for gap in summary.gaps:
-        groups.setdefault((gap.framework_area, gap.status, gap.held_back), []).append(gap)
-    lines += ["", "Avtal som inget huvuddokument som räknas täcker:"]
-    for (name, status, held), gaps in groups.items():
-        if status is CoverageStatus.NOT_COVERED or not held:
-            why = "inget inläst huvuddokument"
-        else:
-            why = "bara " + "; ".join(
-                _file(item.file) + (f", {_md(item.reason)}" if item.reason else ", inte inläst")
-                for item in held
-            )
-        agreements = ", ".join(
-            f"{_md(gap.agreement_number)} ({_md(gap.supplier_name)})" for gap in gaps
+    # One line per group of the coverage check: all 33 agreements of Bemanningstjänster
+    # (23.3-14537-2023) have only 34d71a7e4da0, a TendSign printout.
+    lines += [
+        "",
+        "Avtalen som inte är täckta, i grupper efter dokumenten som täcker dem. Avvikelsen för "
+        "varje grupp, med avtalsnumren, står under Avvikelser, Täckning.",
+        "",
+    ]
+    for group in summary.groups:
+        status = COVERAGE_STATUS_NAMES[group.status]
+        head = (
+            f"{status[:1].upper()}{status[1:]}: {_md(', '.join(group.framework_areas))}, "
+            f"{_n(len(group.agreements))} avtal"
         )
-        lines += ["", f"- **{_md(name)}, {_n(len(gaps))} avtal:** {why}.", f"  - {agreements}"]
+        about = _md(group.subject)
+        if len(group.agreements) == 1:
+            about += f", {_md(group.agreements[0].supplier_name)}"
+        why = "; ".join(
+            f"{_file(item.file)}, {NOT_COUNTED_NAMES[item.reason]}"
+            # A supplier's own agreement is named by its number, others by their pages.
+            + ("" if item.own else _on_pages(item.file))
+            for item in group.files
+        )
+        lines.append(f"- **{head}** ({about}): {why or 'inget inläst huvuddokument'}.")
     return lines
 
 
@@ -1080,9 +1169,9 @@ def _md_references(report: IngestionReport) -> list[str]:
     lines = [
         "## Hänvisningar",
         "",
-        f"Steg 4 hittade {_n(refs.references)} hänvisningar i avsnittens text (”enligt punkt "
-        "6.21”, ”bilaga Priser”, ”Allmänna villkor”) och följde dem till den fil och det "
-        "avsnitt de pekar på, bland filerna på samma avtalssidor.",
+        f"Steg 4 hittade {_count(refs.references, 'hänvisning', 'hänvisningar')} i avsnittens "
+        "text (”enligt punkt 6.21”, ”bilaga Priser”, ”Allmänna villkor”) och följde dem till "
+        "den fil och det avsnitt de pekar på, bland filerna på samma avtalssidor.",
         "",
         "**Andel upplösta** = upplösta / (alla − lagar och standarder − ”fråga N” − "
         "listpunkter − självhänvisningar − övriga externa)",
@@ -1104,14 +1193,16 @@ def _md_references(report: IngestionReport) -> list[str]:
     else:
         lines += [
             f"- **Bara med regler:** {_percent(refs.rules_rate)}. Språkmodellen valde rubriken "
-            f"för {_n(refs.model_titles)} hänvisningar där reglerna bara hittade filen "
-            f"({TITLE_RULE}), och avsnittet för {_n(refs.model_topics)} hänvisningar till ett "
-            f"dokument med ett ämne ({TOPIC_RULE}), som reglerna redan hade löst till filen.",
+            f"för {_count(refs.model_titles, 'hänvisning', 'hänvisningar')} där reglerna bara "
+            f"hittade filen ({TITLE_RULE}), och avsnittet för "
+            f"{_count(refs.model_topics, 'hänvisning', 'hänvisningar')} till ett dokument med "
+            f"ett ämne ({TOPIC_RULE}), som reglerna redan hade löst till filen.",
         ]
     not_published = refs.by_status[ReferenceStatus.NOT_PUBLISHED]
     lines += [
         f"- **Självhänvisningar:** {_n(refs.by_status[ReferenceStatus.SELF])}, räknas inte.",
-        f"- **Ej publicerade:** {_n(not_published)}, räknas som ej upplösta: målet finns inte "
+        f"- **Ej publicerade:** {_n(not_published)}, räknas som "
+        f"{_word(not_published, 'ej upplöst', 'ej upplösta')}: målet finns inte "
         "bland filerna på avtalssidan (oftast ett anbudsformulär, eller en fil i ett format som "
         "inte hämtas).",
         "",
@@ -1207,9 +1298,12 @@ def _md_finding(item: ReportedFinding, with_reason: bool = False) -> list[str]:
     elif finding.agreement_number:
         about = f"Avtal {_md(finding.agreement_number)}"
     elif finding.page_url:
-        # The page's title is not in the result; the last part of its address names it.
-        name = finding.page_url.rstrip("/").rsplit("/", 1)[-1]
+        # By its title; a page no link of the run is on, by the last part of its address.
+        name = item.page_title or finding.page_url.rstrip("/").rsplit("/", 1)[-1]
         about = f"Sidan [{_md(name)}]({finding.page_url})"
+    elif finding.check == coverage.CHECK:
+        # A group of agreements, named by their procurements: "Avtal i 23.3-14537-2023".
+        about = f"Avtal i {_md(finding.subject)}"
     else:
         about = "Hela körningen"
     if with_reason:
@@ -1261,7 +1355,12 @@ def _md_quarantine(report: IngestionReport) -> list[str]:
             "",
             f"### Ej kontrollerade ({_n(len(held.unchecked))})",
             "",
-            "Steg 4 och 5 har inte körts på dessa filer sedan steg 3 senast sparade dem:",
+            "Steg 4 och 5 har inte körts på "
+            + (
+                "den här filen sedan steg 3 senast sparade den:"
+                if len(held.unchecked) == 1
+                else "dessa filer sedan steg 3 senast sparade dem:"
+            ),
             "",
         ]
         lines += [f"- {_file(ref)}" for ref in held.unchecked]
@@ -1333,8 +1432,21 @@ def _check_name(check: str) -> str:
     return CHECK_NAMES[check][0] if check in CHECK_NAMES else _md(check)
 
 
-def _files_text(count: int) -> str:
-    return f"{_n(count)} fil" if count == 1 else f"{_n(count)} filer"
+def _word(value: int, one: str, many: str) -> str:
+    """The word for a count: singular for one ("fil", "täckt"), else plural."""
+    return one if value == 1 else many
+
+
+def _count(value: int, one: str, many: str) -> str:
+    """A count and its noun: "1 fil", "207 filer", "0 filer"."""
+    return f"{_n(value)} {_word(value, one, many)}"
+
+
+def _join(parts: Sequence[str]) -> str:
+    """'a', 'a och b', 'a, b och c'."""
+    if len(parts) < 2:
+        return "".join(parts)
+    return f"{', '.join(parts[:-1])} och {parts[-1]}"
 
 
 def _md(text: str) -> str:
@@ -1359,6 +1471,14 @@ def _file(ref: FileRef) -> str:
     if ref.agreement_number and ref.agreement_number not in title:
         title += f" {ref.agreement_number}"
     return f"{_md(title)} (`{ref.sha256[:12]}`)"
+
+
+def _on_pages(ref: FileRef) -> str:
+    """', på sidan Licenser och licenstjänster', or '' for a file no link of the run is to."""
+    if not ref.pages:
+        return ""
+    where = "sidan" if len(ref.pages) == 1 else "sidorna"
+    return f", på {where} {_md(_join(ref.pages))}"
 
 
 def _pages(pages: Sequence[int]) -> str:

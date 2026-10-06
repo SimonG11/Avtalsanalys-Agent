@@ -17,7 +17,8 @@ Why:
 How:
     A parsed file that no page links to any more is left out (and so leaves
     the index); its hash is listed in `unlinked`. A link to a file that was
-    never parsed stays in the check context, where step 5 holds it back. Step
+    never parsed stays in the check context, where step 5 holds it back, and
+    in the result, where the report finds a page's title by its address. Step
     3's context header is built from the links and the register as
     `section_store.document_links` builds it from the database.
 """
@@ -56,6 +57,8 @@ class IngestionResult:
     unlinked: list[str]  # parsed files no page links to any more, left out
     corpus: CorpusExtraction  # step 4
     validation: Validation  # step 5
+    # Every link passed in, also to files not parsed: the report names a page by its title.
+    links: list[CatalogLink]
 
 
 def process(
@@ -103,6 +106,7 @@ def process(
         unlinked=unlinked,
         corpus=corpus,
         validation=validate(context, accepted),
+        links=list(links),
     )
 
 

@@ -266,7 +266,7 @@ IBM_COVERAGE = AgreementCoverage(
     status=CoverageStatus.NOT_COVERED,
     cards=(),
     main_documents=(),
-    held_back=(),
+    not_counted=(),
 )
 
 

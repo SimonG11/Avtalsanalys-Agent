@@ -67,11 +67,14 @@ dem. Det som styr besluten:
      dess eget avtalsnummer, ett organisationsnummer för en part eller i en tabell, eller den
      avtalsperiod det anger. Också när dokumentet saknar text, när ingen sida på avropa.se längre
      länkar till det, och för ett avsnitt på skannade sidor.
-   - **Rapport** för det som inte gäller ett dokuments innehåll: ett avtal utan inläst
-     huvuddokument, en avtalssida vars period skiljer sig från registret och en fil utan typ.
+   - **Rapport** för det som inte gäller ett dokuments innehåll: avtal vars enda huvuddokument
+     ligger i karantän eller saknas, en avtalssida vars period skiljer sig från registret och en
+     fil utan typ.
    - **Notering** för det som är värt att veta men ingen avvikelse: en hänvisning till en annan
      upphandling, ett leverantörsnamn skrivet på ett annat sätt med samma organisationsnummer, en
-     fil med några skannade sidor och en typ från en reservregel.
+     fil med några skannade sidor, en typ från en reservregel och avtal som bara har
+     upphandlingens version av huvuddokumentet (den undertecknade publiceras inte på avropa.se).
+   - Täckningen ger ett fynd per grupp av avtal som täcks av samma filer, inte ett per avtal.
 7. **Karantänen är stängd som standard.** En tolkad fil som inte gått igenom steg 4 och 5 sedan
    steg 3 sparade den räknas som i karantän (`extraction_store.quarantine`). Körs bara steg 3,
    eller avbryts en körning, indexeras alltså inget okontrollerat.
@@ -106,6 +109,7 @@ dem. Det som styr besluten:
 | Leverantörer och organisationsnummer som nämns finns på rätt avtal | Alla organisationsnummer och partsklausulen | Ett leverantörsnamn utan organisationsnummer kontrolleras inte i M4 |
 | Karantän för hela dokumentet vid avvikelse | Karantän när dokumentets egen identitet avviker, annars rapport eller notering | En citerad upphandling eller en sidas period är ingen avvikelse i dokumentet |
 | Karantän för avsnitt på skannade sidor | Också hela filer utan avsnitt | 16 av de 37 skannade sidorna ligger i inget avsnitt, och två filer har inga avsnitt alls |
+| Täckning: varje avtal har minst ett inläst huvuddokument | Fyra utfall: täckt, bara upphandlingens version, bara karantän, inte täckt | 50 av 121 avtal har bara upphandlingens utskrift från TendSign, eftersom den undertecknade versionen inte publiceras. Den indexeras och noteras, och skiljs från verkliga luckor |
 | Fem dokumenttyper (arkitekturplanen 3.2) | 14 typer i tre grupper | Tabellen nedan |
 | `pipeline.py` kör alla steg | `pipeline.py` kör steg 3–5 utan databas; kommandot `run` kör alla | Samma kod körs i testerna, i mätningen och i drift |
 
@@ -116,7 +120,10 @@ svar, kravredovisning och mall är nya.
 
 ## Konsekvenser
 
-- {{siffror: karantän, täckning, andel}}
+- I urvalet ligger 12 filer och 3 avsnitt i karantän, av 207 filer och 13 175 avsnitt. 61 av
+  registrets 121 avtal har ett inläst huvuddokument, 50 bara upphandlingens version, 9 bara
+  dokument i karantän och 1 inget. 74,4 % av hänvisningarna är upplösta (73,4 % bara med
+  regler). Rapporten har 31 fynd: karantän 15, rapport 5 och notering 11.
 - En avvikelse i ett dokument syns med sin text och sin regel i rapporten, och en person kan
   godkänna den med ett skäl som granskas.
 - Andelen upplösta hänvisningar beror på om språkmodellen körts. CI och en granskare utan nyckel

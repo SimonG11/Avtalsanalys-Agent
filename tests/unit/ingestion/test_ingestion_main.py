@@ -261,7 +261,7 @@ def coverage(number: str, status: CoverageStatus) -> AgreementCoverage:
         status=status,
         cards=(),
         main_documents=(),
-        held_back=(),
+        not_counted=(),
     )
 
 
@@ -287,6 +287,7 @@ def result(match_stats: MatchStats | None) -> IngestionResult:
             number_status={},
             unused_acceptances=[ACCEPTED],
         ),
+        links=[],
     )
 
 
@@ -316,7 +317,8 @@ class TestStepLines:
             "Step 4: 3 facts, 5 references; resolved 2 of 3 counted (66.7%), by the rules alone "
             "33.3%; language model: asked 2, answered 1, calls 1, from the cache 1",
             "Step 5: 3 findings (quarantine 2, report 0, note 0, accepted 1); quarantine: files 1, "
-            "sections 1; agreements of the run's areas: 2 (covered 0, held_back 1, not_covered 1); "
+            "sections 1; agreements of the run's areas: 2 (covered 0, procurement_version 0, "
+            "held_back 1, not_covered 1); "
             "acceptances that match no finding: 1",
         ]
 
