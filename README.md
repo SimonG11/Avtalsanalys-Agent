@@ -14,7 +14,7 @@ Du behöver [uv](https://docs.astral.sh/uv/) och Docker.
 ```bash
 uv sync                               # installerar Python 3.12-miljön och alla verktyg
 cp .env.example .env                  # fyll i det du behöver, t.ex. OPENAI_API_KEY
-uv run pre-commit install             # kör samma kontroller som CI före varje commit
+uv run pre-commit install             # kör ruff format, ruff check och mypy före varje commit
 
 docker compose up -d postgres --wait  # startar Postgres 17 med pgvector
 uv run alembic upgrade head           # skapar tabellerna
@@ -25,9 +25,16 @@ uv run python -m avtalsagent.ingestion fetch       # hämtar avtalsdokumenten f�
 uv run python -m avtalsagent.ingestion parse       # tolkar dokumenten med Docling
 uv run python -m avtalsagent.ingestion chunk       # delar dem i avsnitt och bitar
 uv run python -m avtalsagent.ingestion outline     # visar hur varje dokument delades
+uv run python -m avtalsagent.ingestion verify      # jämför avsnitten med PDF:ernas textlager
 ```
 
-Kontroller som CI kör:
+Första gången tar `parse` för urvalet ungefär två timmar på fyra processorkärnor. `uv sync`
+installerar PyTorch för processorn från `download.pytorch.org`, och den första tolkningen laddar ner
+Doclings modeller från Hugging Face, så miljön måste nå `download.pytorch.org`,
+`download-r2.pytorch.org` och `*.hf.co`. Senare körningar återanvänder det sparade resultatet för
+varje fil som samma parserversion redan har tolkat.
+
+Kontroller som CI kör (pre-commit kör de tre första):
 
 ```bash
 uv run ruff format --check   # formatering
@@ -35,6 +42,8 @@ uv run ruff check            # lint
 uv run mypy                  # typkontroll (strict)
 uv run pytest                # tester
 ```
+
+CI startar dessutom Postgres med Docker Compose och kontrollerar att pgvector finns.
 
 ## Struktur
 
