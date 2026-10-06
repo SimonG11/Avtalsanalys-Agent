@@ -25,6 +25,7 @@ How:
     Swedish names.
 """
 
+from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
 
@@ -98,7 +99,10 @@ class DocumentMetadata(BaseModel):
     # "Upphandlingsdokument", "Ramavtal" or "Inbjudan". A main document with the cover
     # "Upphandlingsdokument" is the version from the procurement, not the signed one.
     tendsign_cover: str | None
-    is_template: bool  # has unfilled fields such as "[DATUM]" or "XXXXXX-XXXX"
+    # A template or draft: the type TEMPLATE, or an unfilled date field ("[DATUM]") in a
+    # file that states no agreement period. An empty supplier or number field alone does
+    # not make one: the area's main document always leaves the supplier slot empty.
+    is_template: bool
     version_date: date | None  # when the document was written or last changed, if it says so
     version_rule: str | None  # where version_date comes from, e.g. "file_name"
     # When the document was first published, for matching a question in a questions log
@@ -223,7 +227,10 @@ class Reference(BaseModel):
     sha256: str  # the file the mention is in
     mention: ReferenceMention
     status: ReferenceStatus
-    rule: str | None  # the rule that resolved it, e.g. "R4" or "R4-llm"; None if unresolved
+    # The rule that decided the status, whatever the status: "R4" (RESOLVED), "R1q"
+    # (NUMBER_MISSING: that rule searched and found nothing), "R4-llm". None when the
+    # text alone decided it (LAW, PLACEHOLDER, LIST_ITEM, and SELF from the text).
+    rule: str | None
     # One per page when RESOLVED; the candidates when AMBIGUOUS; the file that was
     # searched (section None) when NUMBER_MISSING or TITLE_MISSING.
     targets: tuple[ReferenceTarget, ...] = ()
@@ -264,6 +271,23 @@ class Finding(BaseModel):
     @property
     def quarantines(self) -> bool:
         return self.severity is Severity.QUARANTINE and self.accepted_reason is None
+
+
+@dataclass(frozen=True)
+class Quarantine:
+    """What the index must leave out."""
+
+    # Every file held back whole: by a finding, or because it is unchecked.
+    files: frozenset[str]
+    # (file, section position) pairs held back by a finding about one section.
+    sections: frozenset[tuple[str, int]]
+    # Parsed files that steps 4 and 5 have not run on since step 3 last stored them
+    # (`ingestion/extraction_store.quarantine`). Also in `files`.
+    unchecked: frozenset[str] = frozenset()
+
+    def holds(self, sha256: str, section: int | None = None) -> bool:
+        """Whether the file, or the given section of it, is kept out of the index."""
+        return sha256 in self.files or (section is not None and (sha256, section) in self.sections)
 
 
 class DocumentExtraction(BaseModel):

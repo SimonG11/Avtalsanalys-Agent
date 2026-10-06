@@ -37,6 +37,7 @@ from avtalsagent.domain.extracted import (
     FactKind,
     FactRole,
     Finding,
+    Quarantine,
     Reference,
     ReferenceKind,
     ReferenceMention,
@@ -48,7 +49,6 @@ from avtalsagent.domain.parsed import Block, BlockKind, ParsedDocument
 from avtalsagent.domain.register import RegisterEntry
 from avtalsagent.ingestion.catalog import save_fetch
 from avtalsagent.ingestion.extraction_store import (
-    Quarantine,
     catalog_links,
     quarantine,
     register_entries,

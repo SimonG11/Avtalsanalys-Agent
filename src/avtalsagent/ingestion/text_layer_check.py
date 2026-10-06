@@ -25,9 +25,9 @@ How:
     hyphens at line ends drop out), since the layout model joins lines that
     the text layer breaks. Lines with fewer than `MIN_LINE_CHARS` letters and
     digits (page numbers, single words) are skipped. Lines in the blocks step 3
-    removes on purpose (page headers and footers, the table of contents) are
-    counted apart, not as missing. Word files have no text layer of their own
-    and are not checked here.
+    removes on purpose (page headers and footers, the table of contents, an
+    e-signature certificate) are counted apart, not as missing. Word files have
+    no text layer of their own and are not checked here.
 """
 
 import re

@@ -219,7 +219,10 @@ def verify() -> None:
     print(f"PDF files: {len(checks)}")
     print(f"Text-layer lines: {lines}")
     print(f"  in a section: {in_sections} ({in_sections / max(lines, 1):.1%})")
-    print(f"  only in text step 3 removes on purpose (headers, footers, contents): {removed}")
+    print(
+        "  only in text step 3 removes on purpose "
+        f"(headers, footers, contents, e-signature certificates): {removed}"
+    )
     print(f"  missing: {missing} ({missing / max(lines, 1):.1%})")
     worst = sorted(checks, key=lambda check: len(check.lines.missing), reverse=True)
     for check in worst[:_SHOWN_FILES]:

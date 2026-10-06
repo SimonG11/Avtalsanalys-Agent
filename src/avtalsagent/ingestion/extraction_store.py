@@ -28,7 +28,6 @@ How:
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import delete, insert, select
@@ -41,28 +40,12 @@ from avtalsagent.domain.extracted import (
     DocumentMetadata,
     Fact,
     Finding,
+    Quarantine,
     Reference,
     Severity,
 )
 from avtalsagent.domain.register import RegisterEntry, RegisterVersion
 from avtalsagent.register.load import SUB_AREA_SEPARATOR
-
-
-@dataclass(frozen=True)
-class Quarantine:
-    """What the index must leave out."""
-
-    # Every file held back whole: by a finding, or because it is unchecked.
-    files: frozenset[str]
-    # (file, section position) pairs held back by a finding about one section.
-    sections: frozenset[tuple[str, int]]
-    # Parsed files without a document_metadata row: steps 4 and 5 have not run on
-    # them since step 3 last stored them. Also in `files`.
-    unchecked: frozenset[str]
-
-    def holds(self, sha256: str, section: int | None = None) -> bool:
-        """Whether the file, or the given section of it, is kept out of the index."""
-        return sha256 in self.files or (section is not None and (sha256, section) in self.sections)
 
 
 def catalog_links(session: Session) -> list[CatalogLink]:
