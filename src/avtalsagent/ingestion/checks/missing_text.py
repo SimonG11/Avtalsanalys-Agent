@@ -4,8 +4,8 @@ What:
     `run` holds back what has text missing: a section whose pages include one
     without a text layer (QUARANTINE for that section), a file that gave no
     section at all (QUARANTINE), and a file a page links to that was never
-    parsed (QUARANTINE). A file with pages without a text layer also gets a
-    NOTE, whether or not a section lost text.
+    parsed (QUARANTINE). A file with pages without a text layer that still
+    has sections gets a NOTE, whether or not a section lost text.
 
 Why:
     A scanned page has no text layer, and step 2 runs no OCR (M4 survey,
@@ -22,7 +22,8 @@ Why:
     puts it in the report's quarantine list, so the gap is seen. Scanned pages
     outside every section lose no section text, but the file lacks what is on
     them: 124261dc2ad4 (Kravkatalog, Systemutveckling) p1-3 and p11. That is
-    worth knowing, a NOTE. A file a page links to that was never parsed (its
+    worth knowing, a NOTE; a file held back for having no section needs none.
+    A file a page links to that was never parsed (its
     parse failed) has not been read or checked at all.
 
 How:
@@ -34,7 +35,7 @@ How:
     is unique. In the pilot: the 3 sections of e04bad6a0ced that contain such
     pages ("Text före första rubriken" p2-14, 7.16 p14-22, 7.25 p23-31; 7.24
     p22-23 has text on both pages), 2 files without sections (21dd4fde89d5,
-    5c9b05f2cc79), 4 NOTEs (those 3 files and 124261dc2ad4), and no link to an
+    5c9b05f2cc79), 2 NOTEs (e04bad6a0ced and 124261dc2ad4), and no link to an
     unparsed file.
 """
 
@@ -70,7 +71,7 @@ def run(context: CheckContext) -> list[Finding]:
         if not file.sections:
             findings.append(_no_section_finding(file))
         # Scanned pages, in a section or not (124261dc2ad4 p1-3 and p11, in none).
-        if file.ocr_pages:
+        elif file.ocr_pages:
             findings.append(_scanned_pages_note(file))
     # A linked file step 2 never gave a parse: no file in `context.files` has its hash.
     parsed = {file.sha256 for file in context.files}
@@ -150,13 +151,9 @@ def _no_section_finding(file: CheckedFile) -> Finding:
 
 
 def _scanned_pages_note(file: CheckedFile) -> Finding:
+    """The note for a file with sections and some pages without a text layer."""
     pages = _page_list(file.ocr_pages)
-    if file.page_count == len(file.ocr_pages) == 1:
-        lacking = "Dokumentets enda sida saknar textlager"
-    elif file.page_count == len(file.ocr_pages):
-        lacking = f"Ingen av dokumentets {file.page_count} sidor har textlager"
-    else:
-        lacking = f"{len(file.ocr_pages)} av dokumentets {file.page_count} sidor saknar textlager"
+    lacking = f"{len(file.ocr_pages)} av dokumentets {file.page_count} sidor saknar textlager"
     on_them = "den" if len(file.ocr_pages) == 1 else "dem"
     return Finding(
         check=CHECK,

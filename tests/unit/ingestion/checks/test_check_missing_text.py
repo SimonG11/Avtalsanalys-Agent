@@ -211,18 +211,7 @@ def test_a_scanned_file_without_sections_is_held_back_whole() -> None:
             ),
             sha256=AMENDMENT_7,
         ),
-        Finding(
-            check="missing_text",
-            severity=Severity.NOTE,
-            subject="s. 1-10",
-            message=(
-                "Ingen av dokumentets 10 sidor har textlager (ingen OCR körs): s. 1-10. Det som "
-                "står på dem finns inte i dokumentets avsnitt."
-            ),
-            sha256=AMENDMENT_7,
-        ),
-    ]
-    assert len({finding.key for finding in findings}) == 2
+    ]  # no note on top: the quarantine already says why
 
 
 def test_a_one_page_scan() -> None:
@@ -231,8 +220,6 @@ def test_a_one_page_scan() -> None:
     assert [f.message for f in findings] == [
         "Dokumentet gav inget avsnitt: dess enda sida saknar textlager (ingen OCR körs), så det "
         "har inget att läsa in.",
-        "Dokumentets enda sida saknar textlager (ingen OCR körs): s. 1. Det som står på den "
-        "finns inte i dokumentets avsnitt.",
     ]
 
 

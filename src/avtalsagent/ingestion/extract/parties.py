@@ -63,6 +63,9 @@ _WINDOW_BLOCKS = 2
 _BLOCK_SEPARATOR = "\n\n"
 _HEADER_KINDS = (BlockKind.PAGE_HEADER, BlockKind.PAGE_FOOTER)
 _PARTY_PLACEHOLDER = "party"
+# The rules of the two slots of the clause; step 5's supplier_party check reads the first.
+SUPPLIER_SLOT_RULE = "E1"
+CUSTOMER_SLOT_RULE = "E1-customer"
 
 
 def find_parties(blocks: Sequence[Block]) -> list[Fact]:
@@ -92,12 +95,12 @@ def _slot_fact(match: re.Match[str], window: Sequence[tuple[int, Block]], slot: 
         # 51 clauses of the pilot; only another customer is worth a fact.
         if org_number is None or org_number == CONTRACTING_AUTHORITY_ORG_NUMBER:
             return None
-        kind, value, rule = FactKind.PARTY, org_number, "E1-customer"
+        kind, value, rule = FactKind.PARTY, org_number, CUSTOMER_SLOT_RULE
     elif org_number is None:
         # "Leverantörens organisationsnummer", "XXXXXX-XXXX", "[xxxxxx-yyyy]": unfilled.
-        kind, value, rule = FactKind.PLACEHOLDER, _PARTY_PLACEHOLDER, "E1"
+        kind, value, rule = FactKind.PLACEHOLDER, _PARTY_PLACEHOLDER, SUPPLIER_SLOT_RULE
     else:
-        kind, value, rule = FactKind.PARTY, org_number, "E1"
+        kind, value, rule = FactKind.PARTY, org_number, SUPPLIER_SLOT_RULE
     index, block = _block_at(window, match.start(f"{slot}_org"))
     return Fact(
         kind=kind,

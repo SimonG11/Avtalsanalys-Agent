@@ -4,7 +4,7 @@ En agent som besvarar frågor om Statens inköpscentrals ramavtal (avropa.se) d�
 påstående har en verifierad källa. Inläsningen av avtalen är ett fast workflow, och
 frågebesvarandet är en agent i LangGraph som själv väljer verktyg och ordning.
 
-> **Status:** M3 (tolkning och uppdelning i avsnitt). Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
+> **Status:** M4 (extraktion, avstämning mot registret och inläsningsrapport). Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
 > förklaras i [`docs/steg/`](docs/steg/) och varje designbeslut i [`docs/adr/`](docs/adr/).
 
 ## Kom igång

@@ -1,7 +1,9 @@
 # ADR 0008: Tolkning och uppdelning av dokumenten
 
 **Status:** Godkänt av Simon 2026-10-06 (PR #4). Rättelserna från självkontrollen samma dag
-(beslut 2, 5, 6 och 7) granskas i PR #5.
+(beslut 2, 5, 6 och 7) granskas i PR #5. Beslut 5 kompletteras av
+[ADR 0009](0009-extraktion-avstamning-och-karantan.md) beslut 10: e-signaturens certifikat tas
+också bort.
 
 ## Kontext
 

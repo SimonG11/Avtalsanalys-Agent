@@ -46,11 +46,10 @@ from collections.abc import Sequence
 from avtalsagent.domain.extracted import Fact, FactKind, Finding, Severity
 from avtalsagent.domain.register import RegisterEntry
 from avtalsagent.ingestion.checks.context import CheckContext, CheckedFile
+from avtalsagent.ingestion.extract.parties import SUPPLIER_SLOT_RULE
 
 CHECK = "supplier_party"
 
-# The rule of the supplier's slot in `extract/parties.py` ("E1-customer" is the other slot).
-SUPPLIER_SLOT_RULE = "E1"
 
 # What a name may differ in and still be the register's: case, punctuation and the
 # Swedish company form. 77d641b81cc2 p3: "Chas visual management AB" is the
