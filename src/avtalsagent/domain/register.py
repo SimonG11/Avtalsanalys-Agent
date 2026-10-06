@@ -12,7 +12,9 @@ Why:
 How:
     `register/normalize.py` builds `RegisterRow` objects from raw Excel rows.
     `register/load.py` groups them into procurements, suppliers, agreements
-    and sub-areas. The row key is agreement number + org number + sub-area.
+    and sub-areas. A row is identified by agreement number + org number +
+    framework area + sub-area, because the sub-area hierarchy is built per
+    framework area ("Gävleborgs län" is in three of them).
 """
 
 from datetime import date
@@ -50,8 +52,3 @@ class RegisterRow(BaseModel):
     valid_from: date
     valid_to: date
     max_extension_to: date | None  # "Max förl. till", often empty
-
-    @property
-    def key(self) -> tuple[str, str, tuple[str, ...]]:
-        """The row key: agreement number + org number + sub-area."""
-        return (self.agreement_number, self.org_number, self.sub_area_path)

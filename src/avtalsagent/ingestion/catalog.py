@@ -13,9 +13,11 @@ Why:
 
 How:
     SQLAlchemy Core statements on the tables in `db/models.py`. Pages and
-    documents are upserted (insert, or update on the same URL). The links of
-    each page read in this run are replaced, so a link removed from a page
-    disappears from the catalog while the downloaded file stays on disk.
+    documents are upserted (insert, or update on the same URL); a document only
+    when this run downloaded it, so a failed download leaves the stored row as
+    it was. The links of each page read in this run are replaced, so a link
+    removed from a page disappears from the catalog while the downloaded file
+    stays on disk.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -101,11 +103,12 @@ def save_fetch(
     stored: Mapping[str, StoredDocument] = {
         result.link.url: result.stored for result in results if result.stored is not None
     }
+    # A FAILED result carries the previous file, which is still linked but was not downloaded.
     downloaded = [
         result.stored
         for result in results
         if result.stored is not None
-        and result.status not in (FetchStatus.SAME_VERSION, FetchStatus.NOT_MODIFIED)
+        and result.status in (FetchStatus.NEW, FetchStatus.UPDATED, FetchStatus.UNCHANGED)
     ]
     if downloaded:
         statement = insert(models.SourceDocument).values(

@@ -87,7 +87,14 @@ En ogiltig identifierare ger `IdentifierError` med ett meddelande som säger vad
 ### 2. `domain/register.py` – en normaliserad rad
 
 `RegisterRow` är en rad ur listan efter normalisering, med Excel-radnumret kvar så att varje
-fel kan spåras tillbaka till filen. Radnyckeln är avtalsnummer + orgnr + delområde.
+fel kan spåras tillbaka till filen. Radnyckeln är avtalsnummer + orgnr + ramavtalsområde +
+delområde, eftersom delområdena är en hierarki per ramavtalsområde och samma delområde kan finnas i
+flera områden. "Gävleborgs län" finns i Hotelltjänster, Hotelltjänster Longstay och Konferenser
+och möten.
+
+Planens domäntyper `Agreement`, `Supplier`, `SubArea` och `Procurement` finns som
+databastabeller i `db/models.py`. Registret läses i dag med frågor mot dem, och typade
+läsmodeller för dem kommer när M4 och M6 behöver dem.
 
 ### 3. `register/download.py` – hämta filen
 
@@ -107,7 +114,9 @@ server och behöver inget nätverk.
 
 - Varje rad blir en `RegisterRow`, eller ett **fynd** med radnummer och orsak. En felaktig rad
   stoppar inte inläsningen men försvinner inte heller tyst.
-- Datum godtas både som Excel-datum och som text (`2026-07-01`). "Max förl. till" får vara tomt.
+- Datum godtas både som Excel-datum och som text. I den riktiga filen är varje cell text, så
+  datumen står som `2026-07-01`. "Max förl. till" får vara tomt, och i filen är ett tomt fält
+  tom text.
 - `find_conflicts` hittar rader som motsäger varandra: samma avtal med olika orgnr, eller samma
   avtal och delområde två gånger. Olika datum per delområde är inte en motsägelse.
 - `find_foreign_org_numbers` listar varje utländskt orgnr en gång, så att det kan kontrolleras.
@@ -141,8 +150,8 @@ modellerna och granskad för hand. Varför modellen ser ut så här står i
 ### 7. `register/load.py` – skriva till databasen
 
 1. `build_tables` grupperar raderna till en lista per tabell. Det är en ren funktion som testas
-   utan databas. Exempel ur testfilen: 18 Excel-rader blir 9 avtal, eftersom A Hub Group har 8
-   rader för samma avtal.
+   utan databas. Exempel ur testfilen: 23 Excel-rader blir 11 avtal, eftersom ett avtal kan stå på
+   flera rader (A Hub Group har 8 rader för samma avtal).
 2. `load_register` tar bort de gamla raderna (barn före föräldrar) och skriver in de nya
    (föräldrar före barn) i **en transaktion**. Samma fil två gånger ger samma tabeller, och en
    misslyckad inläsning lämnar den förra utgåvan orörd.
@@ -164,9 +173,11 @@ Kör kedjan nedladdning → läsning → normalisering → inläsning och skrive
 | `tests/unit/register/test_download.py` | Nedladdning, felsida i stället för xlsx, HTTP-fel |
 | `tests/integration/test_register_load.py` | Migrering och inläsning mot riktig Postgres, och att två inläsningar ger samma resultat |
 
-Testdatan i `tests/fixtures/register_sample.tsv` är 18 riktiga rader ur listan från 2026-10-05.
-Den ligger som text så att den går att läsa i granskningen. Testerna gör om den till en
-xlsx-fil med samma layout som originalet.
+Testdatan i `tests/fixtures/register_sample.tsv` är listans första 23 rader (Excel-rad 3–25)
+från 2026-10-05, så radnumren är desamma som i den riktiga filen. Bland dem finns AB Svenska Pass
+(rad 24 och 25), med ifyllt "Max förl. till" och ett avtal i två ramavtalsområden. Testdatan
+ligger som text så att den går att läsa i granskningen. Testerna gör om den till en xlsx-fil med
+samma layout och samma celltyper som originalet: varje cell är text, och en tom cell är tom text.
 
 Integrationstestet startar en egen Postgres-container med testcontainers och kräver Docker.
 CI kör det i jobbet `test`.

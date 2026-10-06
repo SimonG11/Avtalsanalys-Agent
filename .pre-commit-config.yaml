@@ -1,4 +1,4 @@
-# Runs the same checks as CI before each commit: pre-commit install
+# Runs ruff and mypy before each commit; CI also runs pytest and compose. Enable: pre-commit install
 # The hooks call the tools installed by uv, so their versions come from uv.lock
 # and cannot drift from CI.
 repos:

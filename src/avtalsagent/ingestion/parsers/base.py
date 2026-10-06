@@ -29,7 +29,8 @@ class ParseError(Exception):
 
 
 class DocumentParser(Protocol):
-    # Parser and version, e.g. "docling 2.133.0 (layout heron onnx)".
+    # Parser and version, e.g.
+    # "docling 2.133.0 (layout_heron_default, tableformer, no ocr), blocks v2".
     @property
     def name(self) -> str: ...
 

@@ -2,6 +2,20 @@
 
 *Status: godkänd av Simon 2026-10-05 och uppdaterad efter fas 3 ([validering.md](validering.md)).*
 
+> **Senare beslut:** planen står kvar som den godkändes. Där den skiljer sig från de här besluten
+> gäller besluten:
+>
+> - [ADR 0006](adr/0006-registrets-datamodell.md): registrets tabeller har engelska namn,
+>   upphandlingen har inget ramavtalsområde (området hör till delområdet), datumen hör till avtalet
+>   i ett delområde och utländska organisationsnummer behålls som de står.
+> - [ADR 0007](adr/0007-hamtning-av-dokument.md): dokumentkatalogen är tre tabeller (sidor,
+>   dokument och kopplingen mellan dem), och ett dokument har sin URL som nyckel. Urvalet är fyra
+>   ramavtalsområden, och Möbler och inredning valdes bort ([M2](steg/02-hamtning.md)).
+> - [ADR 0008](adr/0008-tolkning-och-uppdelning.md): Docling körs med PyTorch på processorn, och
+>   kontextrubriken byggs i steg 3. Simon beslutade 2026-10-06 att vänta med OCR (M3b). De 37
+>   skannade sidorna i fyra filer markeras som att de behöver OCR, och OCR kan läggas till senare
+>   bakom gränssnittet `DocumentParser`.
+
 ---
 
 ## 1. Sammanfattning
@@ -71,6 +85,8 @@ flowchart LR
 
 ### 3.1 Registret (från Excel)
 
+*Ersatt av [ADR 0006](adr/0006-registrets-datamodell.md), som beskriver tabellerna som byggdes.*
+
 Excel-listan har en rad per **leverantör × delområde**, inte per avtal. Den normaliseras till:
 
 | Tabell | Nyckel | Innehåll |
@@ -86,6 +102,10 @@ Excel-listan har en rad per **leverantör × delområde**, inte per avtal. Den n
 namn matchas aldrig ensamma, alltid via orgnr; avtalsnumret delas i diarienummer + löpnummer.
 
 ### 3.2 Dokumenten
+
+*`dokument` och `avsnitt` är ersatta av [ADR 0007](adr/0007-hamtning-av-dokument.md)
+(dokumentkatalogen) och [ADR 0008](adr/0008-tolkning-och-uppdelning.md) (avsnitten). Hänvisningarna
+läses i M4.*
 
 | Tabell | Innehåll |
 |---|---|
@@ -112,6 +132,8 @@ Varje steg är en ren funktion med tydlig in- och utdata, så att varje steg kan
      förslag Baidu Unlimited-OCR (MIT, juni 2026, kan läsa dussintals sidor i ett anrop) (se fas 3).
      Den körs som en separat GPU-tjänst via vLLM med OpenAI-kompatibelt API, så att resten av
      systemet inte kräver GPU.
+     *Ersatt: OCR väntar enligt Simons beslut 2026-10-06 (M3b, se
+     [ADR 0008](adr/0008-tolkning-och-uppdelning.md)).*
    - Valet görs per sida utifrån om textlager finns. OCR-text märks i metadata så att
      citatkontrollen kan tillåta små teckenavvikelser just där.
    - Excel-avstämningen i steg 5 ger ett objektivt mått på tolkningens kvalitet, så båda vägarna

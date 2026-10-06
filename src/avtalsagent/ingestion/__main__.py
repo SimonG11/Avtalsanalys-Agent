@@ -12,6 +12,9 @@ What:
     not a section.
     `outline` prints a file's table of contents as found by step 3, or a list
     of all files when no hash is given, so the result can be checked by hand.
+    `verify` checks the sections of every parsed PDF against its text layer
+    (`ingestion/text_layer_check.py`); it reads the files in the data
+    directory and needs no database.
 
 Why:
     One command per step makes each step easy to run and check on its own.
@@ -51,6 +54,10 @@ from avtalsagent.ingestion.step1_fetch import (
 )
 from avtalsagent.ingestion.step2_parse import ParseStatus, load_cached, parse_files
 from avtalsagent.ingestion.step3_chunk import OutlineKind, chunk_document, document_context
+from avtalsagent.ingestion.text_layer_check import DocumentCheck, check_document, text_layer
+
+_SHOWN_FILES = 10  # files with the most missing lines, printed with examples
+_SHOWN_LINES = 3
 
 
 def fetch(areas: list[str]) -> None:
@@ -178,6 +185,12 @@ def outline(sha256_prefix: str | None) -> None:
     if not sections:
         print(f"no sections for a file starting with {sha256_prefix}")
         return
+    matches = sorted({section.sha256 for section in sections})
+    if len(matches) > 1:
+        print(f"{len(matches)} files start with {sha256_prefix}; give more of the hash:")
+        for sha256 in matches:
+            print(f"  {sha256}")
+        return
     context = document_context(links.get(sections[0].sha256, []))
     print(f"{context.document} | {context.agreement} | {sections[0].sha256}")
     for section in sections:
@@ -186,6 +199,59 @@ def outline(sha256_prefix: str | None) -> None:
         if section.page_end and section.page_end != section.page_start:
             pages += f"-{section.page_end}"
         print(f"{'  ' * max(section.level - 1, 0)}{heading}  [{pages}]")
+
+
+def verify() -> None:
+    settings = get_settings()
+    checks: list[DocumentCheck] = []
+    for path in sorted(settings.parsed_dir.glob("*.json")):
+        document = load_cached(settings.parsed_dir, path.stem)
+        pdf = settings.data_dir / "documents" / f"{path.stem}.pdf"
+        if document is None or document.file_type != "pdf" or not pdf.is_file():
+            continue
+        checks.append(check_document(document, text_layer(pdf)))
+
+    lines = sum(check.lines.checked for check in checks)
+    removed = sum(check.lines.removed for check in checks)
+    missing = sum(len(check.lines.missing) for check in checks)
+    in_sections = lines - removed - missing
+    print(f"PDF files: {len(checks)}")
+    print(f"Text-layer lines: {lines}")
+    print(f"  in a section: {in_sections} ({in_sections / max(lines, 1):.1%})")
+    print(f"  only in text step 3 removes on purpose (headers, footers, contents): {removed}")
+    print(f"  missing: {missing} ({missing / max(lines, 1):.1%})")
+    worst = sorted(checks, key=lambda check: len(check.lines.missing), reverse=True)
+    for check in worst[:_SHOWN_FILES]:
+        if check.lines.missing:
+            print(
+                f"  {check.sha256[:12]}: {len(check.lines.missing)} of "
+                f"{check.lines.checked} lines missing"
+            )
+            for line in check.lines.missing[:_SHOWN_LINES]:
+                print(f"      p. {line.page}: {line.text[:100]}")
+
+    logs = [check for check in checks if check.questions is not None]
+    questions = sum(check.questions or 0 for check in logs)
+    sections = sum(check.question_sections or 0 for check in logs)
+    print(
+        f"Questions logs: {len(logs)}, questions in the text layer: {questions}, "
+        f"sections: {sections}"
+    )
+    for check in logs:
+        if check.questions != check.question_sections:
+            print(
+                f"  {check.sha256[:12]}: {check.questions} questions, "
+                f"{check.question_sections} sections"
+            )
+
+    gaps = [check for check in checks if check.gaps]
+    print(
+        f"Numbered lines between sections that are not sections: "
+        f"{sum(len(check.gaps) for check in gaps)} in {len(gaps)} files"
+    )
+    for check in gaps:
+        for line in check.gaps:
+            print(f"  {check.sha256[:12]} p. {line.page}: {line.text[:100]}")
 
 
 def main() -> None:
@@ -201,6 +267,7 @@ def main() -> None:
     steps.add_parser("chunk", help="step 3: split the parsed files into sections and chunks")
     outline_parser = steps.add_parser("outline", help="print a file's table of contents")
     outline_parser.add_argument("sha256", nargs="?", help="the file's hash or its beginning")
+    steps.add_parser("verify", help="check the sections against each PDF's text layer")
     args = parser.parse_args()
     if args.step == "fetch":
         fetch(args.area or get_settings().fetch_areas)
@@ -210,6 +277,8 @@ def main() -> None:
         chunk()
     elif args.step == "outline":
         outline(args.sha256)
+    elif args.step == "verify":
+        verify()
 
 
 if __name__ == "__main__":

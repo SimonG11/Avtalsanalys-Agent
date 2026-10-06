@@ -312,6 +312,20 @@ def test_levels_and_titles() -> None:
     assert (second.number, second.level) == ("6.21.1", 3)
 
 
+def test_listed_numbers_of_a_contents_read_as_a_table() -> None:
+    # The layout model read this table of contents as a table: its lines start with
+    # the cell separator. Exempelroller och kompetensnivåer, Arkitektur och utveckling.
+    block = Block(
+        kind=BlockKind.TOC,
+        text="Exempelroller och kompetensnivåer Delområde 4 ............\n"
+        " | 1.1.1 Arkitektur ........................................ 3\n"
+        " | 1.1.2 Systemutveckling och Systemförvaltning ............ 4\n"
+        "2 Kompetensnivåer .......................................... 7",
+        page=2,
+    )
+    assert listed_numbers([block]) == {(1, 1, 1), (1, 1, 2), (2,)}
+
+
 def test_contents_entries_without_leaders_and_page_numbers() -> None:
     blocks = [
         Block(

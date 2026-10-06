@@ -11,11 +11,11 @@ What:
 
 Why:
     The steps after parsing must not depend on Docling's own document model,
-    so the parser can be swapped (ADR 0001, `DocumentParser`) without touching
-    the splitter. Agreements are cited by section number ("punkt 14.2"), so
-    the section, not a fixed number of characters, is the unit the agent reads
-    and cites. Long sections are also split into chunks for search
-    (parent-child): a chunk is found, the whole section is read.
+    so the parser can be swapped (`DocumentParser`, ADR 0008 decision 1)
+    without touching the splitter. Agreements are cited by section number
+    ("punkt 14.2"), so the section, not a fixed number of characters, is the
+    unit the agent reads and cites. Long sections are also split into chunks
+    for search (parent-child): a chunk is found, the whole section is read.
 
 How:
     Plain Pydantic models without behaviour beyond small helpers. A parser in

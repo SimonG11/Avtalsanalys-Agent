@@ -121,6 +121,19 @@ def starts_with_number(line: str) -> bool:
     return _NUMBERED.match(line.strip()) is not None
 
 
+def split_number(line: str) -> tuple[tuple[int, ...], str] | None:
+    """The number and title of a line that starts like a numbered heading, or None."""
+    match = _NUMBERED.match(line.strip())
+    if match is None:
+        return None
+    return parse_number(match["number"]), " ".join(match["title"].split())
+
+
+def is_number_alone(line: str) -> bool:
+    """Whether a line is only a section number: "4." or "6.21"."""
+    return _NUMBER_ONLY.match(line.strip()) is not None
+
+
 def parse_number(text: str) -> tuple[int, ...]:
     return tuple(int(part) for part in text.split("."))
 
@@ -165,8 +178,17 @@ def listed_numbers(blocks: Sequence[Block]) -> frozenset[tuple[int, ...]]:
         parse_number(match["number"])
         for index in toc_entries(blocks)
         for line in blocks[index].text.splitlines()
-        if (match := _NUMBERED.match(line.strip()))
+        if (match := _NUMBERED.match(_contents_line(line)))
     )
+
+
+def _contents_line(raw: str) -> str:
+    """A contents line without table cell bars and dot leaders.
+
+    The layout model can read a table of contents as a table; its lines then
+    start with the cell separator (" | 1.1.1 Arkitektur ..... 3").
+    """
+    return " ".join(_LEADERS.sub(" ", raw.replace("|", " ")).split())
 
 
 def find_candidates(
@@ -229,7 +251,7 @@ def contents_entries(blocks: Sequence[Block]) -> list[ContentsEntry]:
     pending = ""
     for index in sorted(toc_entries(blocks)):
         for raw in blocks[index].text.splitlines():
-            line = " ".join(_LEADERS.sub(" ", raw.replace("|", " ")).split())
+            line = _contents_line(raw)
             if not line:
                 continue
             line = f"{pending} {line}".strip()

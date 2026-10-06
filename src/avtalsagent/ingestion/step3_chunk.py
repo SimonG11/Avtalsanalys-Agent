@@ -16,7 +16,7 @@ Why:
     to it (parent-child): the chunk is found, the whole section is read. A
     chunk such as "Vitet uppgår till 5 000 kr" says nothing about which
     agreement or section it is from; the context header adds that before the
-    chunk is indexed (contextual retrieval, validation document point 7),
+    chunk is indexed (contextual retrieval, validation document point 6),
     without a language model, so the same input always gives the same header.
 
 How:
@@ -25,14 +25,18 @@ How:
        and would otherwise be found by searches). A line the layout model calls
        a header is removed only if it is on more than one page or holds a page
        counter, since the model sometimes gives that label to agreement text.
-       A list number the model put at the end of its item is moved to the front.
+       A list number the model put at the end of its item is moved to the front,
+       and a numbered heading the model ran into a paragraph, or whose title it
+       read at the end of the next paragraph, gets a block of its own.
     2. `ingestion/headings.py` finds the numbered headings. A questions-and-
        answers log is split per question instead. If a document has no usable
        numbered outline, the parser's own headings are used without numbers
        (with levels from the table of contents when the parser gives none),
        and a document without headings becomes one section. A Word file
        takes the numbers of its own table of contents when it lists exactly
-       the same headings, since Word computes the numbers it shows.
+       the same headings, since Word computes the numbers it shows. Parts
+       without numbers after the last numbered section (a Word heading, or in
+       a PDF a heading that starts a page) become sections of their own.
     3. Each heading starts a section that runs to the next heading. Its level
        comes from the number (6.21.9 is level 3) and its parent is the nearest
        section above it with a lower level.
@@ -59,6 +63,7 @@ from avtalsagent.ingestion.headings import (
     contents_entries,
     find_candidates,
     infer_numbers,
+    is_number_alone,
     listed_numbers,
     select_outline,
     starts_with_number,
@@ -120,6 +125,15 @@ _MAX_TEXT_BEFORE_FIRST_HEADING = 0.5
 _LIST_OUTLINE_SHARE = 0.5
 _HEADINGS_PER_LIST_HEADING = 3
 _SENTENCE_END = re.compile(r"(?<=[.!?:;])\s+(?=[A-ZÅÄÖ0-9\"”(])")
+# A heading the layout model ran into the paragraph before it: "... försenas eller
+# innehållas. 1.7 Gällande lagar och geografisk omfattning Varje part ...". Only
+# numbers with a dot count, after a sentence that ends with a word of at least four
+# letters, so "kl. 17.00", "p. 5.15.3" and "tilldelningsbeslut. 2. Efter" are not split.
+_RUN_IN_HEADING = re.compile(r"(?<=[a-zåäö]{4}[.!?])\s+(?=\d{1,3}(?:\.\d{1,3}){1,5}\.?\s+[A-ZÅÄÖ])")
+# A heading whose number the layout model read on its own, with the title at the end of
+# the next paragraph: "4." followed by "Om Kunden gör detta ... för Valda program.
+# Hårdvarukomponenter". The paragraph belongs to the section before.
+_TITLE_AT_END = re.compile(r"^(?P<text>.*[.!?])\s+(?P<title>[A-ZÅÄÖ][^.!?]{1,60})$", re.S)
 _PREAMBLE_TITLE = "Text före första rubriken"
 # An entry in a TendSign "Frågor och svar" printout: "12 Publik fråga" in the text
 # layer, "Publik fråga 12" in the layout model's reading order. Private questions and
@@ -228,7 +242,17 @@ def contents_missing(document: ParsedDocument, sections: Sequence[Section]) -> l
 
 
 def clean_blocks(document: ParsedDocument) -> list[Block]:
-    """The blocks without page furniture and without the table of contents."""
+    """The blocks without page furniture and without the table of contents.
+
+    Some blocks are split or changed to undo the layout model's mistakes; see
+    step 1 in the module docstring.
+    """
+    blocks = _titles_after_numbers(_run_in_headings(_text_of_column_tables(body_blocks(document))))
+    return _markers_first(blocks)
+
+
+def body_blocks(document: ParsedDocument) -> list[Block]:
+    """The parsed blocks step 3 keeps, unchanged: all but page furniture and the contents."""
     page_count = max((block.page or 0 for block in document.blocks), default=0)
     repeated = _repeated_lines(document.blocks, page_count)
     running = _running_headers(document.blocks)
@@ -243,8 +267,43 @@ def clean_blocks(document: ParsedDocument) -> list[Block]:
         and _normalise(block.text) not in _CONTENTS_TITLES
     ]
     toc = toc_entries(kept)
-    blocks = [block for index, block in enumerate(kept) if index not in toc]
-    return _markers_first(_text_of_column_tables(blocks))
+    return [block for index, block in enumerate(kept) if index not in toc]
+
+
+def _run_in_headings(blocks: Sequence[Block]) -> list[Block]:
+    """The blocks, with a numbered heading inside a paragraph split off (`_RUN_IN_HEADING`).
+
+    The heading then starts a block of its own and can be found. Whether it is
+    a heading is decided by `select_outline`, like for any other numbered line.
+    """
+    result: list[Block] = []
+    for block in blocks:
+        if block.kind not in (BlockKind.TEXT, BlockKind.LIST_ITEM):
+            result.append(block)
+            continue
+        parts = _RUN_IN_HEADING.split(block.text)
+        result.append(block.model_copy(update={"text": parts[0]}))
+        result.extend(_text_block(block, part) for part in parts[1:])
+    return result
+
+
+def _titles_after_numbers(blocks: list[Block]) -> list[Block]:
+    """The blocks, with a title read at the end of the next paragraph put after its number.
+
+    See `_TITLE_AT_END`: the number and the paragraph swap places, and the
+    title moves from the paragraph to the number ("4. Hårdvarukomponenter").
+    """
+    for index in range(len(blocks) - 1):
+        number, following = blocks[index], blocks[index + 1]
+        if not is_number_alone(number.text) or following.kind is not BlockKind.TEXT:
+            continue
+        match = _TITLE_AT_END.match(following.text.strip())
+        if match is None:
+            continue
+        blocks[index] = following.model_copy(update={"text": match["text"]})
+        heading = f"{number.text.strip()} {match['title']}"
+        blocks[index + 1] = number.model_copy(update={"text": heading})
+    return blocks
 
 
 def _text_of_column_tables(blocks: Sequence[Block]) -> list[Block]:
@@ -381,9 +440,11 @@ def split_sections(document: ParsedDocument) -> tuple[OutlineKind, list[Section]
     elif _usable(
         headings := select_outline(find_candidates(blocks, listed_numbers(document.blocks))),
         blocks,
+        word=document.file_type == "docx",
     ):
         headings = _with_unnumbered_parts(headings, blocks)
         headings = _with_contents_numbers(headings, blocks, document.blocks)
+        headings = _with_trailing_parts(headings, blocks)
         if document.file_type == "docx":
             headings, blocks = _with_word_numbers(headings, blocks, document.blocks)
     else:
@@ -549,6 +610,11 @@ def _with_word_numbers(
     return renumbered, blocks
 
 
+def is_question_line(line: str) -> bool:
+    """Whether a line starts an entry of a questions-and-answers log ("12 Publik fråga")."""
+    return _QUESTION.match(" ".join(line.split())) is not None
+
+
 def _questions(blocks: Sequence[Block]) -> list[Heading]:
     """The entries of a questions-and-answers log, found by their first line."""
     headings = []
@@ -566,27 +632,95 @@ def _with_unnumbered_parts(headings: list[Heading], blocks: Sequence[Block]) -> 
     A Word template can have a part without numbers after its numbered
     sections, e.g. "Instruktion till Personuppgiftsbiträdesavtalet" (Heading 1)
     after "16 Tvistelösning". Without this it would become part of 16.1. Only
-    headings whose level is known (Word) and at least as high as the numbered
-    top level count; a contents heading ("Innehåll") is skipped.
+    headings after the last numbered one, whose level is known (Word) and at
+    least as high as the numbered top level, count; a contents heading
+    ("Innehåll") is skipped. Between numbered sections such a heading is the
+    section's text: Microsoft's enrollment forms style whole sentences as
+    headings ("1 Primär kontaktperson." followed by "Det Registrerade
+    Koncernbolaget måste ange en individ ...").
     """
     levels = [level for h in headings if (level := blocks[h.index].level) is not None]
     if not levels:
         return headings
     top = min(levels)
-    taken = {h.index + offset for h in headings for offset in range(h.consumed)}
+    last = max(h.index + h.consumed for h in headings)
     parts = [
         Heading(index, 1, None, 1, " ".join(block.text.split()))
         for index, block in enumerate(blocks)
-        if block.kind is BlockKind.HEADING
+        if index >= last
+        and block.kind is BlockKind.HEADING
         and block.level is not None
         and block.level <= top
-        and index not in taken
         and _normalise(block.text) not in _CONTENTS_TITLES
     ]
     return sorted([*headings, *parts], key=lambda heading: heading.index)
 
 
-def _usable(headings: Sequence[Heading], blocks: Sequence[Block]) -> bool:
+def _with_trailing_parts(headings: list[Heading], blocks: Sequence[Block]) -> list[Heading]:
+    """Add the unnumbered part that starts on a new page after the last numbered section.
+
+    IBM's terms end with "Del 2 - Landsspecifika villkor" and Microsoft's
+    enrollments with a "Registreringsinformation" form, after the last numbered
+    section and without numbers. Without this they would be part of that
+    section ("10 Upphävande av IBM SaaS och uppsägning"). The first heading the
+    parser found without a number that starts a page starts the part, when the
+    document goes on to at least the next page. When that heading repeats the
+    document's title ("IBM Användningsvillkor") and another heading follows on
+    the same page, the part is named after the second. A heading on the last page is
+    more often a subheading of the last section ("Block 6 - Säkerhetstjänster"
+    under "6 Särskilda kontraktsvillkor") or a signature page. Later headings
+    stay in the part: the country headings in IBM's amendments only sometimes
+    start a page, so parts split there would carry the wrong country's name.
+    A PDF only: a Word file has no pages, and its parts have levels
+    (`_with_unnumbered_parts`).
+    """
+    numbered = [heading for heading in headings if heading.number]
+    if not numbered:
+        return headings
+    last = max(numbered, key=lambda heading: heading.index)
+    last_page = max((block.page or 0 for block in blocks), default=0)
+    for index in range(last.index + last.consumed, len(blocks)):
+        block = blocks[index]
+        if (
+            block.kind is BlockKind.HEADING
+            and block.page is not None
+            and block.page != blocks[index - 1].page
+            and block.page < last_page
+            and not starts_with_number(block.text)
+            and not _LEADING_MARKER.match(block.text)
+            and _normalise(block.text) not in _CONTENTS_TITLES
+        ):
+            name = block
+            following = blocks[index + 1] if index + 1 < len(blocks) else None
+            if (
+                following is not None
+                and following.kind is BlockKind.HEADING
+                and following.page == block.page
+                and _repeats_title(block, blocks)
+            ):
+                name = following
+            part = Heading(index, 1, None, 1, " ".join(name.text.split()))
+            return sorted([*headings, part], key=lambda heading: heading.index)
+    return headings
+
+
+def _repeats_title(block: Block, blocks: Sequence[Block]) -> bool:
+    """Whether `block` repeats the start of the document's first heading or title."""
+    first = next(
+        (b for b in blocks if b.kind in (BlockKind.TITLE, BlockKind.HEADING) and b is not block),
+        None,
+    )
+    return first is not None and _normalise(first.text).startswith(_normalise(block.text))
+
+
+def _usable(headings: Sequence[Heading], blocks: Sequence[Block], word: bool) -> bool:
+    """Whether the numbered headings are the document's outline (see the constants above).
+
+    In a Word file the sections have heading styles. Numbers that are all list
+    items, in a file with headings of its own, are a list: "Kontraktstecknande"
+    lists the contract's documents 1-10 in order of precedence under the heading
+    "Kontraktets omfattning".
+    """
     if len(headings) < _MIN_NUMBERED_HEADINGS:
         return False
     in_outline = {heading.index for heading in headings}
@@ -598,6 +732,12 @@ def _usable(headings: Sequence[Heading], blocks: Sequence[Block]) -> bool:
     if as_list >= _LIST_OUTLINE_SHARE * len(
         headings
     ) and other_headings >= _HEADINGS_PER_LIST_HEADING * len(headings):
+        return False
+    word_headings = sum(
+        block.kind is BlockKind.HEADING and block.level is not None and index not in in_outline
+        for index, block in enumerate(blocks)
+    )
+    if word and as_list == len(headings) and word_headings >= _MIN_NUMBERED_HEADINGS:
         return False
     total = sum(len(block.text) for block in blocks)
     before = sum(len(block.text) for block in blocks[: headings[0].index])
@@ -646,11 +786,26 @@ def chunk_sections(
 
     A section that is only a short heading ("6 Allmänna villkor", followed
     directly by 6.1) gets no chunk; its text is in its subsections. A heading
-    that is a whole clause ("3.4 Avtalet gäller i två år.") does get one.
+    that is a whole clause ("3.4 Avtalet gäller i två år.") does get one, and so
+    does a numbered section without subsections ("1.1 För närvarande har inga
+    ändringar gjorts till bilagorna 6.1-6.2"), since it has nothing else. The
+    exception is a section for the removed table of contents ("6.1
+    Innehållsförteckning"): it is kept so the check against the contents works,
+    but searches should not find it. Headings without numbers have no reliable
+    levels, so for them a short heading is always only a heading ("Licensmodell",
+    followed by "Per kärna/CAL").
     """
+    parents = {section.parent for section in sections if section.parent is not None}
     chunks: list[Chunk] = []
     for section in sections:
-        if not section.text.strip() or _heading_only(section.text):
+        if not section.text.strip():
+            continue
+        leaf = (
+            section.number is not None
+            and section.position not in parents
+            and _normalise(section.title) not in _CONTENTS_TITLES
+        )
+        if _heading_only(section.text) and not leaf:
             continue
         header = context_header(context, section)
         for position, text in enumerate(_pieces(section.text, max_chars)):

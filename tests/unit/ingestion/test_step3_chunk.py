@@ -18,6 +18,7 @@ from avtalsagent.ingestion.step3_chunk import (
     split_sections,
 )
 
+LIST = BlockKind.LIST_ITEM
 CONTEXT = DocumentContext(agreement="IT-drift (23.3-5890-2023)", document="Allmänna villkor")
 FOOTER = "23.3-5890-2023 IT-drift 2023, område Mindre"
 
@@ -491,6 +492,168 @@ class TestSplitSections:
         assert sections[-1].text.endswith("den personuppgiftsansvariges instruktioner.")
         assert sections[-1].page_start is None
 
+    def test_word_headings_between_numbered_sections_are_their_text(self) -> None:
+        # Microsoft's enrollment forms style whole sentences as Heading 1.
+        _, sections = split_sections(
+            document(
+                heading("1 Primär kontaktperson.", None, 1),
+                heading("Det Registrerade Koncernbolaget måste ange en kontaktperson.", None, 1),
+                block("Namn:", None),
+                heading("2 Meddelanden.", None, 1),
+                heading("Välj språk för meddelanden.", None, 1),
+                block("Svenska", None),
+                heading("3 Registreringens löptid.", None, 1),
+                block("36 månader", None),
+                heading("Registreringsinformation", None, 1),
+                block("Registreringsnummer:", None),
+                file_type="docx",
+            )
+        )
+        assert [(s.number, s.title) for s in sections] == [
+            ("1", "Primär kontaktperson."),
+            ("2", "Meddelanden."),
+            ("3", "Registreringens löptid."),
+            (None, "Registreringsinformation"),
+        ]
+        assert "måste ange en kontaktperson." in sections[0].text
+        assert sections[1].text.endswith("Välj språk för meddelanden.\n\nSvenska")
+
+    def test_a_heading_run_into_the_paragraph_before_is_split_off(self) -> None:
+        # IBM International Passport Advantage-avtal: the layout model joined heading
+        # 1.7 to the end of the paragraph before it.
+        _, sections = split_sections(
+            document(
+                heading("1.6 Allmänna riktlinjer"),
+                block(
+                    "Om godkännande eller samarbete krävs av endera parten skall detta inte "
+                    "oskäligen försenas eller innehållas. 1.7 Gällande lagar och geografisk "
+                    "omfattning Varje part är ansvarig för att följa lagar och regelverk."
+                ),
+                heading("1.8 Avtalets upphörande"),
+            )
+        )
+        assert [s.number for s in sections] == ["1.6", "1.7", "1.8"]
+        assert sections[0].text.endswith("oskäligen försenas eller innehållas.")
+        assert sections[1].text.startswith("1.7 Gällande lagar och geografisk omfattning")
+
+    def test_numbers_after_abbreviations_stay_in_the_paragraph(self) -> None:
+        lines = [
+            "Arbetstid är vardagar mellan kl. 08.00 och kl. 17.00. Ersättning utgår inte.",
+            "Av p. 6.20.8 Allmänna villkor framgår att Ramavtalsleverantören ska ersätta.",
+            "Myndigheten kan fatta nytt tilldelningsbeslut. 2. Efter beslutet görs avropet om.",
+        ]
+        assert [b.text for b in clean_blocks(document(*map(block, lines)))] == lines
+
+    def test_a_title_read_at_the_end_of_the_next_paragraph(self) -> None:
+        # IBM: the layout model read "4." alone, then the end of 3.9 with the title last.
+        _, sections = split_sections(
+            document(
+                block("3.8 IBMs Programprenumeration och Support", kind=BlockKind.LIST_ITEM),
+                block("IBM tillhandahåller IBM Programprenumeration och Support.", 1),
+                block("3.9 Vald Support", kind=BlockKind.LIST_ITEM),
+                block("4.", kind=BlockKind.LIST_ITEM),
+                block(
+                    "Om Kunden gör detta måste Kunden anskaffa ett återinsättande. IBM "
+                    "tillhandahåller inga licenser under detta Avtal för Valda program. "
+                    "Hårdvarukomponenter"
+                ),
+                block("En Hårdvarukomponent är en kvalificerad produkt."),
+                block("4.1 IBMs tjänster för Hårdvarukomponenter", kind=BlockKind.LIST_ITEM),
+            )
+        )
+        assert [(s.number, s.title) for s in sections] == [
+            ("3.8", "IBMs Programprenumeration och Support"),
+            ("3.9", "Vald Support"),
+            ("4", "Hårdvarukomponenter"),
+            ("4.1", "IBMs tjänster för Hårdvarukomponenter"),
+        ]
+        assert sections[1].text.endswith("under detta Avtal för Valda program.")
+        assert sections[2].text.startswith("4. Hårdvarukomponenter\n\nEn Hårdvarukomponent")
+
+    @staticmethod
+    def ibm_terms(last_page: int) -> ParsedDocument:
+        """IBM's terms: numbered sections, then country terms from page 3 to `last_page`.
+
+        Page 3 repeats the document's title above the part's own heading.
+        """
+        return document(
+            heading("IBM Användningsvillkor - Allmänna villkor", 1),
+            heading("Del 1 - IBM-villkor", 1),
+            heading("9. Skadeslöshet", 2),
+            block("Kunden skall försvara och hålla IBM skadeslöst.", 2),
+            heading("10. Upphävande av IBM SaaS och uppsägning", 2),
+            block("IBM säger upp Kundens Prenumeration först efter skriftligt meddelande.", 2),
+            heading("IBM Användningsvillkor", 3),
+            heading("Del 2 - Landsspecifika villkor", 3),
+            block(
+                "Följande villkor ersätter eller ändrar de villkor som hänvisas till i del 1.", 3
+            ),
+            heading("NYA ZEELAND", last_page),
+            block("The following is added to this Section 2:", last_page),
+        )
+
+    def test_an_unnumbered_part_on_new_pages_after_the_numbered_sections(self) -> None:
+        _, sections = split_sections(self.ibm_terms(last_page=4))
+        assert [(s.number, s.title, s.level) for s in sections] == [
+            (None, "Text före första rubriken", 0),
+            ("9", "Skadeslöshet", 1),
+            ("10", "Upphävande av IBM SaaS och uppsägning", 1),
+            # Named after its own heading, not the repeated document title above it.
+            (None, "Del 2 - Landsspecifika villkor", 1),
+        ]
+        assert sections[2].text.endswith("först efter skriftligt meddelande.")
+        assert sections[3].path == ("Del 2 - Landsspecifika villkor",)
+        assert sections[3].text.startswith("IBM Användningsvillkor\n\nDel 2")
+        assert sections[3].text.endswith("added to this Section 2:")
+
+    def test_a_heading_on_the_last_page_stays_in_the_last_section(self) -> None:
+        _, sections = split_sections(self.ibm_terms(last_page=3))
+        assert [s.number for s in sections] == [None, "9", "10"]
+        assert "Del 2 - Landsspecifika villkor" in sections[2].text
+
+    def test_a_part_starts_only_at_a_heading_that_begins_a_page(self) -> None:
+        # Kompetensnivåer: "Nivå 2" is a subheading in the middle of page 7.
+        _, sections = split_sections(
+            document(
+                heading("1 Inledning", 6),
+                block("Avtalet gäller konsulttjänster.", 6),
+                heading("2 Kompetensnivåer", 7),
+                block("Konsulten ska ha rätt nivå.", 7),
+                heading("Nivå 2", 7),
+                block("Konsulten har några års erfarenhet.", 7),
+                heading("Nivå 3", 8),
+                block("Konsulten har lång erfarenhet.", 8),
+            )
+        )
+        assert [s.number for s in sections] == ["1", "2"]
+
+    def test_a_numbered_list_in_a_word_file_with_headings_is_not_the_outline(self) -> None:
+        # "Kontraktstecknande", IT-drift: the documents in order of precedence.
+        outline, sections = split_sections(
+            document(
+                block("Kontraktstecknande", None),
+                heading("Kontraktets omfattning", None, 2),
+                block(
+                    "Om handlingarna innehåller motstridiga uppgifter gäller de i följande", None
+                ),
+                block("ordning:", None),
+                block("1. Skriftliga ändringar och tillägg till säkerhetsskyddsavtal", None, LIST),
+                block("2. Säkerhetsskyddsavtal", None, LIST),
+                block("3. Kontraktet med bilagor", None, LIST),
+                block("Inga andra handlingar än de ovan nämnda ingår i Kontraktet.", None),
+                heading("Underskrift", None, 2),
+                block("Detta kontrakt har upprättats i två exemplar.", None),
+                file_type="docx",
+            )
+        )
+        assert outline is OutlineKind.HEADINGS
+        assert [s.title for s in sections] == [
+            "Text före första rubriken",
+            "Kontraktets omfattning",
+            "Underskrift",
+        ]
+        assert "3. Kontraktet med bilagor" in sections[1].text
+
     @staticmethod
     def request_template(*contents: str) -> ParsedDocument:
         """An avropsförfrågan template: Word shows "1 Innehåll", Docling does not count it."""
@@ -570,8 +733,32 @@ class TestChunks:
         assert all(c.text.endswith("försening.") for c in chunks)
         assert " ".join(c.text for c in chunks) == text
 
-    def test_a_heading_without_body_gets_no_chunk(self) -> None:
-        assert chunk_sections([self.section("6 Allmänna villkor", number="6")], CONTEXT) == []
+    def test_a_heading_without_body_gets_no_chunk_when_it_has_subsections(self) -> None:
+        parent = self.section("6 Allmänna villkor", number="6", position=0).model_copy(
+            update={"parent": None, "level": 1, "path": ("6 Allmänna villkor",)}
+        )
+        child = self.section("6.1 Allmänt\n\nDessa villkor gäller.", number="6.1", position=1)
+        assert [c.section for c in chunk_sections([parent, child], CONTEXT)] == [1]
+        # Without its subsection the heading is all there is, so it gets a chunk.
+        assert [c.section for c in chunk_sections([parent], CONTEXT)] == [0]
+
+    def test_a_numbered_section_without_subsections_gets_a_chunk(self) -> None:
+        # Bilaga 6, Programvaror och tjänster: the whole amendment is this clause.
+        clause = "1.1 För närvarande har inga ändringar eller förtydliganden gjorts till bilagorna"
+        chunks = chunk_sections([self.section(clause, number="1.1")], CONTEXT)
+        assert [c.text for c in chunks] == [clause]
+
+    def test_the_section_of_a_removed_table_of_contents_gets_no_chunk(self) -> None:
+        # IT-drift, Allmänna villkor: "6.1 Innehållsförteckning" is followed by the
+        # contents lines, which step 3 removes, and then by "6.2 Allmänt".
+        contents = self.section("6.1 Innehållsförteckning", number="6.1").model_copy(
+            update={"title": "Innehållsförteckning"}
+        )
+        assert chunk_sections([contents], CONTEXT) == []
+
+    def test_an_unnumbered_heading_without_body_gets_no_chunk(self) -> None:
+        # Microsoft's product terms: "Licensmodell" is followed by "Per kärna/CAL".
+        assert chunk_sections([self.section("Licensmodell", number=None)], CONTEXT) == []
 
     def test_a_clause_heading_without_body_gets_a_chunk(self) -> None:
         clause = "16.1 Bestämmelser om tvist regleras i ramavtalet."
