@@ -19,12 +19,14 @@ def test_title_row_gives_list_version(sample_register_xlsx: Path) -> None:
 def test_every_data_row_is_read_with_its_excel_row_number(sample_register_xlsx: Path) -> None:
     register = read_register(sample_register_xlsx)
 
-    assert len(register.rows) == 18
+    assert len(register.rows) == 23
     first = register.rows[0]
     assert first.source_row == 3  # row 1 is the title, row 2 the headers
     assert first.values["Avtalsnummer"] == "23.3-1385-2025-011"
     assert first.values["Organisationsnummer"] == "5563372381      "  # not normalised here
-    assert first.values["Max förl. till"] is None
+    # Every cell in the real file is text: dates too, and an empty cell is "".
+    assert first.values["Giltig från"] == "2026-07-01"
+    assert first.values["Max förl. till"] == ""
 
 
 def test_empty_rows_are_skipped(tmp_path: Path) -> None:

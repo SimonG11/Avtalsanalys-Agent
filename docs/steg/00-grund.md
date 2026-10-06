@@ -113,6 +113,13 @@ lägga till ett beroende utan att låsa det.
   skapas i den milstolpe som fyller den med kod. Då finns ingen kod i repot som inte gör något.
 - **Bara två körbara beroenden.** LangGraph, MCP-SDK:t, SQLAlchemy och de andra läggs till i den
   milstolpe som använder dem, så att varje beroende kan motiveras i sin egen pull request.
+- **Pydantic för data som sparas eller lämnar processen, frysta dataclasses inom processen.** M1–M3
+  följer den konventionen. Det som sparas eller lämnar processen är Pydantic-modeller
+  (`RegisterRow`, `AgreementPage`, `DocumentLink`, `ParsedDocument`, `Block`, `Section`, `Chunk`),
+  så att värdena valideras och kan skrivas som JSON. Värden och stegresultat som stannar inom
+  processen är frysta dataclasses (t.ex. `FetchResult`, `StoredDocument`, `ChunkedDocument`,
+  `AgreementNumber`), som är enklare och inte kan ändras av misstag. Båda är typade och
+  kontrolleras av `mypy --strict`.
 
 ## Så verifierar du M0 själv
 

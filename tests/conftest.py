@@ -4,39 +4,34 @@ What:
     `sample_register_xlsx` builds an xlsx file from tests/fixtures/register_sample.tsv.
 
 Why:
-    The sample rows are real rows from "Alla giltiga ramavtal" (2026-10-05).
-    Keeping them as TSV makes them readable in review; the fixture turns them
-    into the same xlsx layout as the real file.
+    The sample rows are the first rows of "Alla giltiga ramavtal" (2026-10-05),
+    so each Excel row number is the same as in the real file. Keeping them as
+    TSV makes them readable in review; the fixture turns them into the same
+    xlsx layout as the real file.
 
 How:
-    Row 1 is the title row, row 2 the headers, then the data rows. Date columns
-    are written as Excel dates, the other cells as text, as in the real file.
+    Row 1 is the title row, row 2 the headers, then the data rows. Every cell is
+    a text cell, as in the real file: dates are ISO text ("2025-04-03") and an
+    empty cell holds the empty string. openpyxl saves "" as a cell without text,
+    which reads back as None, so an empty cell is written as empty rich text,
+    which reads back as "".
 """
 
-from datetime import date
 from pathlib import Path
 
 import pytest
 from openpyxl import Workbook
+from openpyxl.cell.rich_text import CellRichText
 
 FIXTURES = Path(__file__).parent / "fixtures"
-DATE_COLUMNS = {5, 6, 7}  # Giltig från, Giltig till, Max förl. till (0-based)
 
 
 def write_register_xlsx(rows: list[list[str]], target: Path) -> Path:
     workbook = Workbook()
     sheet = workbook.active
     assert sheet is not None
-    for number, row in enumerate(rows, start=1):
-        if number > 2:  # data rows: real dates in date columns, empty cells as None
-            sheet.append(
-                [
-                    (date.fromisoformat(cell) if i in DATE_COLUMNS else cell) if cell else None
-                    for i, cell in enumerate(row)
-                ]
-            )
-        else:
-            sheet.append(row)
+    for row in rows:
+        sheet.append([cell or CellRichText("") for cell in row])
     workbook.save(target)
     return target
 

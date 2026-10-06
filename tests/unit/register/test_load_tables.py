@@ -12,13 +12,15 @@ def test_sample_rows_are_grouped_into_tables(sample_register_xlsx: Path) -> None
 
     tables = build_tables(rows)
 
-    # 18 Excel rows, but only 9 agreements: A Hub Group has 8 rows for one agreement.
-    assert len(tables.agreements) == 9
-    assert len(tables.agreement_sub_areas) == 18
-    assert len(tables.procurements) == 4
-    assert len(tables.suppliers) == 4
+    # 23 Excel rows, but only 11 agreements: A Hub Group has 8 rows for one agreement,
+    # and AB HOLMRIS B8 and AB Svenska Pass have 2 rows per agreement.
+    assert len(tables.agreements) == 11
+    assert len(tables.agreement_sub_areas) == 23
+    # 23.3-2965-20 is one procurement, although it spans two framework areas.
+    assert len(tables.procurements) == 5
+    assert len(tables.suppliers) == 5
     # 556337-2381 appears as both "2Home Hotel Gävle" and "2Home Sthlm South".
-    assert len(tables.supplier_names) == 5
+    assert len(tables.supplier_names) == 6
 
 
 def test_sub_area_hierarchy_has_one_node_per_level(sample_register_xlsx: Path) -> None:

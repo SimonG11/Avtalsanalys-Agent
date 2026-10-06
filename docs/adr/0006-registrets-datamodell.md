@@ -1,7 +1,7 @@
 # ADR 0006: Registrets datamodell och inläsning
 
-**Status:** Förslag (M1), granskas av Simon i PR:en. Punkt 1–3 justerades 2026-10-05 efter
-inläsning av hela listan.
+**Status:** Godkänt av Simon 2026-10-05 (PR #2). Punkt 1–3 justerades 2026-10-05 efter
+inläsning av hela listan, före godkännandet.
 
 ## Kontext
 

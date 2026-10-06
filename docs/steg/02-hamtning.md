@@ -38,6 +38,12 @@ inte avtalstext. Det området byttes mot IT-konsulttjänster Resurskonsulter och
 tjänster. De två har leverantörernas egna ramavtal, äldre avtalsnummer och volymavtal som ligger på
 en annan sökväg, så hela kedjan testas på de svåra fallen. Fler områden läggs till med `--area`.
 
+**Öppen fråga: villkoren för återanvändning.** Enligt projektidén ska villkoren för att återanvända
+avropa.se:s sidor, dokument och Excel-listan bekräftas innan något publiceras. Repot är publikt men
+innehåller bara två förkortade sidor från avropa.se och ett tjugotal rader ur registret som
+testdata. Inga PDF-, Word- eller Excel-filer finns i repot, och `data/`, där de nedladdade filerna
+ligger, checkas aldrig in. Simon avgör frågan.
+
 ---
 
 ## Flödet
@@ -87,7 +93,10 @@ avtalsnummer, filtyp och "Senast uppdaterad". Rena Pydantic-modeller utan beroen
 ### 2. `ingestion/avropa_pages.py` – läsa sidorna
 
 Rena funktioner som tar HTML och ger objekten ovan. All kunskap om sajtens HTML finns här, så en
-ändring på avropa.se rättas i en fil.
+ändring på avropa.se rättas i en fil. HTML:en läses med BeautifulSoup (`beautifulsoup4`), som planen
+inte nämner. Sajten har inget API, så sidorna måste läsas som HTML. BeautifulSoup hittar sidans
+delar med sajtens egna CSS-klasser (`h2.fakta-rubrik`, `div.tbl-row`, `li.contact-card`) och
+använder Pythons inbyggda HTML-tolk, så ingen annan tolk behöver installeras.
 
 - `parse_index` hittar alla länkar under `/ramavtal/ramavtalsomraden/` i A–Ö-listan.
 - `parse_agreement_page` läser `h1`, faktarutan (`h2.fakta-rubrik`) och dokumentraderna
@@ -150,6 +159,10 @@ inläsning medan dokumenten ligger kvar. De kopplas på diarienummer och avtalsn
 (och diarienummer utan sida), antal dokument per status och varje misslyckad hämtning.
 Nedladdningen sker innan databastransaktionen öppnas, så en lång hämtning håller aldrig en
 transaktion öppen.
+
+`python -m avtalsagent.ingestion` har ett underkommando per steg (`fetch` i M2, `parse` och `chunk`
+i M3) och ersätter planens `scripts/ingest.py`. Ett kommando som kör alla steg i ordning med
+loggning (planens `ingestion/pipeline.py`) kommer i M4, tillsammans med inläsningsrapporten.
 
 ### 7. `config.py` – nya inställningar
 

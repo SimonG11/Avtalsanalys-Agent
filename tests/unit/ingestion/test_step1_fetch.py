@@ -13,12 +13,17 @@ from avtalsagent.ingestion.step1_fetch import (
     FetchStatus,
     PoliteClient,
     StoredDocument,
+    discover_pages,
     fetch_documents,
     select_pages,
 )
 
 PDF = b"%PDF-1.7 the agreement"
 BASE = "https://www.avropa.se/globalassets/bilagor"
+FIXTURES = Path(__file__).parents[2] / "fixtures" / "avropa"
+INDEX_URL = "https://www.avropa.se/ramavtal/ramavtal-a-o/"
+# The three agreement pages that tests/fixtures/avropa/index.html links to.
+AREA = "https://www.avropa.se/ramavtal/ramavtalsomraden/mobler-och-inredning/mobler-och-inredning"
 
 
 def link(name: str, version: str | None = "v1", file_type: str = "pdf") -> DocumentLink:
@@ -207,6 +212,37 @@ def test_link_without_version_is_revalidated_with_its_etag(tmp_path: Path) -> No
     assert second.status is FetchStatus.NOT_MODIFIED
     assert second.stored == first.stored
     assert seen_etags == [None, '"etag-1"']
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    [
+        (httpx.Response(500), "500 Internal Server Error"),
+        (httpx.Response(200, text="<html><body>Sidan har flyttat</body></html>"), "no h1"),
+    ],
+)
+def test_page_that_cannot_be_read_is_reported_and_skipped(
+    response: httpx.Response, message: str
+) -> None:
+    index = (FIXTURES / "index.html").read_text(encoding="utf-8")
+    agreement_page = (FIXTURES / "agreement_page.html").read_text(encoding="utf-8")
+    site = FakeSite(
+        {
+            INDEX_URL: httpx.Response(200, text=index),
+            f"{AREA}/arbetsplats-och-forvaring/": httpx.Response(200, text=agreement_page),
+            f"{AREA}/arbetsstolar/": response,
+            f"{AREA}/arkiv-och-magasin/": httpx.Response(200, text=agreement_page),
+        }
+    )
+
+    pages, problems = discover_pages(site.client(), INDEX_URL)
+
+    assert [p.url for p in pages] == [
+        f"{AREA}/arbetsplats-och-forvaring/",
+        f"{AREA}/arkiv-och-magasin/",
+    ]
+    assert [p.url for p in problems] == [f"{AREA}/arbetsstolar/"]
+    assert message in problems[0].message
 
 
 def test_pages_are_selected_by_procurement_number() -> None:

@@ -9,9 +9,20 @@ which makes them fail instead.
 import os
 from pathlib import Path
 
+import pypdfium2 as pdfium
 import pytest
 from docling.models.stages.page_assemble.page_assemble_model import PageAssembleOptions
-from docling_core.types.doc import ContentLayer, DocItemLabel, DoclingDocument, TableCell, TableData
+from docling_core.types.doc import (
+    BoundingBox,
+    ContentLayer,
+    CoordOrigin,
+    DocItemLabel,
+    DoclingDocument,
+    ProvenanceItem,
+    Size,
+    TableCell,
+    TableData,
+)
 from docx import Document
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -231,6 +242,35 @@ def test_table_cells_with_the_same_text_and_the_footnote_are_kept() -> None:
         "Office 365-tjänster | Ja | Ja\n"
         "Microsoft Azure Core Services |  | Varierar*",
         note,
+    ]
+
+
+def test_a_pdf_table_without_cells_is_read_from_the_text_inside_its_box(tmp_path: Path) -> None:
+    # The table model sometimes finds no cells. The text inside the table's box is then
+    # read from the PDF's text layer, one line per row; the text around it is left out.
+    width, height = A4
+    canvas = Canvas(str(tmp_path / "prices.pdf"), pagesize=A4)
+    canvas.setFont("Helvetica", 11)
+    canvas.drawString(72, height - 100, "Ramavtalsleverantören får inte debitera mer än takpriset.")
+    rows = [("Kompetensnivå", "Takpris per timme"), ("Nivå 1", "650 kr"), ("Nivå 2", "850 kr")]
+    for number, (level, price) in enumerate(rows):
+        canvas.drawString(72, height - 200 - number * 16, level)
+        canvas.drawString(272, height - 200 - number * 16, price)
+    canvas.drawString(72, height - 300, "Priserna gäller under hela avtalsperioden.")
+    canvas.save()
+    document = DoclingDocument(name="prices")
+    document.add_page(page_no=1, size=Size(width=width, height=height))
+    box = BoundingBox(l=60, t=185, r=420, b=240, coord_origin=CoordOrigin.TOPLEFT)
+    document.add_table(data=TableData(), prov=ProvenanceItem(page_no=1, bbox=box, charspan=(0, 0)))
+
+    pdf = pdfium.PdfDocument(tmp_path / "prices.pdf")
+    try:
+        blocks = _blocks(document, pdf)
+    finally:
+        pdf.close()
+
+    assert [(b.kind, b.text, b.page) for b in blocks] == [
+        (BlockKind.TABLE, "Kompetensnivå Takpris per timme\nNivå 1 650 kr\nNivå 2 850 kr", 1)
     ]
 
 

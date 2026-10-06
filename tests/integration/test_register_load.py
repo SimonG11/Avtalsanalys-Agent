@@ -39,11 +39,11 @@ def count(engine: Engine, model: type[models.Base]) -> int:
 def test_sample_register_is_loaded(engine: Engine, sample_register_xlsx: Path) -> None:
     report = load_sample(engine, sample_register_xlsx)
 
-    assert report.rows_loaded == 18
-    assert count(engine, models.Agreement) == 9
-    assert count(engine, models.AgreementSubArea) == 18
-    assert count(engine, models.Supplier) == 4
-    assert count(engine, models.SupplierName) == 5
+    assert report.rows_loaded == 23
+    assert count(engine, models.Agreement) == 11
+    assert count(engine, models.AgreementSubArea) == 23
+    assert count(engine, models.Supplier) == 5
+    assert count(engine, models.SupplierName) == 6
 
 
 def test_loading_twice_gives_the_same_tables(engine: Engine, sample_register_xlsx: Path) -> None:

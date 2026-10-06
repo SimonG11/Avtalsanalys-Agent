@@ -117,6 +117,28 @@ def test_failed_document_is_not_linked(empty_catalog: Engine) -> None:
         assert session.scalars(select(models.AgreementPage.url)).all() == [PAGE]
 
 
+def test_failed_download_keeps_the_stored_document_and_its_link(empty_catalog: Engine) -> None:
+    factory = session_factory(empty_catalog)
+    first = result(link())
+    with factory.begin() as session:
+        save_fetch(session, [page(link())], [first])
+    document = select(models.SourceDocument.version, models.SourceDocument.downloaded_at)
+    with factory() as session:
+        before = tuple(session.execute(document).one())
+
+    # A later run cannot download the file; the result carries the one already stored.
+    failed = FetchResult(link(), FetchStatus.FAILED, first.stored, "download failed")
+    with factory.begin() as session:
+        save_fetch(session, [page(link())], [failed])
+
+    with factory() as session:
+        after = tuple(session.execute(document).one())
+        linked = session.scalars(select(models.AgreementPageDocument.document_url)).all()
+
+    assert after == before  # same version, and downloaded_at is not moved to this run
+    assert linked == [DOC]
+
+
 def test_areas_are_turned_into_procurement_numbers(
     engine: Engine, sample_register_xlsx: Path
 ) -> None:

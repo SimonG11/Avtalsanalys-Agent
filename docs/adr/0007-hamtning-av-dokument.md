@@ -1,6 +1,6 @@
 # ADR 0007: Hämtning av dokumenten från avropa.se
 
-**Status:** Förslag (M2), granskas av Simon i PR:en
+**Status:** Godkänt av Simon 2026-10-05 (PR #3)
 
 ## Kontext
 
