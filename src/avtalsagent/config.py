@@ -71,12 +71,22 @@ class Settings(BaseSettings):
     # Pause between requests, so the site is not loaded more than a person browsing.
     fetch_delay_seconds: float = 0.5
 
+    # Checking the documents against the register (M4, step 5). Deviations a person has
+    # looked at and accepted, each named by its key in the ingestion report; an accepted
+    # deviation no longer holds the document back. The file is in git and reviewed like code.
+    accepted_findings_file: Path = Path("accepted_findings.toml")
+
     log_level: str = "INFO"
 
     @property
     def parsed_dir(self) -> Path:
         """Where step 2 stores each parsed file as JSON (M3)."""
         return self.data_dir / "parsed"
+
+    @property
+    def reports_dir(self) -> Path:
+        """Where each run of steps 3-5 writes its ingestion report, markdown and JSON (M4)."""
+        return self.data_dir / "reports"
 
 
 @lru_cache(maxsize=1)

@@ -1,0 +1,30 @@
+# Godkända avvikelser (M4, inläsningens steg 5)
+#
+# Inläsningen jämför varje dokument med registret över giltiga ramavtal. Ett dokument
+# vars egna uppgifter avviker (diarienummer, avtalsnummer, organisationsnummer,
+# avtalsperiod) hålls i karantän och indexeras inte. Den här filen listar avvikelser som
+# en person har granskat och bedömt som riktiga, till exempel en leverantör som har bytt
+# namn. En godkänd avvikelse håller inte längre tillbaka dokumentet. Den står kvar i
+# inläsningsrapporten, under "Godkända avvikelser", med skälet.
+#
+# Varje godkännande är en [[accepted]]-tabell med fyra fält:
+#
+#   key      avvikelsens nyckel, exakt som den står efter "Nyckel:" i rapportens avsnitt
+#            Karantän: kontroll, filens hash (eller sidans adress) och det som avviker
+#   reason   varför avvikelsen är riktig, på svenska
+#   reviewer vem som har granskat och godkänt den
+#   date     när, som ÅÅÅÅ-MM-DD utan citattecken
+#
+# Till exempel (nyckeln och skälet är påhittade):
+#
+# [[accepted]]
+# key = "supplier_party:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:556677-8899"
+# reason = "Leverantören bytte namn och organisationsnummer efter fusionen; avtalet gäller."
+# reviewer = "Förnamn Efternamn"
+# date = 2026-10-07
+#
+# En nyckel får stå en gång. Ett godkännande som inte motsvarar någon avvikelse i en
+# körning listas i rapporten, så att inaktuella godkännanden märks och kan tas bort.
+#
+# Filen granskas som kod: varje ändring går genom en pull request, så att historiken
+# visar vem som godkände vad och varför.
