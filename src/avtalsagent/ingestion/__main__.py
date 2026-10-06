@@ -75,7 +75,8 @@ def fetch(areas: list[str]) -> None:
     results = fetch_documents(http, links, stored, settings.data_dir, settings.fetch_file_types)
 
     with factory.begin() as session:
-        save_fetch(session, selected, results)
+        listed = [page.url for page in pages] + [problem.url for problem in problems]
+        save_fetch(session, selected, results, listed)
 
     print(f"Read {len(pages)} agreement pages ({http.request_count} requests in total)")
     for problem in problems:

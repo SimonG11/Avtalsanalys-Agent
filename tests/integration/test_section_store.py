@@ -68,7 +68,7 @@ def catalog(engine: Engine, sample_register_xlsx: Path) -> Engine:
         for model in (models.AgreementPageDocument, models.SourceDocument, models.AgreementPage):
             session.execute(delete(model))
         load_register(session, raw.version, normalize_rows(raw.rows).rows)
-        save_fetch(session, [page], [FetchResult(link, FetchStatus.NEW, stored)])
+        save_fetch(session, [page], [FetchResult(link, FetchStatus.NEW, stored)], [PAGE])
     return engine
 
 
