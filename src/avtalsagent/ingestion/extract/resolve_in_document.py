@@ -11,13 +11,13 @@ What:
     resolver rules return.
 
 Why:
-    Most references point into the file they are in: in the M4 survey, 315 of the
-    338 section numbers that were not list items, and 2,867 of the 3,216 section
-    titles, resolved in the same file (references.md §3; measured here: R1 305 of
-    337, R4 3,219 of 3,788). A title reference names the heading and goes on with
-    the sentence ("enligt avsnitt Avtalsbrott och påföljder."), and
-    Kammarkollegiet's documents from 2023 on cite sections by title more often
-    than by number, so a title must be found by its start.
+    Most references point into the file they are in: in the pilot, 306 of the 339
+    section numbers outside the questions logs with no document named (R1), and
+    3,219 of the 3,788 section titles R4 looks up, resolve in the same file. A
+    title reference names the heading and goes on with the sentence ("enligt
+    avsnitt Avtalsbrott och påföljder."), and Kammarkollegiet's documents from
+    2023 on cite sections by title more often than by number, so a title must be
+    found by its start.
 
 How:
     Section numbers are compared as they are. Headings are compared in lower case

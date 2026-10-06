@@ -1,15 +1,17 @@
 """Tests for avtalsagent.ingestion.checks.missing_text.
 
-The files are real, from the pilot (M4 survey, doctypes.md §8), with their page
-counts, the pages step 2 found without a text layer, and their sections' pages and
-first lines: e04bad6a0ced "Allmänna villkor" (Systemutveckling, 31 pages, 22 without
-text; §7.16 p14-22 "7.16 Prismodeller Kund och Ramavtalsleverantör kan avtala om
-olika prismodeller", §7.24 p22-23 "7.24 Rättighetsintrång Ramavtalsleverantör
-ansvarar för att denne är innehavare av samtliga rättigheter"); 21dd4fde89d5 and
+The files are real, from the pilot, with their page counts, the pages step 2
+found without a text layer, and their sections' pages and first lines:
+e04bad6a0ced "Allmänna villkor" (Systemutveckling, 31 pages, 22 without text;
+§7.16 p14-22 "7.16 Prismodeller Kund och Ramavtalsleverantör kan avtala om olika
+prismodeller", §7.24 p22-23 "7.24 Rättighetsintrång Ramavtalsleverantör ansvarar
+för att denne är innehavare av samtliga rättigheter"); 21dd4fde89d5 and
 5c9b05f2cc79, IBM's "Tilläggsavtal nr 7" (10 pages) and "nr 5" (1 page), linked as
 "Volymavtal" and without text; 124261dc2ad4 "Kravkatalog" (11 pages, p1-3 and p11
-without text, sections on p4-10, two of them named "Tillgänglighet", on p4 and
-p10). The scanned p4 and p10 in the last test, and the Word file, are made up.
+without text, sections on p4-10, two each named "Tillgänglighet" and "Utbildning",
+on p4 and p10; the last, "Utbildning" on p10, stops mid-sentence and goes on on
+p11). Made up, and said so where used: the scanned p4 and p10 in the last test,
+the pages of the test of a section between two scanned pages, and the Word file.
 """
 
 from avtalsagent.domain.documents import CatalogLink
@@ -184,15 +186,70 @@ def test_a_file_with_pages_without_text_gets_a_note() -> None:
     )
 
 
-def test_scanned_pages_outside_every_section_only_give_a_note() -> None:
-    sections = tuple(
-        section(i, None, title, 4 + i, 4 + i, f"{title}\n\nVid Avrop kan krav komma att ställas")
-        for i, title in enumerate(("Test", "Tillgänglighet", "Utbildning", "8.7 Kravkatalog"))
+# 124261dc2ad4: its first section, and the two named "Utbildning".
+CATALOGUE_SECTIONS = (
+    section(0, None, "Test", 4, 4, "Test\n\nMed Test avses testledning samt planering för"),
+    section(2, None, "Utbildning", 4, 4, "Utbildning\n\nMed Utbildning avses planering och"),
+    section(
+        49,
+        None,
+        "Utbildning",
+        10,
+        10,
+        "Utbildning\n\nVid Avrop kan krav komma att ställas på vilken pedagogik, metodik eller "
+        "verktyg som används under",
+    ),
+)
+
+
+def test_a_section_followed_by_scanned_pages_is_held_back() -> None:
+    # Step 3 ends a section on its last page with text: "Utbildning" ends on p10 in the
+    # middle of a sentence, whose rest is on the scanned p11. The cover pages p1-3 come
+    # before the first section and lose no section's text: they are only in the note.
+    findings = check(checked(CATALOGUE, CATALOGUE_SECTIONS, 11, (1, 2, 3, 11), "Kravkatalog"))
+
+    assert findings == [
+        Finding(
+            check="missing_text",
+            severity=Severity.QUARANTINE,
+            subject="Utbildning (s. 10)",
+            message=(
+                'Avsnittet "Utbildning", s. 10, följs av sidan 11 som saknar textlager (ingen '
+                "OCR körs), så avsnittets text kan fortsätta där och är då ofullständig."
+            ),
+            sha256=CATALOGUE,
+            section=49,
+        ),
+        Finding(
+            check="missing_text",
+            severity=Severity.NOTE,
+            subject="s. 1-3, 11",
+            message=(
+                "4 av dokumentets 11 sidor saknar textlager (ingen OCR körs): s. 1-3, 11. Det "
+                "som står på dem finns inte i dokumentets avsnitt."
+            ),
+            sha256=CATALOGUE,
+        ),
+    ]
+
+
+def test_scanned_pages_before_the_next_section_go_with_the_one_before() -> None:
+    # Made up: the first section has a scanned page in it (p3) and one after it (p5);
+    # the next section starts on p6, which has text.
+    sections = (
+        section(0, "1", "Inledning", 3, 4, "1 Inledning\n\nRamavtalet omfattar"),
+        section(1, "2", "Omfattning", 6, 6, "2 Omfattning\n\nVid Avrop kan krav"),
     )
 
-    findings = check(checked(CATALOGUE, sections, 11, (1, 2, 3, 11), title="Kravkatalog"))
+    findings = check(checked(CATALOGUE, sections, 6, (3, 5), "Kravkatalog"))
 
-    assert [(f.severity, f.subject) for f in findings] == [(Severity.NOTE, "s. 1-3, 11")]
+    assert [(f.section, f.message) for f in findings if f.section is not None] == [
+        (
+            0,
+            "Avsnitt 1, s. 3-4, omfattar sidan 3 och följs av sidan 5 som saknar textlager "
+            "(ingen OCR körs), så avsnittets text är ofullständig.",
+        )
+    ]
 
 
 def test_a_scanned_file_without_sections_is_held_back_whole() -> None:

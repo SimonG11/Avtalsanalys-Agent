@@ -16,12 +16,12 @@ Why:
     read, and the terms are in the main document: the supplier's signed
     "Ramavtal" in its supplier card, or the "Ramavtalets huvuddokument" of the
     sub-area, which holds for every supplier there. An agreement without one
-    is a gap the report must show (M4 design §3): 6765/05, Volymavtal för IBM,
-    has its main document only as "ibm-volymavtal-2005-v-1.0-050413.doc", a
-    format step 1 does not fetch (M4 survey, doctypes.md §7). A main document
-    the index cannot use is a gap too (critique, data item 8): 171a3cacf5fd,
-    the Microsoft volume agreement's only main document, is in quarantine for
-    Microsoft Ireland's organisation number (`org_numbers`).
+    is a gap the report must show (ADR 0009 decision 6): 6765/05, Volymavtal
+    för IBM, has its main document only as
+    "ibm-volymavtal-2005-v-1.0-050413.doc", a format step 1 does not fetch. A
+    main document the index cannot use is a gap too (the same decision):
+    171a3cacf5fd, the Microsoft volume agreement's only main document, is in
+    quarantine for Microsoft Ireland's organisation number (`org_numbers`).
     Some main documents go into the index but are not the signed agreement:
     - the procurement's version printed from TendSign, which opens with the
       cover "Upphandlingsdokument" (`DocumentMetadata.tendsign_cover`):
@@ -54,7 +54,8 @@ How:
       "23.3-2940-20:018"); or
     - a MAIN_DOCUMENT linked from a page whose scope has the agreement
       (`CheckContext.page_scope`: the register entries of the page's
-      procurements in the sub-area the page is titled after). 23.3-1688-2024
+      procurements in the sub-area the page is titled after; none when the
+      title is no sub-area, which `agreement_period` reports). 23.3-1688-2024
       has two pages with different main documents, 0692da436391 for
       "IT-konsulttjänster 1. Verksamhetens IT-behov" and e31f81c753c7 for "5.
       IT-konsultlösningar", each for its own 9 agreements.
@@ -67,11 +68,16 @@ How:
 
     A group is the agreements of one status covered by the same files: the
     indexed ones for PROCUREMENT_VERSION, the quarantined ones for HELD_BACK.
-    An agreement NOT_COVERED is a group of its own. A finding's subject is
-    the agreement number for a group of one agreement, else the procurement
-    numbers of its agreements, so that `Finding.key` survives a run in which
-    an agreement joins or leaves the group. Two groups with the same subject
-    are told apart by the hashes of their files.
+    An agreement NOT_COVERED is a group of its own, and its finding's subject
+    is its agreement number. The subject of the other groups' findings is the
+    procurement numbers of their agreements, however many there are, and
+    `Finding.key` holds the severity (NOTE for PROCUREMENT_VERSION, REPORT for
+    HELD_BACK). So the key survives a run in which an agreement joins or
+    leaves the group, also when one agreement is left, and an acceptance of
+    the procurement's version does not carry over to the same procurement's
+    agreements held back. Two groups of one severity with the same subject
+    are told apart by the hashes of their files; the subjects of both then
+    change when the second group appears.
 """
 
 from collections import Counter
@@ -114,6 +120,13 @@ class NotCounted(StrEnum):
     TENDSIGN_PRINTOUT = "tendsign_printout"  # the procurement's version, printed from TendSign
     TEMPLATE = "template"  # a template or draft (`DocumentMetadata.is_template`)
 
+
+# The severity of a group's finding: the procurement's version is read and indexed.
+_SEVERITY: dict[CoverageStatus, Severity] = {
+    CoverageStatus.PROCUREMENT_VERSION: Severity.NOTE,
+    CoverageStatus.HELD_BACK: Severity.REPORT,
+    CoverageStatus.NOT_COVERED: Severity.REPORT,
+}
 
 # The reasons as the messages and the report write them.
 NOT_COUNTED_NAMES: dict[NotCounted, str] = {
@@ -245,16 +258,16 @@ def groups(coverages: Sequence[AgreementCoverage]) -> list[CoverageGroup]:
         grouped.setdefault((item.status, files, alone), []).append(item)
     order = list(CoverageStatus)
     keys = sorted(grouped, key=lambda key: order.index(key[0]))  # stable: register order
-    subjects = {key: _subject(grouped[key]) for key in keys}
-    repeated = Counter(subjects.values())
+    subjects = {key: _subject(key[0], grouped[key]) for key in keys}
+    repeated = Counter((_SEVERITY[key[0]], subject) for key, subject in subjects.items())
     result: list[CoverageGroup] = []
     for key in keys:
         status, files, _ = key
         subject = subjects[key]
-        # Two groups of the same procurement, such as the two sub-areas of 23.3-1688-2024 if
-        # both their main documents were printouts, are told apart by their files, so that
-        # an acceptance in accepted_findings.toml covers one group only.
-        if repeated[subject] > 1 and files:
+        # Two groups of the same procurement and severity, such as the two sub-areas of
+        # 23.3-1688-2024 if both their main documents were printouts, are told apart by
+        # their files, so that an acceptance in accepted_findings.toml covers one group only.
+        if repeated[_SEVERITY[status], subject] > 1 and files:
             subject += f" ({', '.join(sha[:12] for sha in files)})"
         result.append(CoverageGroup(status, files, tuple(grouped[key]), subject))
     return result
@@ -263,10 +276,9 @@ def groups(coverages: Sequence[AgreementCoverage]) -> list[CoverageGroup]:
 def finding(group: CoverageGroup) -> Finding:
     """The finding of one group: a NOTE for the procurement's version, else a REPORT."""
     one = group.agreements[0] if len(group.agreements) == 1 else None
-    note = group.status is CoverageStatus.PROCUREMENT_VERSION
     return Finding(
         check=CHECK,
-        severity=Severity.NOTE if note else Severity.REPORT,
+        severity=_SEVERITY[group.status],
         subject=group.subject,
         message=_message(group),
         agreement_number=one.agreement_number if one else None,
@@ -313,9 +325,9 @@ def _covering_files(
     return cards, main_documents
 
 
-def _subject(agreements: Sequence[AgreementCoverage]) -> str:
-    """The agreement number of a group of one, else its procurement numbers."""
-    if len(agreements) == 1:
+def _subject(status: CoverageStatus, agreements: Sequence[AgreementCoverage]) -> str:
+    """The agreement number of an agreement NOT_COVERED, else the procurement numbers."""
+    if status is CoverageStatus.NOT_COVERED:
         return agreements[0].agreement_number
     return ", ".join(sorted({item.procurement_number for item in agreements}))
 

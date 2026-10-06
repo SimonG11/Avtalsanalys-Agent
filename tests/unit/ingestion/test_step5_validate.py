@@ -8,7 +8,11 @@ the scanned section 7.16 of e04bad6a0ced (missing_text, QUARANTINE, section 1),
 (supplier_party, QUARANTINE), the supplier name written differently in
 b0f5951c99b2 (supplier_party, NOTE) and IBM's 6765/05, whose main document is
 not fetched (coverage, REPORT). The acceptances are made up: no deviation of
-the pilot has been accepted, and accepted_findings.toml is empty.
+the pilot has been accepted, and accepted_findings.toml is empty. So are the
+two register editions for the card 14aa1cc8ee3d (23.3-2940-20:026), which
+states 2022-12-01 - 2024-11-30 and an extension of at most 24 months: one that
+starts the agreement later (NOTE), one that ends it beyond the extension
+(QUARANTINE).
 """
 
 from collections.abc import Sequence
@@ -44,6 +48,7 @@ MICROSOFT_MAIN = "171a3cacf5fd42094d4d46bf49211224476200ca1dae00227d9c55e85df2b9
 SCANNED = "e04bad6a0ced579b2cfaf5953c6edd5547acc4e5657cb1097d0d8e189f0a498b"
 AFRY_CARD = "7a49e1a61b31d207f4193d1e3b2fcbc7277a7730d090095527c441967f57d1b8"
 KNOWIT_CARD = "b0f5951c99b27f31cb8100da2acc96a71137c484c0f760ddec9c3f2482bc859b"
+ITK_CARD = "14aa1cc8ee3d99206f9eb6731234934a52958729579bad511f2080f7b4f53611"
 
 MICROSOFT_IRELAND = Finding(
     check="org_numbers",
@@ -84,6 +89,24 @@ KNOWIT_NAME = Finding(
     "organisationsnummer (559309-6794).",
     sha256=KNOWIT_CARD,
     agreement_number="23.3-2940-20:012",
+)
+LATER_START = Finding(
+    check="agreement_period",
+    severity=Severity.NOTE,
+    subject="2022-12-01 - 2024-11-30",
+    message="Dokumentet anger avtalsperioden 2022-12-01 - 2024-11-30, och registret har "
+    "2022-12-15 - 2026-11-30 för avtal 23.3-2940-20:026: avtalet började senare än dokumentet "
+    "anger.",
+    sha256=ITK_CARD,
+    agreement_number="23.3-2940-20:026",
+)
+BEYOND_EXTENSION = LATER_START.model_copy(
+    update={
+        "severity": Severity.QUARANTINE,
+        "message": "Dokumentet anger avtalsperioden 2022-12-01 - 2024-11-30 med förlängning "
+        "högst 24 månader, men registret har 2022-12-15 - 2028-11-30 för avtal "
+        "23.3-2940-20:026.",
+    }
 )
 IBM_GAP = Finding(
     check="coverage",
@@ -159,6 +182,44 @@ date = 2026-10-07
         with pytest.raises(ValidationError, match="reason"):
             load_accepted(path)
 
+    @pytest.mark.parametrize(
+        ("field", "value"), [("reason", ""), ("reason", "  "), ("reviewer", ""), ("reviewer", " ")]
+    )
+    def test_a_blank_reason_or_reviewer_is_refused(
+        self, tmp_path: Path, field: str, value: str
+    ) -> None:
+        # Otherwise the file is released, and the report lists the finding nowhere.
+        entry = {"reason": "Påhittat skäl.", "reviewer": "Testare", field: value}
+        path = write(
+            tmp_path,
+            f'[[accepted]]\nkey = "{AF_DIGITAL.key}"\nreason = "{entry["reason"]}"\n'
+            f'reviewer = "{entry["reviewer"]}"\ndate = 2026-10-07\n',
+        )
+
+        with pytest.raises(ValidationError, match=field):
+            load_accepted(path)
+
+    def test_a_misspelt_table_is_refused(self, tmp_path: Path) -> None:
+        # Read as no acceptance at all, it would release nothing and say nothing.
+        path = write(
+            tmp_path,
+            f'[[acepted]]\nkey = "{AF_DIGITAL.key}"\nreason = "x"\nreviewer = "y"\n'
+            "date = 2026-10-07\n",
+        )
+
+        with pytest.raises(ValueError, match="unknown table or key 'acepted'"):
+            load_accepted(path)
+
+    def test_a_single_accepted_table_is_refused(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            f'[accepted]\nkey = "{AF_DIGITAL.key}"\nreason = "x"\nreviewer = "y"\n'
+            "date = 2026-10-07\n",
+        )
+
+        with pytest.raises(ValueError, match=r"'accepted' must be \[\[accepted\]\] tables"):
+            load_accepted(path)
+
 
 class TestRepositoryFile:
     def test_it_accepts_nothing_yet(self) -> None:
@@ -176,7 +237,7 @@ class TestRepositoryFile:
 
         [entry] = load_accepted(write(tmp_path, example)).values()
 
-        assert entry.key.startswith("supplier_party:")
+        assert entry.key.startswith("supplier_party:quarantine:")
         assert entry.accepted_on == date(2026, 10, 7)
 
 
@@ -195,6 +256,10 @@ class TestApplyAccepted:
         assert found[1].accepted_reason == reason
         assert not found[1].quarantines
         assert found[1].model_copy(update={"accepted_reason": None}) == AF_DIGITAL
+
+    def test_the_key_names_check_severity_file_and_subject(self) -> None:
+        assert AF_DIGITAL.key == f"supplier_party:quarantine:{AFRY_CARD}:556866-4444"
+        assert IBM_GAP.key == "coverage:report:-:6765/05"
 
     def test_an_acceptance_of_another_file_does_not_apply(self) -> None:
         # The key names the file: the same organisation number on another card
@@ -337,6 +402,24 @@ class TestValidate:
         validation = validate(CONTEXT, {IBM_GAP.key: accepted(IBM_GAP, reason)})
 
         assert validation.findings[-1].accepted_reason == reason
+
+    def test_an_accepted_note_does_not_release_the_file_once_it_quarantines(
+        self, fake_coverage: FakeCoverage, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Run 1: the register starts the agreement later (NOTE), and a person accepts it.
+        acceptance = accepted(LATER_START, "Påhittat skäl: avtalet undertecknades 2022-12-15.")
+        monkeypatch.setattr(step5_validate, "DOCUMENT_CHECKS", (check(LATER_START),))
+        first = validate(CONTEXT, {acceptance.key: acceptance})
+        assert first.findings[0].accepted_reason == acceptance.reason
+        # Run 2: the next register edition ends it beyond the extension, a QUARANTINE about
+        # the same stated period. The acceptance was not written for that.
+        monkeypatch.setattr(step5_validate, "DOCUMENT_CHECKS", (check(BEYOND_EXTENSION),))
+
+        second = validate(CONTEXT, {acceptance.key: acceptance})
+
+        assert second.findings[0] == BEYOND_EXTENSION
+        assert second.quarantine.files == {ITK_CARD}
+        assert second.unused_acceptances == [acceptance]
 
     def test_an_acceptance_that_matches_no_finding_is_reported(
         self, fake_coverage: FakeCoverage

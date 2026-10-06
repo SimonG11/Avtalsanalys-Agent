@@ -1,13 +1,13 @@
 """Tests for avtalsagent.ingestion.checks.org_numbers.
 
-The numbers, clauses and register rows are real, from the pilot (M4 survey,
-identifiers.md §4, suppliers.md §3-§5), cited as sha[:12] and PDF page:
-8d679cb2ebef p1, the supplier table of "Prisbilaga - sammanställning Delområde 1"
-(page 23.3-1688-2024) with "Castra Group AB" 556958-4401 and "ÅF Digital Solutions
-AB" 556866-4444; 171a3cacf5fd p1, the Microsoft party clause; 7a49e1a61b31 p7, the
-ÅF party clause of card 23.3-2940-20:033; Kammarkollegiet's 202100-0829 in every
-footer. A table with AFRY's number on the IT-säkerhet page, the mistyped number, the
-Tieto numbers in the ÅF card and "Exempelkommunen" with its number are made up.
+The numbers, clauses and register rows are real, from the pilot, cited as
+sha[:12] and PDF page: 8d679cb2ebef p1, the supplier table of "Prisbilaga -
+sammanställning Delområde 1" (page 23.3-1688-2024) with "Castra Group AB"
+556958-4401 and "ÅF Digital Solutions AB" 556866-4444; 171a3cacf5fd p1, the
+Microsoft party clause; 7a49e1a61b31 p7, the ÅF party clause of card
+23.3-2940-20:033; Kammarkollegiet's 202100-0829 in every footer. A table with
+AFRY's number on the IT-säkerhet page, the mistyped number, the Tieto numbers in
+the ÅF card and "Exempelkommunen" with its number are made up.
 """
 
 from datetime import date

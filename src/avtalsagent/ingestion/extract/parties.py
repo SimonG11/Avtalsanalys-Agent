@@ -10,26 +10,30 @@ Why:
     Step 5 checks that a supplier card is signed by the supplier the register
     has for its agreement, and a card can name another legal entity: 7a49e1a61b31
     §9.1.1: "och ÅF Digital Solutions AB, organisationsnummer 556866-4444 nedan
-    Ramavtalsleverantören" where the register has AFRY Sweden AB 556224-8012 (M4
-    survey suppliers.md §3). The clause is the one place where the text says
-    which organisation number is the supplier's. It has the same form in every
-    Kammarkollegiet agreement, filled in the 26 signed ones and unfilled in the
-    25 templates and generic main documents (suppliers.md §0). Supplier names
-    without an organisation number (price lists, guides) are not read: step 5
-    checks every organisation number instead (`identifiers.py`, ADR 0009).
+    Ramavtalsleverantören" where the register has AFRY Sweden AB 556224-8012.
+    The clause is the one place where the text says which organisation number
+    is the supplier's. It has the same form in every Kammarkollegiet agreement,
+    filled in the 26 signed ones and unfilled in the 25 templates and generic
+    main documents of the pilot. Supplier names without an organisation number
+    (price lists, guides) are not read: step 5 checks every organisation number
+    instead (`identifiers.py`, ADR 0009).
 
 How:
     Rule E1, `_PARTY_CLAUSE`: "mellan <customer>, organisationsnummer <org>,
     nedan <term>, och <supplier>, organisationsnummer <org>, nedan <term>".
     The commas before "nedan" are optional (the 2940 cards have none), "nedan"
-    may stand in parentheses ("(nedan Microsoft)") and "Org nr:" may stand for
-    "organisationsnummer". The clause is looked for in each block joined with
+    may stand in parentheses ("(nedan Microsoft)"), "Org nr:" may stand for
+    "organisationsnummer", and case does not matter ("Mellan",
+    "Organisationsnummer"). The clause is looked for in each block joined with
     the next one, since a block can end inside it (e3a24695fe04: "...
     organisationsnummer [xxxxxx-yyyy] nedan ⏎ Ramavtalsleverantören."); page
     headers and footers are skipped, as they can fall between the two. A slot
-    is filled when `normalize_org_number` reads its organisation number (a
-    Swedish or a foreign one, without the check-digit test, so that a mistyped
-    number reaches step 5 instead of vanishing); otherwise it is a placeholder.
+    is filled when it holds a number (`_SLOT_NUMBER`), and words after the
+    number do not count ("556599-4307, med säte i Göteborg"). The number is
+    read by `normalize_org_number`, a Swedish or a foreign one, without the
+    check-digit test, and one it cannot read is kept as written: a mistyped
+    number reaches step 5 instead of vanishing. A slot without a number
+    ("Leverantörens organisationsnummer", "XXXXXX-XXXX") is a placeholder.
     The customer slot holds Kammarkollegiet's 202100-0829 in all 51 clauses of
     the pilot; a customer that is not gets a PARTY fact with rule "E1-customer".
     A fact's block is the block where the slot's organisation number starts, and
@@ -43,7 +47,7 @@ from avtalsagent.domain.extracted import CONTRACTING_AUTHORITY_ORG_NUMBER, Fact,
 from avtalsagent.domain.identifiers import IdentifierError, normalize_org_number
 from avtalsagent.domain.parsed import Block, BlockKind
 
-# "organisationsnummer", "org.nr", "Org nr:".
+# "organisationsnummer", "org.nr", "Org nr:" (the clause is read without regard to case).
 _ORG_LABEL = r"org(?:anisations)?\.?\s*(?:nummer|nr)\.?:?"
 # "nedan Kammarkollegiet", "(nedan Microsoft)", 'nedan kallad "Leverantören"'.
 _HEREAFTER = r"\(?nedan\s+(?:kallad\s+)?[\"”]?(?P<{term}>\w+)"
@@ -56,8 +60,11 @@ _PARTY_CLAUSE = re.compile(
     rf"{_HEREAFTER.format(term='customer_term')}[\"”]?\)?,?\s+"
     rf"och\s+(?P<supplier>.+?),?\s+{_ORG_LABEL}\s*(?P<supplier_org>.+?),?\s+"
     rf"{_HEREAFTER.format(term='supplier_term')}",
-    re.DOTALL,
+    re.DOTALL | re.IGNORECASE,
 )
+# The number in a slot: Swedish ("556866-4444") or foreign ("FI01148912", "CVR:37120928"),
+# at least five digits and separators. Searched for, since words can follow it.
+_SLOT_NUMBER = re.compile(r"(?:[A-Z]{2,3}:?)?\d[\d\s–-]{3,}\d")
 # A clause may run over into the next block, not further.
 _WINDOW_BLOCKS = 2
 _BLOCK_SEPARATOR = "\n\n"
@@ -86,10 +93,7 @@ def find_parties(blocks: Sequence[Block]) -> list[Fact]:
 
 
 def _slot_fact(match: re.Match[str], window: Sequence[tuple[int, Block]], slot: str) -> Fact | None:
-    try:
-        org_number: str | None = normalize_org_number(match[f"{slot}_org"])
-    except IdentifierError:
-        org_number = None
+    org_number = _slot_number(match[f"{slot}_org"])
     if slot == "customer":
         # Kammarkollegiet is a party to every agreement, and its slot is filled in all
         # 51 clauses of the pilot; only another customer is worth a fact.
@@ -111,6 +115,17 @@ def _slot_fact(match: re.Match[str], window: Sequence[tuple[int, Block]], slot: 
         page=block.page,
         name=" ".join(match[slot].split()),
     )
+
+
+def _slot_number(slot: str) -> str | None:
+    """The organisation number a slot is filled with, or None when it holds no number."""
+    number = _SLOT_NUMBER.search(slot)
+    if number is None:
+        return None
+    try:
+        return normalize_org_number(number.group().replace("–", "-"))
+    except IdentifierError:
+        return " ".join(number.group().split())  # mistyped: kept as written
 
 
 def _block_at(window: Sequence[tuple[int, Block]], offset: int) -> tuple[int, Block]:

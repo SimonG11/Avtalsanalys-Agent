@@ -15,9 +15,10 @@ Why:
     ("Fråga kring p. 6.20.11 i Upphandlingsdokument") point into the
     Ansökningsinbjudan or the Anbudsinbjudan, not into the log, which numbers its
     questions. A page often has both documents (the two phases of a procurement),
-    numbered alike. In the M4 survey these rules resolved 1,452 of the 1,500 number
-    references in logs (references.md §3, R1q); measured here R1q 1,234 of 1,499,
-    R4q 64 of 82, RQ 298 of 303.
+    numbered alike. In the pilot R1q resolves 1,120 of the 1,325 section numbers
+    in logs with no document named, R4q 64 of 82 titles and RQ 298 of 303
+    questions. A whole number after "punkt" in a log is an item of a list
+    (LIST_ITEM, set by `reference_patterns`), so it is not looked up.
 
 How:
     R1q and R4q look on each page that links the log, in order:
@@ -29,17 +30,18 @@ How:
     candidates are all procurement documents to `settle_by_date` (d): a question
     cannot be about a document published after it was asked, so the candidates
     published on or before the question date stay and the latest of them wins
-    (569 references, from R1q, R1x, R2 and R4q). The question date is the earliest
-    TendSign time stamp ("2024-05-30 16:14") in the question's section: the
-    reading order mixes the question's and the answer's (bdf58b81d100 §122 shows
-    the answer 2024-06-04 10:08 before the question 2024-05-30 16:14). A document
-    whose `published_on` is None (it says it is a later version: b2bf8baefe48
-    "Version 3: publicerad 2024-11-19") is never left out by date, and then
-    nothing is chosen, since its first version may be older than the question.
-    This leaves 220 number references of its log 3a316e27aadf AMBIGUOUS between it
-    and the Ansökningsinbjudan f1bebd6b7ddb.
+    (521 references, from R1q, R1x, R2 and R4q; the tender package
+    "upphandlingsdokumenten" only when one document was out). The question date
+    is the earliest TendSign time stamp ("2024-05-30 16:14") in the question's
+    section: the reading order mixes the question's and the answer's
+    (bdf58b81d100 §122 shows the answer 2024-06-04 10:08 before the question
+    2024-05-30 16:14). A document whose `published_on` is None (it says it is a
+    later version: b2bf8baefe48 "Version 3: publicerad 2024-11-19") is never left
+    out by date, and then nothing is chosen, since its first version may be older
+    than the question. This leaves 169 number references of its log 3a316e27aadf
+    AMBIGUOUS between it and the Ansökningsinbjudan f1bebd6b7ddb.
     Not built: (c) a number whose heading in the document matches the words after
-    it in the question (46 references in the survey; the date rule agrees with it
+    it in the question (46 references in the pilot; the date rule agrees with it
     in 48 of 51 cases where both apply).
 """
 
@@ -64,6 +66,7 @@ from avtalsagent.ingestion.extract.resolve_on_page import (
     Candidate,
     Corpus,
     by_page,
+    names_tender_package,
     page_outcome,
     procurement_files,
     targets_by_page,
@@ -204,7 +207,11 @@ def settle_by_date(corpus: Corpus, index: DocumentIndex, reference: Reference) -
     are chosen among: with a log or a template among the candidates, the date says
     nothing (20ddb9ebf9cc §18: "Frågor och svar om upphandlingsdokumenten" names
     every tender file of the page; 2 references). Only in a log: the date is that
-    of the question.
+    of the question. "Upphandlingsdokumenten", the whole tender package, is every
+    document published by then, so it is settled only when one was: 50edddbad6c7
+    §436 "Det är den svenska versionen enligt upphandlingsdokumenten som ska vara
+    signerad" was asked when the Ansökningsinbjudan and the Anbudsinbjudan were
+    both out, and stays AMBIGUOUS.
     """
     if reference.status is not ReferenceStatus.AMBIGUOUS or not is_questions_log(index):
         return reference
@@ -219,7 +226,11 @@ def settle_by_date(corpus: Corpus, index: DocumentIndex, reference: Reference) -
     pages: dict[str, list[ReferenceTarget]] = {}
     for target in reference.targets:  # all with page_url None when the pages agree
         pages.setdefault(target.page_url or "", []).append(target)
-    chosen = {page: _latest_before(corpus, targets, day) for page, targets in pages.items()}
+    package = names_tender_package(reference.mention)
+    chosen = {
+        page: _latest_before(corpus, targets, day, only_one=package)
+        for page, targets in pages.items()
+    }
     found = {page: [(t.sha256, t.section)] for page, t in chosen.items() if t is not None}
     if len(found) < len(chosen):
         return reference
@@ -229,9 +240,12 @@ def settle_by_date(corpus: Corpus, index: DocumentIndex, reference: Reference) -
 
 
 def _latest_before(
-    corpus: Corpus, targets: Sequence[ReferenceTarget], day: date
+    corpus: Corpus, targets: Sequence[ReferenceTarget], day: date, *, only_one: bool = False
 ) -> ReferenceTarget | None:
-    """The one candidate published on or before `day` and latest; None if not one."""
+    """The one candidate published on or before `day` and latest; None if not one.
+
+    With `only_one`, the candidate only if no other was published by then.
+    """
     kept = []
     for target in targets:
         published = corpus.files[target.sha256].document.metadata.published_on
@@ -239,6 +253,8 @@ def _latest_before(
             kept.append((published, target))
     if len(kept) == 1:
         return kept[0][1]
+    if only_one:
+        return None
     dated = [(published, target) for published, target in kept if published is not None]
     if not dated or len(dated) < len(kept):
         return None  # nothing published in time, or one whose first version is unknown

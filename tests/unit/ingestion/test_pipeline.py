@@ -35,6 +35,7 @@ from reportlab.platypus import Flowable, PageBreak, Paragraph, SimpleDocTemplate
 from avtalsagent.domain.documents import CatalogLink
 from avtalsagent.domain.extracted import (
     FactKind,
+    Finding,
     ReferenceKind,
     ReferenceStatus,
     Severity,
@@ -46,7 +47,13 @@ from avtalsagent.ingestion.checks.coverage import CoverageStatus
 from avtalsagent.ingestion.extract.title_matcher import TITLE_RULE, MatchStats
 from avtalsagent.ingestion.parsers.docling_parser import DoclingParser
 from avtalsagent.ingestion.pipeline import IngestionResult, link_infos, process
-from avtalsagent.ingestion.report import RunInfo, build_report, render_markdown, write_report
+from avtalsagent.ingestion.report import (
+    RunInfo,
+    build_report,
+    render_markdown,
+    render_report,
+    write_report,
+)
 from avtalsagent.ingestion.step2_parse import ParseStatus, SourceFile, parse_files
 from avtalsagent.ingestion.step5_validate import AcceptedFinding
 from avtalsagent.register.normalize import normalize_rows
@@ -144,8 +151,12 @@ def part(markdown: str, heading: str) -> str:
     return markdown[start : end if end != -1 else len(markdown)]
 
 
-def org_key(sha256: str) -> str:
-    return f"{org_numbers.CHECK}:{sha256}:{WRONG_ORG}"
+def org_finding(result: IngestionResult, sha256: str = MAIN) -> Finding:
+    """The finding for the made-up organisation number in the file."""
+    [finding] = [
+        f for f in result.validation.findings if f.check == org_numbers.CHECK and f.sha256 == sha256
+    ]
+    return finding
 
 
 # --- steps 3-5 on a hand-made parse ------------------------------------------------------
@@ -157,9 +168,9 @@ def test_a_file_with_an_org_number_of_no_supplier_is_held_back(
     result = process([parsed_document()], [main_link()], register, [AREA], {})
 
     validation = result.validation
-    assert [(f.key, f.severity) for f in validation.findings] == [
-        (org_key(MAIN), Severity.QUARANTINE),
-        (f"{coverage.CHECK}:-:{AGREEMENT}", Severity.REPORT),
+    assert [(f.check, f.sha256, f.subject, f.severity) for f in validation.findings] == [
+        (org_numbers.CHECK, MAIN, WRONG_ORG, Severity.QUARANTINE),
+        (coverage.CHECK, None, PROCUREMENT, Severity.REPORT),
     ]
     assert validation.quarantine.files == {MAIN}
     assert not validation.quarantine.sections
@@ -192,9 +203,11 @@ def test_the_reference_is_resolved_to_a_section_of_the_same_file(
 def test_an_accepted_finding_releases_the_file_which_then_covers_the_agreement(
     register: list[RegisterEntry],
 ) -> None:
+    # The key as a person copies it from the report of a run without the acceptance.
+    key = org_finding(process([parsed_document()], [main_link()], register, [AREA], {})).key
     acceptance = AcceptedFinding.model_validate(
         {
-            "key": org_key(MAIN),
+            "key": key,
             "reason": "Påhittat skäl för testet.",
             "reviewer": "Testa Testsson",
             "date": date(2026, 10, 7),
@@ -205,7 +218,7 @@ def test_an_accepted_finding_releases_the_file_which_then_covers_the_agreement(
     validation = process([parsed_document()], [main_link()], register, [AREA], accepted).validation
 
     [finding] = validation.findings  # the coverage finding is gone
-    assert (finding.key, finding.accepted_reason) == (org_key(MAIN), "Påhittat skäl för testet.")
+    assert (finding.key, finding.accepted_reason) == (key, "Påhittat skäl för testet.")
     assert not validation.quarantine.files
     [agreement] = validation.coverage
     assert agreement.status is CoverageStatus.COVERED
@@ -284,7 +297,7 @@ def test_numbers_are_kept_in_the_register_spelling(register: list[RegisterEntry]
     ]
 
 
-# A section title no heading has, as in the M4 design's "avsnitt Försäljningsredovisning och
+# A section title no heading has, as ADR 0009 quotes "Försäljningsredovisning och
 # administrativ avgift" for "9.15 Försäljningsredovisning och administrationsavgift".
 TITLE_REFERENCE = "Kraven framgår av avsnitt Miljökrav och hållbarhet."
 
@@ -316,14 +329,18 @@ def test_a_title_the_rules_do_not_find_goes_to_the_matcher(register: list[Regist
 
 
 def assert_report_shows_quarantine_coverage_and_rate(result: IngestionResult, sha256: str) -> str:
-    """The three things the M4 design asks the report to show; returns the markdown."""
+    """M4's three done-when criteria (ADR 0009, Kontext) in the report; returns the markdown.
+
+    The file held back with its finding's key, the agreement it leaves without a
+    main document, and the share of resolved references.
+    """
     report = build_report(result, run_info())
     markdown = render_markdown(report)
 
     assert [held.file.sha256 for held in report.quarantine.files] == [sha256]
     held = part(markdown, "Karantän")
     assert f"Ramavtalets huvuddokument (`{sha256[:12]}`)" in held
-    assert f"Nyckel: `{org_key(sha256)}`" in held
+    assert f"Nyckel: `{org_finding(result, sha256).key}`" in held
 
     [group] = report.coverage.groups
     assert [gap.agreement_number for gap in group.agreements] == [AGREEMENT]
@@ -347,10 +364,11 @@ def test_the_report_shows_the_file_in_quarantine_the_coverage_gap_and_the_rate(
     result = process([parsed_document()], [main_link()], register, [AREA], {})
     markdown = assert_report_shows_quarantine_coverage_and_rate(result, MAIN)
 
-    written, json = write_report(build_report(result, run_info()), tmp_path / "reports")
+    files = render_report(build_report(result, run_info()))
+    written, json = write_report(files, tmp_path / "reports")
     assert written.name == "2026-10-06T140312-inlasning.md"
     assert written.read_text(encoding="utf-8") == markdown
-    assert f'"{org_key(MAIN)}"' in json.read_text(encoding="utf-8")
+    assert f'"{org_finding(result).key}"' in json.read_text(encoding="utf-8")
 
 
 def test_the_report_gives_the_rate_with_and_without_the_language_model(

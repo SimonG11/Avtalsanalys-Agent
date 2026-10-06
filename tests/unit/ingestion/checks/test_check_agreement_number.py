@@ -1,7 +1,7 @@
 """Tests for avtalsagent.ingestion.checks.agreement_number.
 
-The lines and register rows are real, from the pilot (M4 survey, identifiers.md
-§2), cited as sha[:12] and PDF page: 7a49e1a61b31 p1 "IT-konsulttjänster 2020 Dnr
+The lines and register rows are real, from the pilot, cited as sha[:12] and PDF
+page: 7a49e1a61b31 p1 "IT-konsulttjänster 2020 Dnr
 23.3-2940-20 Ramavtal 23.3.2940-20:033 ÅF Digital Solutions AB" (the card of
 23.3-2940-20:033); 65d611d12eab p2 [page_header] "23.3-8321-2024-001
 IT-konsulttjänster - IT-säkerhet" and p3 "Ramavtal med avtalsnummer

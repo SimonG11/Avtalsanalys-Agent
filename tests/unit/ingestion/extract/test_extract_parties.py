@@ -1,9 +1,11 @@
 """Tests for avtalsagent.ingestion.extract.parties.
 
-The clauses are real, from the pilot files of the M4 survey (suppliers.md §2),
-cited as sha[:12] §section. "Exempelkommunen" and its number, the mistyped
-number and the page footer are made up.
+The clauses are real, from the pilot files, cited as sha[:12] §section.
+"Exempelkommunen" and its number, the mistyped numbers, the page footer and the
+changed wordings (each says so) are made up.
 """
+
+import pytest
 
 from avtalsagent.domain.extracted import Fact, FactKind
 from avtalsagent.domain.parsed import Block, BlockKind
@@ -122,6 +124,51 @@ def test_mistyped_supplier_number_is_kept_for_step_5() -> None:
     clause = AF.replace("556866-4444", "556866-4445")  # the check digit is wrong
 
     assert parties(block(clause)) == [("party", "556866-4445", "ÅF Digital Solutions AB", "E1", 0)]
+
+
+def test_supplier_number_with_an_en_dash() -> None:
+    clause = AF.replace("556866-4444", "556866–4444")
+
+    assert parties(block(clause)) == [("party", "556866-4444", "ÅF Digital Solutions AB", "E1", 0)]
+
+
+def test_supplier_number_that_cannot_be_read_is_kept_as_written() -> None:
+    clause = AF.replace("556866-4444", "556866-444")  # a digit is missing
+
+    assert parties(block(clause)) == [("party", "556866-444", "ÅF Digital Solutions AB", "E1", 0)]
+
+
+@pytest.mark.parametrize(
+    "after",
+    [", med säte i Stockholm,", " (publ)"],  # CRAYON with words after the number (changed)
+)
+def test_words_after_the_supplier_number_leave_the_slot_filled(after: str) -> None:
+    clause = CRAYON.replace("556635-9799,", f"556635-9799{after}")
+
+    assert parties(block(clause)) == [("party", "556635-9799", "Crayon AB", "E1", 0)]
+
+
+@pytest.mark.parametrize(
+    ("label", "wording"),
+    [
+        ("Org nr:", "mellan"),  # the form of fb9447f0b8bf §3, in a clause (changed)
+        ("org.nr", "mellan"),
+        ("Organisationsnummer", "Mellan"),  # case does not matter
+    ],
+)
+def test_other_spellings_of_the_clause(label: str, wording: str) -> None:
+    clause = CRAYON.replace("organisationsnummer", label).replace("mellan", wording)
+
+    assert parties(block(clause)) == [("party", "556635-9799", "Crayon AB", "E1", 0)]
+
+
+def test_terms_after_nedan_kallad() -> None:
+    # CRAYON with the wording of 49f36699a469 b15 "(nedan kallad SIC)" (changed).
+    clause = CRAYON.replace("nedan Kammarkollegiet", 'nedan kallad "Kammarkollegiet"').replace(
+        "nedan Ramavtalsleverantören", 'nedan kallad "Ramavtalsleverantören"'
+    )
+
+    assert parties(block(clause)) == [("party", "556635-9799", "Crayon AB", "E1", 0)]
 
 
 def test_customer_other_than_kammarkollegiet_is_a_party() -> None:

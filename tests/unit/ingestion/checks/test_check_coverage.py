@@ -1,7 +1,7 @@
 """Tests for avtalsagent.ingestion.checks.coverage.
 
-The files, links, pages and register rows are real, from the pilot (M4 survey,
-doctypes.md §7): the supplier cards ee6107229c37 ("Ramavtal" of 23.3-2940-20:018,
+The files, links, pages and register rows are real, from the pilot: the supplier
+cards ee6107229c37 ("Ramavtal" of 23.3-2940-20:018,
 ÅF/AFRY) and 264aff0ce61a (23.3-2940-20:010, Chas) on the page
 "IT-konsulttjänster 2. Ledning av IT-projekt", whose area main document
 cbe12fd30683 is a TendSign printout: p1 "Upphandlingsdokument" "2021-02-02"; the
@@ -12,7 +12,8 @@ both with the cover "Ramavtal"; 65d611d12eab, the IT-säkerhet main document wit
 Användningsvillkor-Allmänna villkor" (255e496fa266) on the page "Volymavtal för
 IBM", whose main document is a .doc file step 1 does not fetch. The hashes are
 the files' real ones. Made up, and said so where used: the printouts of the
-23.3-1688-2024 pages, and a printout linked from pages of two procurements.
+23.3-1688-2024 pages, a printout linked from pages of two procurements, and a
+renamed page.
 """
 
 from datetime import date
@@ -243,6 +244,15 @@ def test_a_main_document_on_another_sub_areas_page_does_not_cover() -> None:
     assert of(coverages, "23.3-1688-2024-001").status is CoverageStatus.NOT_COVERED
 
 
+def test_a_main_document_on_a_page_that_is_no_sub_area_covers_nothing() -> None:
+    # Made up: the page of sub-area 5 renamed "5. IT-konsultlösningar". Taken as the whole
+    # procurement, its main document would cover sub-area 1's agreements too.
+    coverages = run(main(MAIN_ITK5, "5. IT-konsultlösningar", "23.3-1688-2024"))
+
+    assert of(coverages, "23.3-1688-2024-001").status is CoverageStatus.NOT_COVERED
+    assert of(coverages, "23.3-1688-2024-010").status is CoverageStatus.NOT_COVERED
+
+
 def test_other_document_types_on_the_page_do_not_cover() -> None:
     terms = checked(IBM_TERMS, DocumentType.LICENCE_TERMS, "Volymavtal för IBM", "6765/05")
 
@@ -441,10 +451,10 @@ def test_one_finding_per_group_a_note_for_the_procurements_version() -> None:
         ),
     ]
     assert [finding.key for finding in found] == [
-        "coverage:-:23.3-2940-20",
-        "coverage:-:23.5-3718-2024",
-        "coverage:-:23.3-8321-2024",
-        "coverage:-:6765/05",
+        "coverage:note:-:23.3-2940-20",
+        "coverage:report:-:23.5-3718-2024",
+        "coverage:report:-:23.3-8321-2024",
+        "coverage:report:-:6765/05",
     ]
 
 
@@ -459,10 +469,40 @@ def test_a_single_agreements_own_card_in_quarantine_is_named_in_the_singular() -
 
     [finding] = findings(coverages)
 
-    assert finding.subject == "23.3-2940-20:018"
+    # The subject is the procurement's, also for a group of one (see the next test).
+    assert finding.subject == "23.3-2940-20"
     assert finding.message.endswith(
         "Den undertecknade versionen publiceras inte på avropa.se. Avtalets eget "
         "leverantörsavtal ligger i karantän: ee6107229c37."
+    )
+
+
+def test_a_group_keeps_its_key_when_one_agreement_is_left() -> None:
+    # Both cards in quarantine, then one accepted: the acceptance of the group's note
+    # must still match.
+    files = (card(CARD_018, "23.3-2940-20:018"), card(CARD_010, "23.3-2940-20:010"))
+    register = (AFRY_018, CHAS_010)
+    both = run(*files, PRINTOUT_ITK2020, quarantine=held(CARD_018, CARD_010), register=register)
+    one = run(*files, PRINTOUT_ITK2020, quarantine=held(CARD_018), register=register)
+
+    [group_of_two], [group_of_one] = findings(both), findings(one)
+
+    assert group_of_two.key == group_of_one.key == "coverage:note:-:23.3-2940-20"
+
+
+def test_the_procurements_version_and_quarantine_have_different_keys() -> None:
+    # 65d611d12eab, the IT-säkerhet template: indexed, it is the procurement's version
+    # (NOTE); in quarantine, as in the pilot, its agreements are held back (REPORT). An
+    # acceptance of the one must not apply to the other.
+    register = (CASTRA_ITK3, CHAS_ITK3)
+
+    [indexed] = findings(run(TEMPLATE_ITK3, register=register))
+    [held_back] = findings(run(TEMPLATE_ITK3, quarantine=held(MAIN_ITK3), register=register))
+
+    assert (indexed.subject, held_back.subject) == ("23.3-8321-2024", "23.3-8321-2024")
+    assert (indexed.key, held_back.key) == (
+        "coverage:note:-:23.3-8321-2024",
+        "coverage:report:-:23.3-8321-2024",
     )
 
 

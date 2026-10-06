@@ -23,15 +23,18 @@ Why:
     ("23.3-8027-21" for 23.3-8027-2021) and the reverse, and the agreement
     sequence after a hyphen where the list has a colon ("23.3.2940-20:026",
     "23.3.2649-22-003"). Comparing strings would call these deviations, so
-    the ingestion compares keys (M4 survey, identifiers.md §1-§2).
+    the ingestion compares keys (ADR 0009 decision 3).
 
 How:
     Each function takes a raw string and returns a normalised value, or raises
     `IdentifierError` with a message that says what was wrong. No database,
     network or LLM is involved, so every rule has its own unit test. A key is
     the series, the serial without leading zeros and the four-digit year
-    ("23.3-2940-2020"), plus the agreement sequence when there is one
-    ("23.3-2940-2020-018"). The key of a key is the key itself.
+    ("23.3-2940-2020"), plus the agreement sequence when there is one, with
+    three digits ("23.3-2940-2020-018" for "-18", "-018" and ":018"). The key
+    of a key is the key itself. The register writes one agreement two ways,
+    23.3-12000-2020-001 and 23.3-12000-2020-01 (Digital Interpretations
+    Scandinavia AB, both rows): the two share a key.
 """
 
 import re
@@ -46,8 +49,8 @@ class IdentifierError(ValueError):
 _ORG_NUMBER_DIGITS = 10
 _SWEDISH_ORG_NUMBER = re.compile(r"^\d{6}-\d{4}$")
 # A Swedish VAT number is "SE", the organisation number and "01": SE556677889901.
-# None occurs in the list or in the pilot documents (M4 survey, identifiers.md §0),
-# but one must give the organisation number, not a foreign registration number.
+# None occurs in the list or in the pilot documents, but one must give the
+# organisation number, not a foreign registration number.
 _VAT_NUMBER = re.compile(r"^SE(?P<digits>\d{10})01$")
 
 # A foreign registration number, as written in the list: optional country or
@@ -76,35 +79,42 @@ _SUB_AREA_SEPARATOR = " / "
 
 # Kammarkollegiet's case number: series, serial and year, "23.3-5890-2023". The series
 # is a code of its filing plan: 23.3 for a procurement, 23.5 for agreement management
-# (the only two in the pilot, 3,092 and 165 hits). The documents also separate the
-# parts with dots or en dashes ("23.3.2940-20", "23.3-8027.21"), write the serial with
-# a leading zero ("23.5-03893-2021") and the year with two digits. Both separators
-# being dots is refused: that is a section number ("21.3.12.20"), not a case number. A
-# year must be there and have two or four digits, so "23.3.10150" (20c753d88340 §94)
-# and the typo "23.3-5890-20263-XXX" (5d6e948959cc §5.2.1) are refused, not guessed.
+# (the only two in the register and in the pilot, 3,092 and 165 hits). Only a series
+# 23.x is read: "22.1-22.15" has the same shape and is a range of section numbers. The
+# documents also separate the parts with dots or en dashes ("23.3.2940-20",
+# "23.3-8027.21"), write the serial with a leading zero ("23.5-03893-2021") and the year
+# with two digits. Two shapes of section numbers are refused (`_procurement_number`):
+# both separators dots ("23.3.12.20"), and a dot before the year after a serial of at
+# most two digits, the end of a range ("23.1-23.12"; the one case number in the pilot
+# with a dot there, "23.3-8027.21", has four). A year must be there and have two or
+# four digits, so "23.3.10150" (20c753d88340 §94) and the typo "23.3-5890-20263-XXX"
+# (5d6e948959cc §5.2.1) are refused, not guessed.
 CASE_NUMBER_PATTERN = (
-    r"(?P<series>2\d\.\d)(?P<sep1>[-–.])(?P<serial>\d{2,7})(?P<sep2>[-–.])"
+    r"(?P<series>23\.\d)(?P<sep1>[-–.])(?P<serial>\d{2,7})(?P<sep2>[-–.])"
     r"(?P<year>(?:19|20)\d{2}|\d{2})(?!\d)"
 )
+_RANGE_END_DIGITS = 2  # "23.1-23.12": the serial of a range's end has at most two digits
 # An agreement before the 23.x series, as the list writes it: "6765/05" (IBM).
 OLD_NUMBER_PATTERN = r"(?P<old_serial>\d{3,5})/(?P<old_year>\d{2})"
 # Kammarkollegiet's older letterhead form, "DIARIENR ... 96-15-2015" (fb9447f0b8bf).
 LETTERHEAD_NUMBER_PATTERN = r"(?P<lh_series>9\d)-(?P<lh_serial>\d{1,6})-(?P<lh_year>(?:19|20)\d{2})"
 # The supplier's sequence after the case number: "-001", ":018", "-003-A"; the list
-# also has the two-digit "-01" (23.3-12000-2020-01).
+# also has the two-digit "-01" (23.3-12000-2020-01). It follows a hyphen, a colon or,
+# as the parts of the case number can, an en dash (SEQUENCE_SEPARATOR).
 SEQUENCE_PATTERN = r"(?P<sequence>\d{2,3}(?:-[A-Z])?)"
+SEQUENCE_SEPARATOR = r"[-–:]"
 
 _PROCUREMENT_NUMBER = re.compile(
     rf"{CASE_NUMBER_PATTERN}|{OLD_NUMBER_PATTERN}|{LETTERHEAD_NUMBER_PATTERN}"
 )
 _AGREEMENT_REFERENCE = re.compile(
     rf"(?P<procurement>{CASE_NUMBER_PATTERN}|{OLD_NUMBER_PATTERN}|{LETTERHEAD_NUMBER_PATTERN})"
-    rf"(?:[-:]{SEQUENCE_PATTERN})?"
+    rf"(?:{SEQUENCE_SEPARATOR}{SEQUENCE_PATTERN})?"
 )
 
 # Agreement management ("Enheten för Ramavtalsförvaltning"): guides, tips and follow-up
 # documents carry it in their headers. Only 23.5-3718-2024 (the Microsoft volume
-# agreement) is in the list (identifiers.md §1).
+# agreement) is in the list.
 CASE_MANAGEMENT_SERIES = "23.5"
 OLD_SERIES = "old"  # the series of "6765/05", which has none of its own
 
@@ -118,6 +128,14 @@ _ORG_NUMBER_IN_TEXT = re.compile(
 # A Swedish VAT number in free text: "SE556677889901", "SE 556677-8899 01". Strict on
 # purpose: "SE" with any digits gives 105 NUTS codes in the pilot ("SE121 Uppsala").
 _VAT_NUMBER_IN_TEXT = re.compile(r"\bSE\s?(?P<a>\d{6})-?(?P<b>\d{4})\s?01\b")
+# A legal entity's organisation number has a third digit of 2 or more (its "month" is
+# 20-99) and does not start with 0 (its first digit is the kind of entity), as every
+# Swedish number in the register has. A personal identity number ("850101-1236") and a
+# phone number without separators ("0701234569", "0731234563") have the same shape,
+# and every personal identity number has a right check digit, so in free text a number
+# with a lower third digit or a leading 0 is not read. A sole trader's number in a
+# party clause is still read there (`extract/parties.py` uses `normalize_org_number`).
+_LEGAL_ENTITY_MIN_THIRD_DIGIT = 2
 
 # An unfilled template field. Real examples: "XXXXXX-XXXX", "[xxxxxx-yyyy]",
 # "avtalsnummer XX", "23.3-8321-2024-XXX" (two or more x as a word); "[X]",
@@ -159,7 +177,8 @@ def luhn_valid(org_number: str) -> bool:
     """True when a Swedish organisation number's last digit is its check digit (mod 10).
 
     Accepts NNNNNN-NNNN or ten digits. Every organisation number in the pilot
-    documents passes (254 of 254), and every phone number of the same shape fails.
+    documents passes (254 of 254). Other numbers of the same shape pass too: one
+    phone number in ten by chance, and every personal identity number.
     """
     digits = org_number.replace("-", "")
     if len(digits) != _ORG_NUMBER_DIGITS or not digits.isdigit():
@@ -175,9 +194,12 @@ def find_org_numbers(text: str) -> list[tuple[int, int, str]]:
     """Find Swedish organisation numbers in free text: (start, end, "NNNNNN-NNNN").
 
     A number counts only if its check digit is right (`luhn_valid`), which drops
-    phone numbers of the same shape. VAT numbers give the organisation number in
-    them. Foreign registration numbers are not looked for: in free text their
-    forms are those of CPV codes and dates ("48490000", "20221125").
+    nine phone numbers in ten, and its first and third digits are those of a
+    legal entity (`_LEGAL_ENTITY_MIN_THIRD_DIGIT`), which drops personal
+    identity numbers and phone numbers, which start with 0. VAT numbers give
+    the organisation number in them. Foreign
+    registration numbers are not looked for: in free text their forms are those
+    of CPV codes and dates ("48490000", "20221125").
     """
     found: list[tuple[int, int, str]] = []
     # VAT numbers first: "SE 556677-8899 01" also holds the plain form.
@@ -185,7 +207,8 @@ def find_org_numbers(text: str) -> list[tuple[int, int, str]]:
         for match in pattern.finditer(text):
             digits = "".join(part for part in match.groups() if part)
             inside = any(start <= match.start() < end for start, end, _ in found)
-            if luhn_valid(digits) and not inside:
+            legal_entity = digits[0] != "0" and int(digits[2]) >= _LEGAL_ENTITY_MIN_THIRD_DIGIT
+            if luhn_valid(digits) and legal_entity and not inside:
                 found.append((match.start(), match.end(), f"{digits[:6]}-{digits[6:]}"))
     return sorted(found)
 
@@ -222,8 +245,10 @@ class ProcurementNumber:
         """A case of Kammarkollegiet's own administration, not a procurement.
 
         The 23.5 series is agreement management; the letterhead form "96-15-2015"
-        is the authority's own case for a letter. Such a number is stored but
-        never compared with the procurements of a page.
+        is the authority's own case for a letter. Such a number is stored, and
+        step 5 compares it with the procurements of a page only when the
+        register has it as a procurement (23.5-3718-2024, the Microsoft volume
+        agreement).
         """
         # The letterhead series is two digits starting with 9 (LETTERHEAD_NUMBER_PATTERN).
         return self.series == CASE_MANAGEMENT_SERIES or self.series.startswith("9")
@@ -239,13 +264,15 @@ class AgreementReference:
 
     @property
     def key(self) -> str:
-        """The procurement key plus the sequence: "23.3-2940-2020-018".
+        """The procurement key plus the sequence with three digits: "23.3-2940-2020-018".
 
-        An agreement without a sequence has its procurement's key.
+        "-18", "-018" and ":018" give the same key; a variant keeps its letter
+        ("-003-A"). An agreement without a sequence has its procurement's key.
         """
         if self.sequence is None:
             return self.procurement.key
-        return f"{self.procurement.key}-{self.sequence}"
+        number, _, variant = self.sequence.partition("-")
+        return f"{self.procurement.key}-{int(number):03d}" + (f"-{variant}" if variant else "")
 
 
 def parse_procurement_number(raw: str) -> ProcurementNumber:
@@ -295,7 +322,10 @@ def agreement_key(raw: str) -> str | None:
 
 def _procurement_number(match: re.Match[str], raw: str) -> ProcurementNumber:
     if match["series"] is not None:
-        if match["sep1"] == match["sep2"] == ".":
+        # "23.3.12.20" and the range "23.1-23.12" (see CASE_NUMBER_PATTERN).
+        both_dots = match["sep1"] == match["sep2"] == "."
+        range_end = match["sep2"] == "." and len(match["serial"]) <= _RANGE_END_DIGITS
+        if both_dots or range_end:
             raise IdentifierError(f"a section number, not a procurement number: {raw!r}")
         return ProcurementNumber(
             match["series"], int(match["serial"]), _four_digit_year(match["year"]), raw

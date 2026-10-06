@@ -1,7 +1,7 @@
 """Tests for avtalsagent.ingestion.checks.procurement_number.
 
-The numbers, pages and register rows are real, from the pilot (M4 survey,
-identifiers.md §3), cited as sha[:12] and PDF page: 185c8246e536 p1 "23.3-1688-2024
+The numbers, pages and register rows are real, from the pilot, cited as sha[:12]
+and PDF page: 185c8246e536 p1 "23.3-1688-2024
 IT-konsulttjänster - IT-säkerhet" (linked from IT-säkerhet, 23.3-8321-2024);
 adcd1c5ed90e (Word) "diarienummer 23.3-2283-22" (Informationsförsörjning,
 23.3-2649-2022); 18309f4961d3 p47 "avseende IT-drift 2023 med diarienummer
@@ -174,6 +174,7 @@ def test_a_wrong_own_number_quarantines_also_beside_the_right_one() -> None:
 
 
 def test_a_cited_number_of_another_procurement_is_a_note() -> None:
+    # 54211e718d8e: its own number is its pages' procurement, so its numbers match.
     facts = [
         number("23.3-2940-20", "23.3.2940-20", page=1),
         number("23.3-7067-2017", "23.3-7067-17", page=2, role=FactRole.CITATION),
@@ -189,13 +190,25 @@ def test_a_cited_number_of_another_procurement_is_a_note() -> None:
         "tillhör upphandlingen på sidorna som länkar till dokumentet (23.3-2940-20). Numret "
         "finns inte i registret."
     )
-    assert status is NumberStatus.DEVIATES
+    # The status is about the file's own numbers; the citation is no deviation.
+    assert status is NumberStatus.MATCHES
 
 
 def test_a_cited_number_of_its_own_procurement_is_no_finding() -> None:
     cited = number("23.3-8321-2024", role=FactRole.CITATION)
 
-    assert check(checked([cited], IT_SAKERHET)) == ([], NumberStatus.MATCHES)
+    # No number of its own: the status compares own numbers only.
+    assert check(checked([cited], IT_SAKERHET)) == ([], NumberStatus.NO_NUMBER)
+
+
+def test_a_file_that_only_cites_states_no_number_of_its_own() -> None:
+    # Made up: only the citation of 54211e718d8e. It still gives its note.
+    cited = number("23.3-7067-2017", "23.3-7067-17", page=2, role=FactRole.CITATION)
+
+    findings, status = check(checked([cited], LEDNING))
+
+    assert [(f.severity, f.subject) for f in findings] == [(Severity.NOTE, "23.3-7067-2017")]
+    assert status is NumberStatus.NO_NUMBER
 
 
 def test_an_agreement_number_counts_with_its_procurement_by_key() -> None:

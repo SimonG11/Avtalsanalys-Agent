@@ -267,7 +267,7 @@ class TestTemplate:
         assert not extraction.metadata.is_template
 
     def test_an_empty_supplier_slot_alone_is_no_template(self) -> None:
-        # Every area main document leaves the supplier slot empty (M4 design, decision 4).
+        # Every area main document leaves the supplier slot empty.
         parsed = main_document(ITK1_PARTIES)
 
         extraction = extract_document(

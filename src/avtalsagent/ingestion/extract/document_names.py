@@ -12,8 +12,8 @@ What:
 Why:
     Finding references (`reference_patterns.py`) and resolving them
     (`reference_resolver.py`) need the same list, so a name added for one is
-    known to the other. The names are those the M4 survey found in the
-    sections of the 207 pilot files, with the link titles they point to.
+    known to the other. The names are those found in the sections of the 207
+    pilot files, with the link titles they point to.
 
 How:
     Plain data and two small functions. A pattern allows the definite and
@@ -107,6 +107,7 @@ _TITLE_TYPOS = {
     "säkerhetssyddsavtal": "säkerhetsskyddsavtal",
 }
 _DRAFT_PREFIX = re.compile(r"^utkast till\s+")
+_SOFT_HYPHEN = "\u00ad"  # invisible unless a word is broken there
 _LINE_BREAK_HYPHEN = re.compile(r"(?<=[a-zåäö])-\s?(?=[a-zåäö])")
 
 
@@ -125,7 +126,7 @@ def normalise_title(title: str, *, join_hyphenated: bool = False) -> str:
     With `join_hyphenated`, a hyphen between two letters is removed as well:
     a word broken over two lines ("personuppgiftsbiträdes-avtal").
     """
-    text = title.lower().replace("­", "")
+    text = title.lower().replace(_SOFT_HYPHEN, "")
     if join_hyphenated:
         text = _LINE_BREAK_HYPHEN.sub("", text)
     for typo, right in _TITLE_TYPOS.items():

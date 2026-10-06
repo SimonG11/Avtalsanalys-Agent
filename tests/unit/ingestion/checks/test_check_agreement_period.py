@@ -1,12 +1,12 @@
 """Tests for avtalsagent.ingestion.checks.agreement_period.
 
-The document lines are real, from the pilot files of the M4 survey (dates.md),
-cited as sha[:12] §section or block, and go through `find_dates` as in step 4.
+The document lines are real, from the pilot files, cited as sha[:12] §section
+or block, and go through `find_dates` as in step 4.
 The pages, their periods and their sub-areas are the real ones of avropa.se
 (2026-10-05), and so are the register dates unless a test says it changes them
 to make a deviation. Supplier names and organisation numbers are made up, and
 so are the few settings a test marks as made up (a real line in a file type it
-is not from, a near-miss page title).
+is not from, a near-miss page title, a renamed page).
 """
 
 from dataclasses import dataclass
@@ -104,6 +104,11 @@ AREA_TABLE = (
     "Programvaror och Tjänster Informationsförsörjning | 2023-02-27 - 2027-02-26\n"
     "Programvaror och Tjänster Systemutveckling | 2023-11-01 - 2027-10-31\n"
     "Programvaror och Tjänster Programvarulösningar | 2023-02-18 - 2027-02-17"
+)
+# e31f81c753c7 b2: the TendSign cover of the IT-konsultlösningar main document.
+ITK_5_COVER = (
+    "Avtalsnamn | IT-konsulttjänster - IT- konsultlösningar | Startdatum 2025-08-23 Slutdatum "
+    "2029-08-22\nRef. nr. | 23.3-1688-2024 | Förlängning Ingen förlängning"
 )
 # 171a3cacf5fd b17 (page 1) and b31 (page 2): the Microsoft period, in every page footer.
 MICROSOFT_FOOTER = "Volymavtalets huvuddokument 1.0 för avtalsperiod 2024-05-01 - 2027-04-30"
@@ -548,10 +553,11 @@ class TestOtherFiles:
         ]
 
     def test_a_row_label_inside_a_page_title_names_that_page(self) -> None:
-        # Made up: a one-row table labelled with the short name of the IT-säkerhet page;
-        # register end changed to 2030-03-31.
+        # Made up: a one-row table labelled with the short name of the IT-säkerhet page,
+        # under the header of 49f36699a469 b83 (P6 reads a range in a table whose header
+        # names the period); register end changed to 2030-03-31.
         file = document(
-            [block("IT-säkerhet | 2026-03-10 - 2030-03-09", TABLE)],
+            [block("Ramavtalområde | Avtalsperiod\nIT-säkerhet | 2026-03-10 - 2030-03-09", TABLE)],
             [link(ITK_1, SHA, "Vägledning"), link(ITK_3, SHA, "Vägledning")],
         )
         register = [page_entry(ITK_1), entry(ITK_3, "001", "2026-03-10", "2030-03-31")]
@@ -667,6 +673,32 @@ class TestPages:
         register = [entry(page, "028", "2025-04-03", "2029-04-02")]
 
         assert self.report([page], register) == []
+
+    def test_a_page_whose_title_is_no_sub_area_is_reported_and_compares_nothing(self) -> None:
+        # Made up: the page of sub-area 5 renamed "5. IT-konsultlösningar". Taken as the
+        # whole procurement, sub-areas 1 and 5 (2025-08-19 - 2029-08-22), the main document
+        # e31f81c753c7 would be held back and the page's own period reported.
+        renamed = Page("5. IT-konsultlösningar", ITK_5.url, ITK_5.procurement, ITK_5.period, "X")
+        file = document([block(ITK_5_COVER, TABLE)], [link(renamed, SHA)])
+        register = (page_entry(ITK_1), page_entry(ITK_5))
+        context = CheckContext(files=(file,), links=file.links, register=register, areas=())
+
+        assert context.page_scope(file.links[0]) == []
+        assert run(context) == [
+            Finding(
+                check=CHECK,
+                severity=Severity.REPORT,
+                subject="5. IT-konsultlösningar",
+                message=(
+                    'Sidans titel "5. IT-konsultlösningar" motsvarar inget delområde i registret '
+                    "för 23.3-1688-2024, så inget jämförs med registret genom sidan: varken "
+                    "sidans avtalsperiod eller perioderna i dokumenten den länkar till. Sidans "
+                    "huvuddokument täcker inga avtal."
+                ),
+                page_url=ITK_5.url,
+                evidence="5. IT-konsultlösningar",
+            )
+        ]
 
     def test_two_pages_with_the_same_period_have_their_own_findings(self) -> None:
         pages = [BEMANNING_OFFICE, BEMANNING_OFFICE_LARGE]

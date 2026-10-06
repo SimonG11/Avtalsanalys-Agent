@@ -9,21 +9,24 @@ What:
 
 Why:
     The only organisation numbers in the pilot documents are Kammarkollegiet's
-    and its suppliers', in party clauses and in supplier tables (M4 survey,
-    identifiers.md §4; subcontractors' and customers' numbers do not occur).
-    A number that is no supplier of the agreement means the document names
-    another legal entity than the register, and a person must say why before
-    it is indexed (M4 design, decision 3): 171a3cacf5fd p1: "och Microsoft
-    Ireland Operations Ltd, organisationsnummer 502052-1307 (nedan
-    Microsoft)", where the register has Microsoft AB 556233-4804 for
+    and its suppliers', in party clauses and in supplier tables;
+    subcontractors' and customers' numbers do not occur. A number that is no
+    supplier of the agreement means the document names another legal entity
+    than the register, and a person must say why before it is indexed
+    (ADR 0009 decision 6): 171a3cacf5fd p1: "och Microsoft Ireland Operations
+    Ltd, organisationsnummer 502052-1307 (nedan Microsoft)", where the
+    register has Microsoft AB 556233-4804 for
     23.5-3718-2024; and 8d679cb2ebef p1, the supplier table of "Prisbilaga -
     sammanställning Delområde 1": "ÅF Digital Solutions AB | ... Organisations
     nr | ... | 556866-4444", where 23.3-1688-2024-009 is AFRY Sweden AB
     556224-8012. Names are not compared: one organisation can have several
-    names, and the number decides (M4 survey, suppliers.md §7).
+    names, and the number decides.
 
 How:
-    The numbers are the ORG_NUMBER facts (a check digit that is right) and
+    The numbers are the ORG_NUMBER facts (a check digit that is right, a
+    first digit other than 0 and a third digit of 2 or more, as a legal
+    entity's, so a personal identity number or a phone number in running
+    text is never one; `find_org_numbers`) and
     the PARTY facts outside a card's supplier slot, whose number step 4 keeps
     even with a wrong check digit (`extract/parties.py`), so a mistyped
     supplier number in a main document reaches this check. A number is right

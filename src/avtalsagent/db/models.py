@@ -202,7 +202,7 @@ class ParsedFile(Base):
 
 
 class DocumentSection(Base):
-    """A numbered section of a file, or the text before its first heading."""
+    """A section: the text under a heading or before the first, a question, or a whole file."""
 
     __tablename__ = "document_section"
 

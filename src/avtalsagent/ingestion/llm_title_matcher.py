@@ -9,8 +9,8 @@ What:
     the same files makes no calls.
 
 Why:
-    Calls to a model are kept in an adapter, apart from the rules (plan,
-    principle 3), so the rules stay pure and are tested without a network. The
+    Calls to a model are kept in an adapter, apart from the rules (architecture
+    plan, section 4), so the rules stay pure and are tested without a network. The
     cache makes a run repeatable and its cost visible: the ingestion report
     gives the calls made and the answers taken from the cache. Each line of the
     cache holds the question and the answer as text, so a reviewer can read
@@ -22,12 +22,19 @@ How:
     copied heading. A number outside the list counts as no answer. An answer is
     cached under a hash of the model name, `PROMPT_VERSION`, the phrase, the
     sentence and the candidates; a new prompt gets a new `PROMPT_VERSION`, so
-    old answers are not reused. The key comes from pydantic-settings as a
-    `SecretStr` and goes only to `ChatOpenAI`; it is never printed or logged.
+    old answers are not reused. A cache line that cannot be read (cut short by
+    a full disk or a killed process) is skipped with a warning, and the next
+    answer starts on a new line. An error from OpenAI (a revoked key, no
+    network) stops the run with `LanguageModelError`, which names the error's
+    type: taking it as no answer would make the rate depend on the network.
+    The key comes from pydantic-settings as a `SecretStr` and goes only to
+    `ChatOpenAI`; it is never printed or logged, and the OpenAI error's own
+    message, which can quote part of it, is not passed on.
 """
 
 import hashlib
 import json
+import logging
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -35,9 +42,12 @@ from typing import Any
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.runnables import Runnable
 from langchain_openai import ChatOpenAI
+from openai import OpenAIError
 from pydantic import BaseModel, Field
 
 from avtalsagent.config import Settings
+
+_log = logging.getLogger(__name__)
 
 PROMPT_VERSION = "2"
 CACHE_FILE = "title_matcher.jsonl"  # under settings.data_dir / "llm_cache"
@@ -69,6 +79,10 @@ Ramavtalets Huvuddokument", "i bilaga Konsultkompetens", "i upphandlingsdokument
 or when the reference is not a title at all. A wrong section is worse than none."""
 
 
+class LanguageModelError(RuntimeError):
+    """The model could not be asked; the run stops rather than go on without its answers."""
+
+
 class HeadingChoice(BaseModel):
     """The model's answer."""
 
@@ -86,7 +100,10 @@ class OpenAITitleMatcher:
         self._model = model
         self._model_name = model_name
         self._cache_file = cache_file
-        self._answers = _read_cache(cache_file)
+        text = cache_file.read_text(encoding="utf-8") if cache_file.exists() else ""
+        self._answers = _read_cache(text, cache_file)
+        # After a line cut short, the next answer must start on a line of its own.
+        self._new_line_first = bool(text) and not text.endswith("\n")
         self.calls = 0  # requests sent to the model
         self.cache_hits = 0  # answers taken from the cache
 
@@ -97,7 +114,15 @@ class OpenAITitleMatcher:
             return self._answers[key]
         listed = "\n".join(f"{number}. {heading}" for number, heading in enumerate(candidates, 1))
         question = f"Reference: {phrase}\nSentence: {context}\nHeadings:\n{listed}"
-        choice = self._model.invoke([("system", _INSTRUCTIONS), ("human", question)])
+        try:
+            choice = self._model.invoke([("system", _INSTRUCTIONS), ("human", question)])
+        except OpenAIError as error:
+            raise LanguageModelError(
+                f"the language model {self._model_name} could not be asked "
+                f"({type(error).__name__}); the answers so far are kept in "
+                f"{self._cache_file}. Fix the key or the connection and run again, "
+                "or run without OPENAI_API_KEY to leave the model out."
+            ) from None
         self.calls += 1
         number = choice.number if isinstance(choice, HeadingChoice) else None
         answer = candidates[number - 1] if number and 1 <= number <= len(candidates) else None
@@ -112,8 +137,10 @@ class OpenAITitleMatcher:
             "answer": answer,
         }
         self._cache_file.parent.mkdir(parents=True, exist_ok=True)
+        start = "\n" if self._new_line_first else ""
         with self._cache_file.open("a", encoding="utf-8") as cache:
-            cache.write(json.dumps(line, ensure_ascii=False) + "\n")
+            cache.write(start + json.dumps(line, ensure_ascii=False) + "\n")
+        self._new_line_first = False
         return answer
 
 
@@ -136,12 +163,15 @@ def _cache_key(model_name: str, phrase: str, context: str, candidates: Sequence[
     return hashlib.sha256(json.dumps(question, ensure_ascii=False).encode()).hexdigest()
 
 
-def _read_cache(path: Path) -> dict[str, str | None]:
-    if not path.exists():
-        return {}
+def _read_cache(text: str, path: Path) -> dict[str, str | None]:
+    """The answers by key; a line that is not a whole entry is skipped with a warning."""
     answers: dict[str, str | None] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
             entry = json.loads(line)
             answers[entry["key"]] = entry["answer"]
+        except (ValueError, TypeError, KeyError):
+            _log.warning("%s line %d is not a cache entry; skipped", path, number)
     return answers

@@ -2,8 +2,9 @@
 
 What:
     Loads the sample register and a catalog with one document, then checks
-    the files and links that steps 2 and 3 read, and that saving sections
-    twice replaces them.
+    the files and links that steps 2 and 3 read, that saving sections twice
+    replaces them, and that a file with more sections than one INSERT can
+    carry is saved.
 
 Why:
     The joins from a file to its pages and to the register, and the
@@ -24,7 +25,7 @@ from sqlalchemy import Engine, delete, func, select
 from avtalsagent.db import models
 from avtalsagent.db.session import session_factory
 from avtalsagent.domain.documents import AgreementPage, DocumentLink
-from avtalsagent.domain.parsed import Block, BlockKind, ParsedDocument
+from avtalsagent.domain.parsed import Block, BlockKind, Chunk, ParsedDocument, Section
 from avtalsagent.ingestion.catalog import save_fetch
 from avtalsagent.ingestion.section_store import (
     document_links,
@@ -33,7 +34,12 @@ from avtalsagent.ingestion.section_store import (
     source_files,
 )
 from avtalsagent.ingestion.step1_fetch import FetchResult, FetchStatus, StoredDocument
-from avtalsagent.ingestion.step3_chunk import chunk_document, document_context
+from avtalsagent.ingestion.step3_chunk import (
+    ChunkedDocument,
+    OutlineKind,
+    chunk_document,
+    document_context,
+)
 from avtalsagent.register.load import load_register
 from avtalsagent.register.normalize import normalize_rows
 from avtalsagent.register.read_excel import read_register
@@ -124,3 +130,41 @@ def test_saving_sections_twice_replaces_them(catalog: Engine) -> None:
         "Bemanningstjänster (23.3-14537-2023) › Ramavtalets huvuddokument › 2 Avtalets omfattning",
     ]
     assert [(f.outline, f.section_count, f.chunk_count) for f in files] == [("numbered", 2, 2)]
+
+
+def test_a_file_with_more_sections_than_one_insert_can_carry_is_saved(catalog: Engine) -> None:
+    # One INSERT with every row would pass Postgres' limit of 65,535 parameters: 10 per
+    # section and 5 per chunk. The pilot's largest file has 1,505 sections and 1,322 chunks.
+    sections = 7_000  # 70,000 parameters in one statement
+    chunked = ChunkedDocument(
+        sha256=SHA,
+        outline=OutlineKind.NUMBERED,
+        sections=[
+            Section(
+                position=n,
+                number=str(n + 1),
+                title=f"Krav {n + 1}",
+                level=1,
+                parent=None,
+                path=(f"{n + 1} Krav {n + 1}",),
+                page_start=1,
+                page_end=1,
+                text=f"Ramavtalsleverantören ska uppfylla krav {n + 1}.",
+            )
+            for n in range(sections)
+        ],
+        # Two chunks per section, 14,000 chunks: also 70,000 parameters.
+        chunks=[
+            Chunk(section=n, position=part, context_header="Krav", text="Ramavtalsleverantören")
+            for n in range(sections)
+            for part in range(2)
+        ],
+        contents_missing=None,
+    )
+    factory = session_factory(catalog)
+    with factory.begin() as session:
+        save_sections(session, [parsed()], [chunked])
+
+    with factory() as session:
+        assert session.scalar(select(func.count()).select_from(models.DocumentSection)) == 7_000
+        assert session.scalar(select(func.count()).select_from(models.SectionChunk)) == 14_000

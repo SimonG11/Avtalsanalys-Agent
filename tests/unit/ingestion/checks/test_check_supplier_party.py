@@ -1,13 +1,15 @@
 """Tests for avtalsagent.ingestion.checks.supplier_party.
 
-The party clauses and register rows are real, from the pilot (M4 survey,
-suppliers.md §3, §6), cited as sha[:12] and PDF page: 185872a6bb90 p3 (Crayon AB,
+The party clauses and register rows are real, from the pilot, cited as sha[:12]
+and PDF page: 185872a6bb90 p3 (Crayon AB,
 card 23.3-2649-2022-003), 7a49e1a61b31 p7 (ÅF Digital Solutions AB, card
 23.3-2940-20:033), b0f5951c99b2 p7 (Knowit & Precio Fishbone Public IT AB, card
 23.3-2940-20:012), 77d641b81cc2 p3 (Chas visual management AB, card
 23.3-2649-2022-002), 171a3cacf5fd p1 (Microsoft, not a card). The register's former
 name "ÅF-Infrastructure AB" is real (23.3-4104-2022-003); a card naming it, a card
-for an agreement the register lacks and "Exempelkommunen" are made up. The names in
+for an agreement the register lacks and "Exempelkommunen" are made up. The unfilled
+clause is e3a24695fe04's (§9.1.1, the generic main document of 23.3-2940-20), put
+in a card; no pilot card has one. The names in
 the normalisation test are from the supplier tables of 8d679cb2ebef and aebc63b78a54.
 """
 
@@ -42,6 +44,11 @@ KNOWIT = (
     PREFIX + "Knowit & Precio Fishbone Public IT AB, organisationsnummer 559309-6794, nedan "
     "Ramavtalsleverantören"
 )
+# e3a24695fe04 §9.1.1, the supplier's slot not filled in.
+UNFILLED = (
+    PREFIX + "[Ramavtalsleverantören], organisationsnummer [xxxxxx-yyyy] nedan "
+    "Ramavtalsleverantören"
+)
 
 
 def entry(
@@ -73,6 +80,18 @@ REGISTER = (
 def party(org_number: str, name: str, clause: str, rule: str = "E1") -> Fact:
     return Fact(
         kind=FactKind.PARTY, value=org_number, raw=clause, rule=rule, block=38, page=7, name=name
+    )
+
+
+def unfilled(clause: str) -> Fact:
+    return Fact(
+        kind=FactKind.PLACEHOLDER,
+        value="party",
+        raw=clause,
+        rule="E1",
+        block=38,
+        page=7,
+        name="[Ramavtalsleverantören]",
     )
 
 
@@ -206,3 +225,39 @@ def test_only_the_supplier_slot_of_a_card_is_compared() -> None:
     assert supplier_parties(checked([microsoft], None)) == []
     assert check(checked([microsoft], None)) == []
     assert check(checked([customer], "23.3-2649-2022-003")) == []
+
+
+def test_a_card_whose_supplier_slot_is_not_filled_in_is_quarantined() -> None:
+    assert check(checked([unfilled(UNFILLED)], "23.3-2940-20:033")) == [
+        Finding(
+            check="supplier_party",
+            severity=Severity.QUARANTINE,
+            subject="23.3-2940-20:033",
+            message=(
+                "Partsklausulen i leverantörskortet för avtal 23.3-2940-20:033 anger inget "
+                "organisationsnummer för leverantören, så det går inte att se att avtalsparten "
+                "är registrets AFRY Sweden AB, 556224-8012. Ett undertecknat avtal har fältet "
+                "ifyllt."
+            ),
+            sha256=SHA,
+            agreement_number="23.3-2940-20:033",
+            evidence=UNFILLED,
+        )
+    ]
+
+
+def test_a_card_with_its_own_clause_filled_is_not_held_back_for_a_blank_one() -> None:
+    # Made up: a card that also quotes the template's blank clause. Its own filled clause is the
+    # register's supplier, so the blank one gives no finding.
+    afry = party(
+        "556224-8012",
+        "AFRY Sweden AB",
+        PREFIX + "AFRY Sweden AB, organisationsnummer 556224-8012, nedan Ramavtalsleverantören",
+    )
+
+    assert check(checked([afry, unfilled(UNFILLED)], "23.3-2940-20:033")) == []
+
+
+def test_an_unfilled_slot_outside_a_card_is_no_finding() -> None:
+    # The generic main document e3a24695fe04 itself: its link carries no agreement number.
+    assert check(checked([unfilled(UNFILLED)], None)) == []

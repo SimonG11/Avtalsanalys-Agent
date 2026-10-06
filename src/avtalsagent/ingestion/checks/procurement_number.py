@@ -3,8 +3,8 @@
 What:
     `run` compares the case numbers a file states with the procurements of
     the agreement pages that link to it and gives one finding per number that
-    is not one of them. `number_status` sums this up per file for the
-    ingestion report ("Stämmer med registret"). `pages_text` and `places` word
+    is not one of them. `number_status` sums up the file's own numbers for
+    the ingestion report ("Stämmer med registret"). `pages_text` and `places` word
     a file's pages and the places of a value for a finding's message; the
     other identity checks use them too.
 
@@ -14,10 +14,10 @@ Why:
     agreement's content: 185c8246e536 "Prisbilaga - sammanställning Delområde
     3", linked from 23.3-8321-2024 (IT-säkerhet), is headed "23.3-1688-2024
     IT-konsulttjänster - IT-säkerhet" on p1. Such a document is held back
-    until a person has looked at it (M4 design, decision 3). Citing another
-    procurement is no deviation, only worth knowing: 54211e718d8e p2:
-    "ramavtal IT-konsulttjänster Resurskonsulter, region Södra (dnr
-    23.3-7067-17) som omfattar länen".
+    until a person has looked at it (ADR 0009 decision 6). Citing another
+    procurement is no deviation, only worth knowing (the same decision):
+    54211e718d8e p2: "ramavtal IT-konsulttjänster Resurskonsulter, region
+    Södra (dnr 23.3-7067-17) som omfattar länen".
 
 How:
     A file's numbers are its PROCUREMENT_NUMBER facts and the procurement part
@@ -41,8 +41,12 @@ How:
     - A cited number (CITATION) that is not: NOTE. 1 pilot file, 54211e718d8e.
     One finding per number, however many places it stands in; its subject is
     the number in the register's spelling, or its key when the register does
-    not have it. Of the 207 pilot files, 143 match their pages and 47 state no
-    number (M4 survey, identifiers.md §3 has the same split).
+    not have it.
+    `number_status` looks at the file's own numbers only, as the report's
+    table says ("Varje fils egna diarie- och avtalsnummer"): a citation is no
+    deviation, and 54211e718d8e, whose own 23.3-2940-20 is its page's, matches.
+    Of the 207 pilot files, 144 match their pages, 47 state no number, 13
+    only numbers of case management, and 3 deviate (the files above).
 """
 
 from collections import defaultdict
@@ -67,11 +71,14 @@ _NUMBER_KINDS = (FactKind.PROCUREMENT_NUMBER, FactKind.AGREEMENT_NUMBER)
 class NumberStatus(StrEnum):
     """How a file's numbers compare with its pages ("Stämmer med registret" in the report)."""
 
-    MATCHES = "matches"  # it has a number to compare, and every one is a procurement of its pages
-    NO_NUMBER = "no_number"  # it states no case or agreement number
-    CASE_MANAGEMENT_ONLY = "case_management_only"  # only numbers of case management (23.5, 96-)
-    # A number, own or cited, that is not a procurement of its pages: exactly the files
-    # `run` gives a finding (QUARANTINE for an own number, NOTE for a citation).
+    # It has an own number to compare, and every own one is a procurement of its pages.
+    # It may cite another procurement: that is a NOTE finding, not a deviation.
+    MATCHES = "matches"
+    NO_NUMBER = "no_number"  # it states no case or agreement number of its own
+    # Its own numbers are only numbers of case management (23.5, 96-).
+    CASE_MANAGEMENT_ONLY = "case_management_only"
+    # An own number that is not a procurement of its pages: exactly the files `run`
+    # holds back (QUARANTINE).
     DEVIATES = "deviates"
 
 
@@ -79,7 +86,7 @@ class NumberStatus(StrEnum):
 class _Comparison:
     """A file's numbers next to the procurements of its pages, by procurement key."""
 
-    stated: bool  # any case or agreement number at all
+    stated: bool  # any case or agreement number of its own
     compared: bool  # ...that is not a number of case management
     own_on_pages: tuple[str, ...]  # keys of own numbers that are a procurement of its pages
     own_off_pages: dict[str, list[Fact]]  # key -> the facts that state it
@@ -99,13 +106,13 @@ def run(context: CheckContext) -> list[Finding]:
 
 
 def number_status(file: CheckedFile, context: CheckContext) -> NumberStatus:
-    """The file's line under "Stämmer med registret" (see `NumberStatus`)."""
+    """The file's line under "Stämmer med registret", by its own numbers (see `NumberStatus`)."""
     comparison = _compare(file, context)
     if not comparison.stated:
         return NumberStatus.NO_NUMBER
     if not comparison.compared:
         return NumberStatus.CASE_MANAGEMENT_ONLY
-    if comparison.own_off_pages or comparison.cited_off_pages:
+    if comparison.own_off_pages:
         return NumberStatus.DEVIATES
     return NumberStatus.MATCHES
 
@@ -154,8 +161,8 @@ def _compare(file: CheckedFile, context: CheckContext) -> _Comparison:
         (cited if fact.role is FactRole.CITATION else own)[number.key].append(fact)
     own_off = {key: facts for key, facts in own.items() if key not in page_keys}
     return _Comparison(
-        stated=bool(numbers),
-        compared=bool(own or cited),
+        stated=any(fact.role is not FactRole.CITATION for fact in numbers),
+        compared=bool(own),
         own_on_pages=tuple(key for key in own if key in page_keys),
         own_off_pages=own_off,
         cited_off_pages={

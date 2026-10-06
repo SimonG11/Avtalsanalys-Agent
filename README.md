@@ -39,6 +39,7 @@ varje fil som samma parserversion redan har tolkat.
 avviker från registret hålls i karantän; en avvikelse som en person har granskat och godkänt skrivs
 in i `accepted_findings.toml` i repots rot. Språkmodellen används bara när `OPENAI_API_KEY` är satt,
 och `fetch`, `process` och `run` tar `--area` för att välja andra ramavtalsområden än inställningen.
+`process` läser ändå alla hämtade filer; områdena avgör bara vilka avtal täckningen gäller.
 
 Kontroller som CI kör (pre-commit kör de tre första):
 

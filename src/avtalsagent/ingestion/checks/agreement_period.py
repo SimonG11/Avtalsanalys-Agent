@@ -7,14 +7,15 @@ What:
     2028-11-13") with the register's dates for the page's sub-area. A document
     whose period deviates is held back (QUARANTINE), an agreement that started
     later than its document says gives a NOTE, and a page whose period
-    deviates gives a REPORT.
+    deviates gives a REPORT, as does a page whose title is no sub-area of the
+    register.
 
 Why:
-    The period is part of a document's own identity (M4 design, decision 3): a
+    The period is part of a document's own identity (ADR 0009 decision 6): a
     signed agreement that states other dates than the register is another
     version or shows a register error, and a person should look before it is
     indexed. Two things make a plain comparison wrong; the rules below exist
-    for them (M4 survey dates.md §2-§4):
+    for them:
     - Extensions. The IT-konsulttjänster 2020 cards state a first period of 24
       months and an extension of at most 24 months, which has been used: the
       register has the extended end. 14aa1cc8ee3d §9.6.2: "tidigast från och
@@ -23,10 +24,12 @@ Why:
       giltighetstid uppgå till maximalt 24 månader"; register 2022-12-01 -
       2026-11-30.
     - Sub-areas. A guide states one period per sub-area, and a procurement can
-      have different dates in different sub-areas. Comparing with the whole
-      procurement gave 4 false deviations in the survey. 4b6c2a533fae §2.4:
+      have different dates in different sub-areas. 4b6c2a533fae §2.4:
       "Ramavtalet för område 3 - IT-säkerhet är giltigt från och med 2026-03-10
-      och till och med 2030-03-09".
+      och till och med 2030-03-09". In the pilot, comparing with the whole
+      procurement instead of the page's sub-area gives 7 false quarantines (4
+      files of 23.3-1688-2024, whose sub-areas 1 and 5 start 2025-08-19 and
+      2025-08-23) and 4 false page reports.
 
 How:
     A statement is the period facts of one clause or table row
@@ -72,24 +75,26 @@ How:
     Not compared: planned starts ("beräknas träda i kraft", PLANNED_START),
     which are plans and have no statement; files without period facts; and
     templates (`DocumentMetadata.is_template`). A template's dates are no
-    agreement's: by M4 decision 4 a template other than the type TEMPLATE
-    states no start or end, and a call-off template ("Avropsmall") that has
-    them states the call-off's.
+    agreement's: a file is a template other than the type TEMPLATE only when
+    it has an unfilled date field and states no start or end, and a call-off
+    template ("Avropsmall") that has them states the call-off's.
 
     Documents of the procurement stage, a TendSign printout with the cover
     "Upphandlingsdokument" or a document of the procurement group (tender
     invitations, questions and answers), state the period as planned before
-    the award, as the planned starts do (dates.md §5: 8 of 14 differ from the
-    register). A deviation in one is a NOTE, not a quarantine: the document is
-    right about its own stage. The signed printout (cover "Ramavtal") is
-    checked like any agreement.
+    the award, as the planned starts do. A deviation in one is a NOTE, not a
+    quarantine: the document is right about its own stage. The signed
+    printout (cover "Ramavtal") is checked like any agreement.
 
     The pages: `parse_period` of the page's period against its sub-area's
     earliest valid_from and latest valid_to: the same dates, or a REPORT (one
     per page, about no file). A page without a period, or one `parse_period`
-    cannot read, is not compared.
+    cannot read, is not compared. A page whose title is no sub-area level of
+    its procurements' register entries has no scope (`CheckContext.page_scope`)
+    and gives a REPORT of its own, one per page: nothing is compared through
+    it, neither its period nor the statements of the files it links to.
 
-    Pilot (207 files, 17 pages; dates.md §3-§4): 0 QUARANTINE and 0 NOTE; a
+    Pilot (207 files, 17 pages): 0 QUARANTINE and 0 NOTE; a
     REPORT for each of the 2 Bemanningstjänster Kontorstjänster pages
     (2025-04-22 - 2029-04-21, while 7 of their 18 and 19 agreements start
     2025-04-03). Of the 37 typed main documents, 13 match (the 7 cards of
@@ -98,7 +103,8 @@ How:
     templates and the printout cbe12fd30683). The 19 statements of other files
     (5 covers, 4 guides; 11 of them scoped) match their sub-area. No template
     or procurement-stage file (51 and 57 files) states a dated period, so
-    those two rules change nothing in the pilot.
+    those two rules change nothing in the pilot. Every pilot page's title is a
+    sub-area of the register.
 """
 
 import calendar
@@ -343,8 +349,11 @@ def _finding(
 def _page_findings(context: CheckContext) -> Iterator[Finding]:
     """REPORT for each agreement page whose period differs from its sub-area's in the register."""
     for link in _first_link_per_page(context.links):
-        period = parse_period(link.page_period) if link.page_period else None
         entries = context.page_scope(link)
+        if not entries and context.page_entries(link):
+            yield _no_sub_area_finding(link)
+            continue
+        period = parse_period(link.page_period) if link.page_period else None
         if period is None or not entries or period == _period(entries):
             continue
         valid_from, valid_to = _period(entries)
@@ -368,17 +377,39 @@ def _page_findings(context: CheckContext) -> Iterator[Finding]:
         )
 
 
+def _no_sub_area_finding(link: CatalogLink) -> Finding:
+    """REPORT for a page whose title is no sub-area of its procurements in the register."""
+    procurements = ", ".join(link.page_procurement_numbers)
+    return Finding(
+        check=CHECK,
+        severity=Severity.REPORT,
+        # The title, so that an acceptance does not carry over to the next title.
+        subject=link.page_title,
+        message=(
+            f'Sidans titel "{link.page_title}" motsvarar inget delområde i registret för '
+            f"{procurements}, så inget jämförs med registret genom sidan: varken sidans "
+            "avtalsperiod eller perioderna i dokumenten den länkar till. Sidans huvuddokument "
+            "täcker inga avtal."
+        ),
+        page_url=link.page_url,
+        evidence=link.page_title,
+    )
+
+
 def _one_per_key(findings: Sequence[Finding]) -> list[Finding]:
-    """One finding per `Finding.key`, the most severe, in the order the keys first came.
+    """One finding per file or page and subject, the most severe, in the order they first came.
 
     The same stated period can deviate in several statements of a file (the
     Microsoft volume agreement repeats its period in the footer of each page).
+    `Finding.key` holds the severity, so it would keep a NOTE next to a
+    QUARANTINE about the same period; the key here leaves it out.
     """
-    kept: dict[str, Finding] = {}
+    kept: dict[tuple[str | None, str], Finding] = {}
     for finding in findings:
-        earlier = kept.get(finding.key)
+        key = (finding.sha256 or finding.page_url, finding.subject)
+        earlier = kept.get(key)
         if earlier is None or _RANK[finding.severity] < _RANK[earlier.severity]:
-            kept[finding.key] = finding
+            kept[key] = finding
     return list(kept.values())
 
 

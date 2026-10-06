@@ -95,8 +95,11 @@ def test_openai_key_is_hidden(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "sk-test-not-a-real-key" not in str(settings.model_dump())
 
 
-def test_accepted_findings_are_read_from_the_repository_root_by_default() -> None:
-    assert Settings(_env_file=None).accepted_findings_file == Path("accepted_findings.toml")
+def test_accepted_findings_are_read_relative_to_the_working_directory_by_default() -> None:
+    # The commands are run from the repository root, where the file is.
+    path = Settings(_env_file=None).accepted_findings_file
+    assert path == Path("accepted_findings.toml")
+    assert not path.is_absolute()
 
 
 def test_accepted_findings_file_is_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,7 +1,7 @@
 """Tests for avtalsagent.ingestion.extract.identifiers.
 
-The lines are real, from the pilot files of the M4 survey (identifiers.md),
-cited as sha[:12] §section or page. Lines whose source is not cited are made up.
+The lines are real, from the pilot files, cited as sha[:12] §section, page or
+block. Lines whose source is not cited are made up.
 """
 
 from avtalsagent.domain.extracted import Fact, FactKind, FactRole
@@ -91,9 +91,43 @@ def test_role_needs_both_parentheses() -> None:
     assert role_of(text, start, start + len("23.3-2940-20")) is FactRole.SELF
 
 
+def test_parenthesis_after_the_number_must_close_the_one_before() -> None:
+    # The next parenthesis after the number opens a pair of its own, so the "(" before
+    # it does not enclose it (a page counter whose ")" is lost).
+    text = "Sid 2 (27 Dnr 23.5-1688-2024 (utkast)"
+    start = text.index("23.5")
+    assert role_of(text, start, start + len("23.5-1688-2024")) is FactRole.SELF
+
+
 def test_section_numbers_and_numbers_without_a_year_are_no_case_numbers() -> None:
     # 20c753d88340 §94 has no year; "21.3.12.20" has the shape of a section number.
     assert found("Dnr 23.3.10150, har ett ansvarstak införts", "enligt punkt 21.3.12.20") == []
+
+
+def test_ranges_of_section_numbers_are_no_case_numbers() -> None:
+    assert (
+        found(
+            "se punkterna 22.1-22.15 nedan",
+            "avsnitt 24.2–24.10 gäller",
+            "Tabell 21.3-12.20",
+            "enligt punkt 23.1-23.12",
+        )
+        == []
+    )
+
+
+def test_case_number_inside_another_number_is_not_read() -> None:
+    # A digit and a dot before it: the number is the end of something longer.
+    assert found("enligt 4.23.3-2940-20 i bilagan") == []
+    assert found("enligt 4 23.3-2940-20 i bilagan") == [
+        ("procurement_number", "23.3-2940-2020", "PROC", "self")
+    ]
+
+
+def test_agreement_sequence_after_an_en_dash() -> None:
+    assert found("dnr 23.3-2940-20–018") == [
+        ("agreement_number", "23.3-2940-2020-018", "PROC", "self")
+    ]
 
 
 def test_old_agreement_number_after_a_label() -> None:
@@ -124,10 +158,26 @@ def test_org_numbers_with_a_right_check_digit() -> None:
     ]
 
 
+def test_numbers_of_persons_are_no_org_numbers() -> None:
+    # A contact table or a CV: right check digits, but not a legal entity's numbers.
+    assert (
+        found("Konsultens personnummer: 850101-1236", "Mobil: 0701234569", "Mobil: 0731234563")
+        == []
+    )
+
+
 def test_unfilled_agreement_sequence_gives_the_procurement_and_one_placeholder() -> None:
     # 0692da436391 §1.2.1, the generic main document of 1688.
     assert found("Ramavtal med avtalsnummer 23.3-1688-2024:[XXX], har träffats") == [
         ("procurement_number", "23.3-1688-2024", "PROC", "self"),
+        ("placeholder", "agreement_number", "PH", None),
+    ]
+
+
+def test_unfilled_sequence_without_brackets() -> None:
+    # 65d611d12eab b13, the generic main document of 8321.
+    assert found("Ramavtal med avtalsnummer 23.3-8321-2024-XXX, har träffats för") == [
+        ("procurement_number", "23.3-8321-2024", "PROC", "self"),
         ("placeholder", "agreement_number", "PH", None),
     ]
 

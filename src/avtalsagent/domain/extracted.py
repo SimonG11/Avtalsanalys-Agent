@@ -261,12 +261,18 @@ class Finding(BaseModel):
 
     @property
     def key(self) -> str:
-        """Identifies the finding across runs, e.g. "supplier_party:7a49e1a6...:556866-4444".
+        """Identifies the finding across runs: check, severity, file or page, subject.
 
-        A finding about a section names the section by its number or heading in
-        `subject`, never by its position, so the key survives a new split.
+        For example "supplier_party:quarantine:7a49e1a6...:556866-4444". The
+        severity is part of it, so an acceptance in accepted_findings.toml
+        applies only to a finding of the severity it was written for: a NOTE that
+        a later run raises to a QUARANTINE (the same stated period, now outside
+        the register's extension) holds its file back again. A finding about a
+        section names the section by its number or heading in `subject`, never
+        by its position, so the key survives a new split.
         """
-        return f"{self.check}:{self.sha256 or self.page_url or '-'}:{self.subject}"
+        place = self.sha256 or self.page_url or "-"
+        return f"{self.check}:{self.severity.value}:{place}:{self.subject}"
 
     @property
     def quarantines(self) -> bool:

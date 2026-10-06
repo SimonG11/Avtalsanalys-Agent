@@ -27,7 +27,11 @@ Why:
     findings of step 5 point at the sections of step 3, and the index (M5)
     leaves out what they hold back. They are saved in one transaction, so a
     failed run leaves the previous run's results in place, and the stored
-    findings always belong to the stored sections.
+    findings always belong to the stored sections. The report is built and
+    rendered before that transaction, so a run whose report fails saves
+    nothing either, and written after the commit, so a report on disk is
+    always of a saved run. If writing it fails, the saved run stands, and
+    `process` can be run again to write it.
 
 How:
     The register must be loaded first (M1), since the framework areas are
@@ -40,13 +44,18 @@ How:
     chooses headings (`llm_title_matcher.py`) is used only when OPENAI_API_KEY
     is set, and its answers are cached, so a second run makes no calls. The
     deviations a person has accepted are read from `accepted_findings.toml`
-    (`ACCEPTED_FINDINGS_FILE`).
+    (`ACCEPTED_FINDINGS_FILE`; a relative path is read from the working
+    directory). A missing file accepts nothing, so `process` logs a warning
+    for it: with a mistyped path, every accepted deviation would otherwise
+    hold its document back again without a word.
 
     `fetch`, `parse`, `outline` and `verify` print their results, also when
     `run` calls the first two. `process` and `run` log one line per step with
     its counts (`logging` at LOG_LEVEL; other libraries log warnings only),
-    since the details are in the report. The OpenAI key is never printed or
-    logged: only whether the model is used, and its name.
+    since the details are in the report. Step 3's line counts the pages left
+    out as e-signature certificates (in the pilot 38 pages in 25 files). The
+    OpenAI key is never printed or logged: only whether the model is used,
+    and its name.
 """
 
 import argparse
@@ -81,8 +90,8 @@ from avtalsagent.ingestion.extraction_store import (
     save_extraction,
     save_findings,
 )
-from avtalsagent.ingestion.llm_title_matcher import openai_title_matcher
-from avtalsagent.ingestion.report import RunInfo, build_report, write_report
+from avtalsagent.ingestion.llm_title_matcher import LanguageModelError, openai_title_matcher
+from avtalsagent.ingestion.report import RunInfo, build_report, render_report, write_report
 from avtalsagent.ingestion.section_store import (
     document_links,
     load_outline,
@@ -97,7 +106,11 @@ from avtalsagent.ingestion.step1_fetch import (
     select_pages,
 )
 from avtalsagent.ingestion.step2_parse import ParseStatus, SourceFile, load_cached, parse_files
-from avtalsagent.ingestion.step3_chunk import OutlineKind, document_context
+from avtalsagent.ingestion.step3_chunk import (
+    OutlineKind,
+    document_context,
+    signature_certificate_page,
+)
 from avtalsagent.ingestion.step5_validate import load_accepted
 from avtalsagent.ingestion.text_layer_check import DocumentCheck, check_document, text_layer
 
@@ -180,7 +193,7 @@ def parse() -> Counter[ParseStatus]:
 
 
 def process(areas: Sequence[str]) -> None:
-    """Steps 3-5 on every parsed file, saved in one transaction, then the report."""
+    """Steps 3-5 on every parsed file, saved in one transaction, and the report."""
     settings = get_settings()
     started_at = datetime.now(UTC)
     factory = session_factory(create_db_engine())
@@ -193,6 +206,11 @@ def process(areas: Sequence[str]) -> None:
     parsed, unparsed = load_parsed(files, settings.parsed_dir)
     for file in unparsed:
         _log.warning("Not parsed, so not read (run `parse` first): %s", file.path.name)
+    if not settings.accepted_findings_file.is_file():
+        _log.warning(
+            "No accepted findings file at %s, so no deviation is accepted",
+            settings.accepted_findings_file,
+        )
     accepted = load_accepted(settings.accepted_findings_file)
     matcher = openai_title_matcher(settings)
     model = settings.extraction_model if matcher is not None else None
@@ -212,12 +230,8 @@ def process(areas: Sequence[str]) -> None:
     for line in step_lines(result):
         _log.info(line)
 
-    with factory.begin() as session:
-        save_sections(session, result.parsed, result.chunked)
-        save_extraction(session, result.corpus.extractions, result.corpus.references)
-        save_findings(session, result.validation.findings)
-    _log.info("Saved the sections, chunks, facts, references and findings in one transaction")
-
+    # Rendered before the save, so a report that fails saves nothing; its end is that of
+    # steps 3-5. Written after the commit, so a report on disk is of a saved run.
     run_info = RunInfo(
         started_at=started_at,
         finished_at=datetime.now(UTC),
@@ -226,7 +240,15 @@ def process(areas: Sequence[str]) -> None:
         model=model,
         accepted_file=settings.accepted_findings_file,
     )
-    markdown, json = write_report(build_report(result, run_info), settings.reports_dir)
+    rendered = render_report(build_report(result, run_info))
+
+    with factory.begin() as session:
+        save_sections(session, result.parsed, result.chunked)
+        save_extraction(session, result.corpus.extractions, result.corpus.references)
+        save_findings(session, result.validation.findings)
+    _log.info("Saved the sections, chunks, facts, references and findings in one transaction")
+
+    markdown, json = write_report(rendered, settings.reports_dir)
     _log.info("Report: %s and %s", markdown, json)
 
 
@@ -284,6 +306,15 @@ def step_lines(result: pipeline.IngestionResult) -> list[str]:
     )
     if result.unlinked:
         step3 += f"; left out, no page links to them: {len(result.unlinked)}"
+    # The pages step 3 leaves out from an e-signature certificate on, so that a rule
+    # that took agreement text for a certificate would show here rather than nowhere.
+    removed = [
+        sum(1 for page in document.pages if page.number >= first)
+        for document in result.parsed
+        if (first := signature_certificate_page(document.blocks)) is not None
+    ]
+    if removed:
+        step3 += f"; e-signature certificates left out: files {len(removed)}, pages {sum(removed)}"
 
     corpus = result.corpus
     counted = [reference for reference in corpus.references if counts_in_rate(reference)]
@@ -320,7 +351,7 @@ def step_lines(result: pipeline.IngestionResult) -> list[str]:
 
 
 def counts_text[Kind: StrEnum](counts: Mapping[Kind, int], kinds: Iterable[Kind]) -> str:
-    """The counts in the order of `kinds`, zeros included: "quarantine 15, report 62, note 9"."""
+    """The counts in the order of `kinds`, zeros included: "quarantine 16, report 5, note 11"."""
     return ", ".join(f"{kind.value} {counts.get(kind, 0):,}" for kind in kinds)
 
 
@@ -461,10 +492,16 @@ def main() -> None:
         fetch(areas)
     elif args.step == "parse":
         parse()
-    elif args.step == "process":
-        process(areas)
-    elif args.step == "run":
-        run(areas)
+    elif args.step in ("process", "run"):
+        try:
+            if args.step == "process":
+                process(areas)
+            else:
+                run(areas)
+        except LanguageModelError as error:
+            # The message names the error type and the cache file, never the key.
+            _log.error("%s: %s", args.step, error)
+            raise SystemExit(1) from None
     elif args.step == "outline":
         outline(args.sha256)
     elif args.step == "verify":

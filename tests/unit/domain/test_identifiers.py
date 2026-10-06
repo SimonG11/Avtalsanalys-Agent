@@ -1,10 +1,11 @@
 """Tests for avtalsagent.domain.identifiers: one test per normalisation rule.
 
 The examples are real values from "Alla giltiga ramavtal" (2026-10-05) and, for
-the case numbers and organisation numbers in documents, from the pilot files of
-the M4 survey (identifiers.md §1, §9), cited as sha[:12] §section.
+the case numbers and organisation numbers in documents, from the pilot files,
+cited as sha[:12] §section. Values whose source is not cited are made up.
 """
 
+from collections import defaultdict
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,12 @@ def test_swedish_vat_number_gives_the_org_number() -> None:
     # A VAT number is "SE", the org number and "01"; it is no foreign number.
     assert normalize_org_number("SE202100082901") == "202100-0829"
     assert normalize_org_number("SE 202100-0829 01") == "202100-0829"
+
+
+def test_other_suffix_is_no_swedish_vat_number() -> None:
+    # Only "01" makes a Swedish VAT number; with "02" it is kept as written, as a
+    # foreign number would be.
+    assert normalize_org_number("SE202100082902") == "SE202100082902"
 
 
 @pytest.mark.parametrize("raw", ["", "12345", "556337-238X", "abc", "SE 55-63"])
@@ -195,6 +202,29 @@ def test_procurement_number_without_a_usable_year_is_refused(raw: str) -> None:
     assert procurement_key(raw) is None
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "23.3.12.20",  # both separators dots
+        "22.1-22.15",  # a range of sections in chapter 22: only a series 23.x is read
+        "24.2–24.10",
+        "21.3-12.20",
+        "23.1-23.12",  # a range in chapter 23: a dot before the year after two digits
+        "23.1-24.10",
+    ],
+)
+def test_section_numbers_are_no_case_numbers(raw: str) -> None:
+    assert procurement_key(raw) is None
+    assert agreement_key(raw) is None
+
+
+@pytest.mark.parametrize("raw", ["22.3-2940-2020", "21.1-2024-05"])
+def test_only_a_series_23_x_is_read(raw: str) -> None:
+    # The register and the pilot have only 23.3 and 23.5; other numbers of the shape
+    # (a version "21.1-2024-05") are not Kammarkollegiet's cases.
+    assert procurement_key(raw) is None
+
+
 def test_series_is_never_crossed() -> None:
     # 23.5-1688-2024 is the agreement-management case of procurement 23.3-1688-2024
     # (4b6c2a533fae page header "Sid 2 (27) Dnr 23.5-1688-2024").
@@ -254,6 +284,26 @@ def test_agreement_without_sequence_keys_to_its_procurement() -> None:
     assert agreement_key("6765/05") == procurement_key("6765/05") == "6765/05"
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "23.3-2940-20:018",  # the register
+        "23.3.2940-20:018",
+        "23.3-2940-2020-018",
+        "23.3-2940-2020-18",  # the sequence without its leading zero
+        "23.3-2940-20–018",  # an en dash before the sequence
+    ],
+)
+def test_sequence_spellings_give_one_key(raw: str) -> None:
+    assert agreement_key(raw) == "23.3-2940-2020-018"
+
+
+def test_variant_of_an_agreement_keeps_its_letter() -> None:
+    assert agreement_key("23.3-4613-2023-003-A") == "23.3-4613-2023-003-A"
+    assert agreement_key("23.3-4613-2023-03-A") == "23.3-4613-2023-003-A"
+    assert agreement_key("23.3-4613-2023-003") != agreement_key("23.3-4613-2023-003-A")
+
+
 def test_agreement_key_is_idempotent_and_none_for_garbage() -> None:
     key = agreement_key("23.3.2940-20:018")
     assert key == "23.3-2940-2020-018"
@@ -292,9 +342,16 @@ def test_every_number_of_the_real_register_keys() -> None:
 
     assert all(procurement_key(number) for number in procurements)
     assert all(agreement_key(number) for number in agreements)
-    # No two register numbers share a key: keying loses nothing.
+    # Keying loses nothing: no two procurements share a key, and the only agreement
+    # numbers that do are one agreement the register writes two ways (both rows:
+    # Digital Interpretations Scandinavia AB, 559032-5394).
     assert len({procurement_key(number) for number in procurements}) == len(procurements)
-    assert len({agreement_key(number) for number in agreements}) == len(agreements)
+    spellings: defaultdict[str | None, set[str]] = defaultdict(set)
+    for number in agreements:
+        spellings[agreement_key(number)].add(number)
+    assert [numbers for numbers in spellings.values() if len(numbers) > 1] == [
+        {"23.3-12000-2020-001", "23.3-12000-2020-01"}
+    ]
 
 
 @pytest.mark.parametrize(
@@ -338,8 +395,28 @@ def test_wrong_check_digit_is_not_an_org_number() -> None:
     assert find_org_numbers("organisationsnummer 202100-0828") == []
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Konsultens personnummer: 850101-1236",  # a personal identity number
+        "Mobil: 0701234569",  # a mobile number without separators
+        "Mobil: 0731234563",  # one whose third digit could be a legal entity's
+    ],
+)
+def test_numbers_of_persons_are_not_org_numbers(text: str) -> None:
+    # Each has a right check digit. A personal identity number's third digit (0-1) is
+    # never a legal entity's, nor is a phone number's leading 0.
+    digits = text.split()[-1]
+    assert luhn_valid(digits)
+    assert find_org_numbers(text) == []
+
+
 def test_vat_number_gives_its_org_number_once() -> None:
     assert find_org_numbers("Momsreg.nr SE 202100-0829 01") == [(11, 28, "202100-0829")]
+
+
+def test_vat_number_needs_the_suffix_01() -> None:
+    assert find_org_numbers("Momsreg.nr SE202100082902") == []
 
 
 def test_nuts_codes_are_not_vat_numbers() -> None:

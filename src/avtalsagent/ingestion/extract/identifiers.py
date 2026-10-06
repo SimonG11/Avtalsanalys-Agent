@@ -12,9 +12,9 @@ Why:
     register: a case number that is not a procurement of the pages linking to
     it, a supplier card with another agreement number, an organisation number
     in no register row. The case number is mostly in page headers, which step
-    3 removes from the sections (3,003 of 3,257 hits; 34 files have it nowhere
-    else, M4 survey identifiers.md §0), so the blocks are read, not the
-    sections. A document cites other agreements too, and a citation is no
+    3 removes from the sections (3,003 of 3,257 hits; 39 files have it nowhere
+    else), so the blocks are read, not the sections (ADR 0009 decision 2). A
+    document cites other agreements too, and a citation is no
     deviation: 54211e718d8e §1.4: "ramavtal IT-konsulttjänster Resurskonsulter,
     region Södra (dnr 23.3-7067-17) som omfattar länen". In the pilot this is
     the only number in parentheses. The document's own number stands in page
@@ -34,8 +34,9 @@ How:
     - OLD: an agreement number before the 23.x series ("6765/05"), only right
       after a label.
     - OLDKK: Kammarkollegiet's older letterhead form ("96-15-2015").
-    - ORG: a Swedish organisation number with a right check digit
-      (`find_org_numbers`), the authority's own 202100-0829 included.
+    - ORG: a Swedish organisation number with a right check digit and the
+      first and third digits of a legal entity (`find_org_numbers`), the
+      authority's own 202100-0829 included.
     - PH: an unfilled identifier field after its label ("organisationsnummer
       XXXXXX-XXXX", "avtalsnummer [X]", "dnr: XXX", "Organisationsnummer: |")
       or in brackets ("[diarienr: xxxx]"), and the PROC case above.
@@ -43,8 +44,9 @@ How:
     `step4_extract.py` replaces it with the register's spelling when the
     register has the key. A placeholder's value says which field is unfilled:
     "procurement_number", "agreement_number" or "org_number". Case-management
-    numbers (23.5, "96-15-2015") are found like the others; step 5 never
-    compares them with the register.
+    numbers (23.5, "96-15-2015") are found like the others; step 5 compares
+    one with the register only when the register has it as a procurement
+    (23.5-3718-2024, the Microsoft volume agreement).
 """
 
 import re
@@ -56,6 +58,7 @@ from avtalsagent.domain.identifiers import (
     LETTERHEAD_NUMBER_PATTERN,
     OLD_NUMBER_PATTERN,
     SEQUENCE_PATTERN,
+    SEQUENCE_SEPARATOR,
     IdentifierError,
     find_org_numbers,
     is_placeholder,
@@ -69,7 +72,7 @@ from avtalsagent.domain.parsed import Block
 # "23.3-1688-2024:[XXX]", "23.3-2651-2022-X".
 _CASE_NUMBER = re.compile(
     rf"(?<![\d.])(?P<number>{CASE_NUMBER_PATTERN})"
-    rf"(?:[-:](?:{SEQUENCE_PATTERN}|(?P<blank>\[?[Xx]{{1,4}}\]?))(?!\w))?"
+    rf"(?:{SEQUENCE_SEPARATOR}(?:{SEQUENCE_PATTERN}|(?P<blank>\[?[Xx]{{1,4}}\]?))(?!\w))?"
 )
 # OLD: "kompletteras Volymavtalet för Programvaror, avtalsnummer 6765/05 enligt
 # följande" (fb9447f0b8bf §1), "ER BETECKNING ⏎ Avtal 6765/05" (its letterhead). The

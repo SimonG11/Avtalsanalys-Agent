@@ -10,15 +10,15 @@ What:
 Why:
     The agent must be able to follow "enligt punkt 6.21" or "bilaga Priser" to
     the text it points at, and a reviewer must be able to check each step. The
-    rules are those of the M4 survey (references.md §3), split by where they
-    look: the file itself (`resolve_in_document`), the other files of the
-    agreement page (`resolve_on_page`), and the procurement documents a
-    questions-and-answers log is about (`resolve_questions`).
+    rules are split by where they look: the file itself
+    (`resolve_in_document`), the other files of the agreement page
+    (`resolve_on_page`), and the procurement documents a questions-and-answers
+    log is about (`resolve_questions`).
 
 How:
     A mention whose text already decides it keeps its status, with rule None:
     LAW (EXTERNAL), PLACEHOLDER, LIST_ITEM, and SELF ("dessa Allmänna villkor").
-    The others, by kind, in the order of references.md §9.3:
+    The others, by kind, in this order:
 
     | kind           | rules, in order                                          |
     |----------------|----------------------------------------------------------|
@@ -36,12 +36,15 @@ How:
     the rule that decided the status, whatever the status: "R1q" with
     NUMBER_MISSING says that rule searched and found nothing.
 
-    The rate (decision 5 of the M4 design) counts every reference except laws
-    and questions ("fråga N") and those with status LIST_ITEM, SELF or EXTERNAL:
+    The rate (ADR 0009 decision 9) counts every reference except laws and
+    questions ("fråga N") and those with status LIST_ITEM, SELF or EXTERNAL:
     RESOLVED / that count. NOT_PUBLISHED stays in the count: the target exists
-    but is not on the page, which the rate should show.
+    but is not on the page, which the rate should show. SELF is a document
+    naming itself; a reference that resolves to its own section (11db2f3d1852
+    §6.15: "gäller detta avsnitt Leverans och leveranskontroll", 73 in the
+    pilot) is RESOLVED and counts, since it found the section it names.
 
-    Not built (each covers fewer than 50 references in the survey, about 1.2
+    Not built (each covers fewer than 50 references in the pilot, about 1.2
     percentage points of the rate together): a title followed by a document
     ("avsnitt X i Allmänna villkor", R4x, 39), "kapitel <Dok>" where the file has
     no such chapter (46), a unique heading that starts with the reference's

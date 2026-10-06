@@ -2,7 +2,7 @@
 
 The file and pages are real, from the pilot: 3117fd65796c, the template
 "Utkast till personuppgiftsbiträdesavtal", linked from the pages of ITK 2020
-and ITK 2024 (M4 survey, doctypes.md §9). Every pilot page is still listed on
+and ITK 2024. Every pilot page is still listed on
 avropa.se; the pages that are no longer listed, and the dates, are made up.
 """
 

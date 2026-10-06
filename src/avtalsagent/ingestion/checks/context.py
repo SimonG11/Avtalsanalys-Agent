@@ -20,8 +20,12 @@ How:
     level with the page's title, ignoring case: the page "IT-konsulttjänster 3.
     IT-säkerhet" is the sub-area "IT-konsulttjänster 3. IT-säkerhet" of
     23.3-8321-2024. Every pilot page has such entries (56 of 224 for each of
-    the four Bemanningstjänster pages); a page without them has the scope of
-    all entries of its procurements.
+    the four Bemanningstjänster pages). A page without them has no scope, not
+    the whole procurement: renamed to "5. IT-konsultlösningar", the page of
+    sub-area 5 of 23.3-1688-2024 would otherwise be compared with the dates of
+    sub-areas 1 and 5 together and let its main document cover sub-area 1's
+    agreements. `agreement_period` reports such a page, and neither it nor
+    `coverage` compares anything through it.
 """
 
 from collections import defaultdict
@@ -122,12 +126,13 @@ class CheckContext:
         ]
 
     def page_scope(self, link: CatalogLink) -> list[RegisterEntry]:
-        """The register entries of the sub-area the link's page is for (module docstring)."""
-        entries = self.page_entries(link)
+        """The register entries of the sub-area the link's page is for (module docstring).
+
+        [] when the page's title is no sub-area level of its procurements' entries.
+        """
         title = link.page_title.casefold()
-        scoped = [
+        return [
             entry
-            for entry in entries
+            for entry in self.page_entries(link)
             if any(level.casefold() == title for level in entry.sub_area_path)
         ]
-        return scoped or entries

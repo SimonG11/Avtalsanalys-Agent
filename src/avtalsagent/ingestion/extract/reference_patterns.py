@@ -14,11 +14,11 @@ What:
 Why:
     The agent must be able to follow "enligt punkt 6.21" to the text it points
     at, and the ingestion report measures how many references resolve (M4:
-    "andelen upplösta hänvisningar är mätt"). The forms below are the ones the
-    M4 survey found in the 13,175 sections of the 207 pilot files
-    (references.md §1). Most references name a section by its title, not its
-    number, so titles are read as well as numbers. A mention keeps its
-    offsets and the rule that found it, so each one can be checked by hand.
+    "andelen upplösta hänvisningar är mätt"). The forms below are the ones
+    found in the 13,175 sections of the 207 pilot files. Most references name
+    a section by its title, not its number, so titles are read as well as
+    numbers. A mention keeps its offsets and the rule that found it, so each
+    one can be checked by hand.
 
 How:
     Each section is read after its heading line, which only names the section
@@ -34,7 +34,11 @@ How:
        A document named right after or right before the numbers ("p. 6.19.7 i
        Allmänna villkor", "Allmänna villkor punkt 6.17") is the mention's
        `document_name` (rule R1x) and not a mention of its own. A whole number
-       after "punkt" that numbers an item of a list is status LIST_ITEM.
+       after "punkt" or "p." is status LIST_ITEM when it numbers an item of a
+       list: a line of the section starts with it, "ovan" or "nedan" follows
+       it, or a section is named next to it by its number or title ("6.16.3,
+       punkt 2", "punkterna 1-3 i avsnitt 7.17.3"). In a questions-and-answers
+       log it always is. A number that counts ("7 gånger", "1 st") ends a list.
     4. R4: a section title after a keyword ("enligt avsnitt Avtalsbrott och
        påföljder"). Where a title ends is not known before it is looked up, so
        the key runs to the end of the sentence or to the next reference, and
@@ -50,7 +54,7 @@ How:
     8. RQ: "fråga N", only in a questions-and-answers log.
     `replaces` is set on a mention in a sentence with a replacement verb
     ("ersätter", "utgår", ...) in an AMENDMENT, or in a questions-and-answers
-    log after "Publikt svar", where Kammarkollegiet answers (references.md §6).
+    log after "Publikt svar", where Kammarkollegiet answers.
 
     `key` is what the resolver looks up: a number in lower case ("6.21.9",
     "3a"), a title or annex name with its spaces normalised, or a document's
@@ -63,7 +67,7 @@ How:
     agreement as a whole ("enligt Ramavtalet"), a document name as a common
     noun ("mer vägledning") or as the label on a TendSign cover
     ("Upphandlingsdokument 2022-06-14").
-    Not built, since each covers fewer than 50 references in the survey:
+    Not built, since each covers fewer than 50 references in the pilot:
     "<titel> i <Dok>" (R4x, 39: the document after a title is not read, the
     title is looked up like any other) and "kapitel <Dok>" where the document
     has no such chapter (46: it stays a title mention).
@@ -154,7 +158,10 @@ _NUMBER = r"\d{1,3}(?:\.\d{1,3})*(?:\.(?=\s))?[a-z]?(?!\w)"
 _ONE_NUMBER = re.compile(r"\d{1,3}(?:\.\d{1,3})*[a-z]?")
 # Between the numbers of a list or range: "5.15.2.1, 5.15.2.2 och 5.15.2.3", "6.4-6.9".
 _LIST_SEPARATOR = r"\s*(?:,|och|samt|eller|respektive|resp\.|-|–|till|\+|/|&)\s*"
-_NUMBER_LIST = rf"{_NUMBER}(?:{_LIST_SEPARATOR}{_NUMBER})*"
+# A number that counts something ends the list: bdf58b81d100 §88: "under punkt 1 och 2, 7
+# gånger under en 12 månaders period"; 50edddbad6c7 §322: "på punkt 10.18.1, 1 st".
+_NOT_A_COUNT = r"(?!\s+(?:st|gång|gånger)\b)"
+_NUMBER_LIST = rf"{_NUMBER}(?:{_LIST_SEPARATOR}{_NUMBER}{_NOT_A_COUNT})*"
 _SECTION_KEYWORD = (
     r"punkt(?:en|erna|er)?|p\.|pp\.|avsnitt(?:et|en)?|kapit(?:el|let|len|lena)"
     r"|underavsnitt(?:et)?|sections?|clauses?"
@@ -169,7 +176,7 @@ _KEYWORD_NUMBERS = re.compile(
 _POINTS = re.compile(r"\d\s*$")
 # R1, bare number. 0486216326ec §4.2: "I samband med revision enligt 10.4 svarar den
 # personuppgiftsansvarige för kostnaden". Only numbers with a dot: "enligt 4" is not a
-# section. 524 of the 567 in the survey are in questions-and-answers logs.
+# section. 524 of the 567 in the pilot are in questions-and-answers logs.
 _BARE_NUMBERS = re.compile(
     r"(?<![\w.])(?P<keyword>enligt|se|jfr|jämför|under|i|av|från)\s+"
     rf"(?P<numbers>\d{{1,3}}\.\d{{1,3}}(?:\.\d{{1,3}})*"
@@ -200,9 +207,21 @@ _ITEM_AFTER = re.compile(
     r"\s*(?:-\s*\d+\s*)?(?:ovan|nedan|i detta avsnitt|i denna punkt|i föregående"
     r"|i första stycket|i andra stycket)"
 )
-# ...or an item of the section named just before: 34d71a7e4da0 §8.16.4: "enligt avsnitt
-# Kammarkollegiets uppsägningsrätt punkten 1."
+# ...or an item of the section named just after, by a keyword or a section number:
+# 087f9c5a2f56 §49: "punkt 2 i 6.16.3"; 39d8c1efe373 §117: "punkterna 1-3 i avsnitt 7.17.3".
+_SECTION_AFTER_ITEM = re.compile(
+    r"\s+(?:i|under)\s+(?:(?i:avsnitt(?:et)?|kapit(?:el|let)|punkt(?:en)?|p\.)\s*"
+    r"(?:\d|[\"”“]?[A-ZÅÄÖ])|\d{1,3}(?:\.\d{1,3})+)"
+)
+# ...or of the section named just before, by its title: 34d71a7e4da0 §8.16.4: "enligt
+# avsnitt Kammarkollegiets uppsägningsrätt punkten 1."
 _SECTION_BEFORE_ITEM = re.compile(r"(?i:avsnitt|punkt|kapitel)\s+[^.;:\n]{2,90}?[\s,]+$")
+# ...or by its number, with or without a title after it, in the same clause: e083c368b16a
+# §43: "6.16.3, punkt 2."; bdf58b81d100 §204: '"5.15.3 Kammarkollegiets uppsägningsrätt" punkt
+# 2'; 20c753d88340 §38: "Enligt 4.1.4.1 under punkt 4".
+_NUMBER_BEFORE_ITEM = re.compile(
+    r"(?<![\w.])\d{1,3}(?:\.\d{1,3})+(?![\w-])[^.;:|\n]{0,90}?[\s,:\"”]+$"
+)
 _SECTION_BEFORE_ITEM_CHARS = 100
 
 # --- 4. Section titles -----------------------------------------------------------------
@@ -223,7 +242,7 @@ _ANNEX_NUMBERS = re.compile(
 )
 _ONE_ANNEX_NUMBER = re.compile(r"\d{1,2}[a-z]?(?:\.\d{1,2})*")
 # "Kontraktet med bilagor 6. Kontraktet ...": after plural "bilagor" a number followed by
-# a capital is the next item of a numbered list (116 such hits in the survey and in the pilot).
+# a capital is the next item of a numbered list (116 such hits in the pilot).
 _LIST_NUMBER_AFTER = re.compile(r"\.\s+[A-ZÅÄÖ]")
 # --- 6. Annex names --------------------------------------------------------------------
 # R5. 34d71a7e4da0 §8.10.1: "Ramavtalsleverantörens priser för Upphandlingsföremålet anges i
@@ -361,7 +380,7 @@ def _section_mentions(
     laws = _law_spans(text)
     found.extend(_law_mentions(text, laws))
     found.extend(_placeholders(text))
-    found.extend(_section_numbers(text, laws))
+    found.extend(_section_numbers(text, laws, questions_log))
     found.extend(_titles(text))
     found.extend(_annex_numbers(text, laws))
     found.extend(_annex_names(text))
@@ -467,7 +486,9 @@ def _placeholders(text: _Text) -> Iterator[_Found]:
 # --- 3. Section numbers ------------------------------------------------------------------
 
 
-def _section_numbers(text: _Text, laws: Sequence[tuple[int, int]]) -> Iterator[_Found]:
+def _section_numbers(
+    text: _Text, laws: Sequence[tuple[int, int]], questions_log: bool
+) -> Iterator[_Found]:
     for pattern in (_KEYWORD_NUMBERS, _BARE_NUMBERS):
         for match in pattern.finditer(text.text, text.start):
             numbers_start, numbers_end = match.span("numbers")
@@ -486,7 +507,7 @@ def _section_numbers(text: _Text, laws: Sequence[tuple[int, int]]) -> Iterator[_
                 end = numbers_start + number.end()
                 key = number.group().lower()
                 status = None
-                if document is None and _is_list_item(text, keyword, key, match):
+                if document is None and _is_list_item(text, keyword, key, match, questions_log):
                     status = ReferenceStatus.LIST_ITEM
                 yield _Found(
                     start,
@@ -520,20 +541,28 @@ def _document_named_with(text: _Text, start: int, end: int) -> str | None:
     return None
 
 
-def _is_list_item(text: _Text, keyword: str, number: str, match: re.Match[str]) -> bool:
+def _is_list_item(
+    text: _Text, keyword: str, number: str, match: re.Match[str], questions_log: bool
+) -> bool:
     """Whether a whole number after "punkt" is an item of a list, not a section.
 
     A whole number has no dot; it may have a letter: 9a0b5eaeef4b §pos72: "enligt punkt 1a)
-    eller 2a) nedan".
+    eller 2a) nedan". In a questions log it always is one: the questions cite items of the
+    tender documents' sections ("Enligt 5.15.3, punkt 2"). In the pilot's logs only this
+    makes 171 numbers list items, and each was read: none is a chapter.
     """
     if keyword not in _ITEM_KEYWORDS or "." in number:
         return False
+    if questions_log:
+        return True
     item_line = re.compile(rf"(?:^|\n)\s*(?:\(?{number}[.)]|{number}\s*-)\s")
     before = text.text[max(0, match.start() - _SECTION_BEFORE_ITEM_CHARS) : match.start()]
     return bool(
         item_line.search(text.text)
         or _ITEM_AFTER.match(text.text, match.end())
+        or _SECTION_AFTER_ITEM.match(text.text, match.end())
         or _SECTION_BEFORE_ITEM.search(before)
+        or _NUMBER_BEFORE_ITEM.search(before)
     )
 
 
@@ -705,7 +734,7 @@ def _questions(text: _Text) -> Iterator[_Found]:
 
 
 def _replaces(text: str, start: int, end: int, document_type: DocumentType, answer: int) -> bool:
-    """Whether the sentence of a mention replaces or removes its target (references.md §6)."""
+    """Whether the sentence of a mention replaces or removes its target."""
     if document_type is DocumentType.QUESTIONS_AND_ANSWERS:
         if answer < 0 or start < answer:
             return False  # in the supplier's question: a proposal, not a change

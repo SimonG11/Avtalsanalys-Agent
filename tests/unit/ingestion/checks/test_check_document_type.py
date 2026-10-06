@@ -1,6 +1,6 @@
 """Tests for avtalsagent.ingestion.checks.document_type.
 
-The links are real, from the pilot (M4 survey, doctypes.md §3): 19c85c74c3b2
+The links are real, from the pilot: 19c85c74c3b2
 "Nuts 2 indelning", listed under "Avtal" on the four Bemanningstjänster pages;
 83b9c9db99bf "Finansiella villkor vid köp av hårdvara som tjänst" under "Avtal" on
 "IT-drift Större, fler än 200 anställda"; 3f646362f5b7 "Bilaga 1 Kontaktuppgifter"

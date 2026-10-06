@@ -5,26 +5,30 @@
 # avtalsperiod) hålls i karantän och indexeras inte. Den här filen listar avvikelser som
 # en person har granskat och bedömt som riktiga, till exempel en leverantör som har bytt
 # namn. En godkänd avvikelse håller inte längre tillbaka dokumentet. Den står kvar i
-# inläsningsrapporten, under "Godkända avvikelser", med skälet.
+# inläsningsrapporten, under "Godkända fynd", med skälet.
 #
 # Varje godkännande är en [[accepted]]-tabell med fyra fält:
 #
 #   key      avvikelsens nyckel, exakt som den står efter "Nyckel:" i rapportens avsnitt
-#            Karantän: kontroll, filens hash (eller sidans adress) och det som avviker
-#   reason   varför avvikelsen är riktig, på svenska
-#   reviewer vem som har granskat och godkänt den
+#            Karantän: kontroll, allvarlighetsgrad, filens hash (eller sidans adress) och
+#            det som avviker. Godkännandet gäller bara en avvikelse med den
+#            allvarlighetsgraden: blir en notering karantän i en senare körning hålls
+#            dokumentet tillbaka igen, och det gamla godkännandet listas som oanvänt.
+#   reason   varför avvikelsen är riktig, på svenska (får inte vara tomt)
+#   reviewer vem som har granskat och godkänt den (får inte vara tomt)
 #   date     när, som ÅÅÅÅ-MM-DD utan citattecken
 #
 # Till exempel (nyckeln och skälet är påhittade):
 #
 # [[accepted]]
-# key = "supplier_party:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:556677-8899"
+# key = "supplier_party:quarantine:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:556677-8899"
 # reason = "Leverantören bytte namn och organisationsnummer efter fusionen; avtalet gäller."
 # reviewer = "Förnamn Efternamn"
 # date = 2026-10-07
 #
-# En nyckel får stå en gång. Ett godkännande som inte motsvarar någon avvikelse i en
-# körning listas i rapporten, så att inaktuella godkännanden märks och kan tas bort.
+# En nyckel får stå en gång, och filen får inte ha andra tabeller än [[accepted]]. Ett
+# godkännande som inte motsvarar någon avvikelse i en körning listas i rapporten, så att
+# inaktuella godkännanden märks och kan tas bort.
 #
 # Filen granskas som kod: varje ändring går genom en pull request, så att historiken
 # visar vem som godkände vad och varför.

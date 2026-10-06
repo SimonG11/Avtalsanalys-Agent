@@ -18,7 +18,7 @@ Why:
     Priser" the link "Prisbilaga - sammanställning Delområde 1", "Huvuddokumentet"
     the link "Ramavtalets huvuddokument" (`document_names.ALIASES`). Only the
     page says which file that is, and a template linked from several pages can
-    point to a different file on each (references.md §2, §7).
+    point to a different file on each.
 
 How:
     Each rule looks on every page that links the file and collects the
@@ -29,15 +29,15 @@ How:
       otherwise one target with `page_url` None.
     - AMBIGUOUS when a page has several, e.g. "Säkerhetsskyddsavtal" on a page
       with "Utkast till Säkerhetsskyddsavtal (Nivå 1)", "(Nivå 2)" and "(Nivå 3)".
-      The candidates are the targets.
+      The candidates are the targets, in the order of `Corpus.pages`.
     - NOT_PUBLISHED when no page has one: a tender form that was never published,
       or a file step 1 does not fetch (.xlsx), which is not in the corpus.
     Link titles are compared as `document_names.normalise_title` gives them.
-    Measured on the 207 pilot files (references counted in the rate):
-    R2 2,048 of 2,922 resolved, R1x 183 of 225, R3 55 of 92, R5 259 of 1,268
-    (998 not published), R4's second step 147.
+    Measured on the 207 pilot files (references counted in the rate, rules
+    only): R2 2,053 of 2,933 resolved, R1x 183 of 225, R3 55 of 92, R5 259 of
+    1,268 (998 not published), R4's second step 147.
 
-    Not built (each covers fewer than 50 references in the survey): a
+    Not built (each covers fewer than 50 references in the pilot): a
     Säkerhetsskyddsavtal with its level named ("Säkerhetsskyddsavtal nivå 2",
     19), a number found by its suffix in the named document ("Allmänna villkor,
     punkt 31.1" for 6.31.1, 1).
@@ -75,6 +75,11 @@ _SUPPLIER_CARD_NAMES = frozenset(("huvuddokument", "ramavtalets huvuddokument"))
 # The plural "upphandlingsdokumenten" is the whole tender package: 80578a77ea47 §5.5:
 # "3. Upphandlingsdokumenten med bilagor inklusive rättelser" (109 references).
 _TENDER_PACKAGE = re.compile(r"(?i:upphandlingsdokumenten)s?")
+# An annex name starts with a link title only where a word of the name ends, or a Swedish
+# ending follows: "bilaga Avropsmallen" is the link "Avropsmall", "bilaga Kravkatalogs
+# definitioner" the link "Kravkatalog", but "bilaga Ramavtalsleverantörens prislista" is not
+# a supplier's card "Ramavtal".
+_WORD_ENDING = re.compile(r"(?:s|n|en|et|ns|ens|ets)?(?!\w)")
 
 
 @dataclass(frozen=True)
@@ -82,7 +87,9 @@ class Corpus:
     """All files, and for each agreement page the links to files of the corpus."""
 
     files: Mapping[str, DocumentIndex]  # by sha256
-    pages: Mapping[str, tuple[CatalogLink, ...]]  # page url -> its links, in page order
+    # Page url -> its links to files of the corpus, in the order of the input files and
+    # then of each file's links; not the order avropa.se shows them in.
+    pages: Mapping[str, tuple[CatalogLink, ...]]
 
     def pages_of(self, index: DocumentIndex) -> list[str]:
         """The pages that link a file, in the order of its links."""
@@ -186,10 +193,15 @@ def resolve_document(corpus: Corpus, index: DocumentIndex, mention: ReferenceMen
     1. A supplier's card names itself "Huvuddokumentet": SELF.
     2. The name is a link title of the file itself (the Allmänna villkor naming
        "Allmänna villkor"): SELF.
-    3. The file has a top-level chapter of that name: that chapter. A tender
+    3. The file has a top-level chapter of that name, and is a procurement
+       document or the page lists no file of that name: that chapter. A tender
        document holds the agreement documents as chapters, numbered differently
        from the published ones: 11db2f3d1852 §5.18: "I Allmänna villkor finns dock
-       en rätt för Avropsberättigad" is its own chapter 6 "Allmänna Villkor".
+       en rätt för Avropsberättigad" is its own chapter 6 "Allmänna Villkor". In
+       other files a chapter of that name only describes the document the page
+       publishes: the requirements reports' "2 Kravkatalog" (5ff547269162 §1:
+       "Dessa villkor finns i ramavtalets Huvuddokument och i Allmänna villkor
+       samt i Kravkatalog") is the page's Kravkatalog.
     4. "Upphandlingsdokumenten", the tender package: every procurement document
        and questions log of the page, AMBIGUOUS when there are several.
     5. The files of each page whose link title starts with the name or an alias
@@ -204,11 +216,13 @@ def resolve_document(corpus: Corpus, index: DocumentIndex, mention: ReferenceMen
     if any(sha256 == index.sha256 for candidates in found.values() for sha256, _ in candidates):
         return make_reference(index, mention, ReferenceStatus.SELF, "R2")
     chapter = index.chapter(name_and_aliases(mention.key))
-    if chapter is not None:
+    if chapter is not None and (
+        metadata.document_type is DocumentType.PROCUREMENT_DOCUMENT or not any(found.values())
+    ):
         return make_reference(
             index, mention, ReferenceStatus.RESOLVED, "R2", own_targets(index, chapter.position)
         )
-    if _TENDER_PACKAGE.fullmatch(mention.raw):
+    if names_tender_package(mention):
         package = by_page(
             corpus,
             index,
@@ -217,6 +231,11 @@ def resolve_document(corpus: Corpus, index: DocumentIndex, mention: ReferenceMen
         found = package if any(package.values()) else found
     outcome = page_outcome(index, mention, found, "R2")
     return outcome or make_reference(index, mention, ReferenceStatus.NOT_PUBLISHED, "R2")
+
+
+def names_tender_package(mention: ReferenceMention) -> bool:
+    """Whether a mention is "upphandlingsdokumenten", the whole tender package."""
+    return _TENDER_PACKAGE.fullmatch(mention.raw) is not None
 
 
 def resolve_named_number(
@@ -346,7 +365,7 @@ def resolve_annex_name(
         best_length = 0
         for link in corpus.links_on(page):
             title = normalise_title(link.title, join_hyphenated=True)
-            if len(title) < best_length or not key.startswith(title):
+            if len(title) < best_length or not _starts_with_word(key, title):
                 continue
             if len(title) > best_length:
                 best, best_length = [], len(title)
@@ -357,13 +376,18 @@ def resolve_annex_name(
     if outcome:
         return outcome
     name = mention.document_name or next(
-        (alias for alias in ALIASES if key.startswith(alias)), None
+        (alias for alias in ALIASES if _starts_with_word(key, alias)), None
     )
     if name:
         outcome = page_outcome(index, mention, find_document(corpus, index, name), "R5")
         if outcome:
             return outcome
     return make_reference(index, mention, ReferenceStatus.NOT_PUBLISHED, "R5")
+
+
+def _starts_with_word(name: str, start: str) -> bool:
+    """Whether `name` starts with `start` followed by the end of a word or an ending."""
+    return name.startswith(start) and _WORD_ENDING.match(name, len(start)) is not None
 
 
 # --- Section titles in other files ------------------------------------------------------

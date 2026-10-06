@@ -11,11 +11,11 @@ Why:
     (`CatalogLink.page_missing_since`, set by step 1 when the page is not
     among those listed in a fetch), so the documents read from it stay in the
     database. A document no listed page links to may no longer be in force,
-    and must not answer questions until a person has looked at it (M4 design,
-    decision 3). A file that one listed page still links to stays in: the
-    templates shared by several procurements are linked from up to 10 pages
-    (M4 survey, doctypes.md §1). In the pilot every page is listed, so no file
-    is held back.
+    and must not answer questions until a person has looked at it
+    (ADR 0009 decision 6). A file that one listed page still links to stays
+    in: in the pilot, the templates shared by several procurements are linked
+    from up to 15 pages ("Utkast till Säkerhetsskyddsavtal"). In the pilot
+    every page is listed, so no file is held back.
 
 How:
     A file is held back when it has links and all of them have

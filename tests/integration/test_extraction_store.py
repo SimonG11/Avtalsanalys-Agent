@@ -2,11 +2,11 @@
 
 What:
     Loads the sample register and a catalog with two files, stores their
-    sections, then checks what steps 4 and 5 read back (links, register
-    entries, register version), that an extraction with references, targets
-    and findings is stored and replaced, and which files and sections
-    `quarantine` holds back, including a file that step 3 stored without
-    steps 4 and 5.
+    sections, then checks what steps 4 and 5 read back (links, also the date
+    a page stopped being listed, register entries, register version), that
+    an extraction with references, targets and findings is stored and
+    replaced, and which files and sections `quarantine` holds back,
+    including a file that step 3 stored without steps 4 and 5.
 
 Why:
     The joins, the foreign keys between references and sections, and the
@@ -19,11 +19,11 @@ How:
     enligt punkt 3.1.1 ovan." The org number of the supplier is made up.
 """
 
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
-from sqlalchemy import Engine, delete, select
+from sqlalchemy import Engine, delete, select, update
 from sqlalchemy.exc import IntegrityError
 
 from avtalsagent.db import models
@@ -269,6 +269,17 @@ def test_catalog_and_register_are_read_back(stored: Engine, sample_register_xlsx
     assert set(entries) == {RegisterEntry.from_row(row) for row in normalize_rows(raw.rows).rows}
     assert len(entries) == len(set(entries))
     assert version == raw.version
+
+
+def test_a_page_no_longer_listed_is_read_back_with_the_date_it_went(stored: Engine) -> None:
+    # `fetch` marks the page (test_document_catalog.py); step 5's still_published reads it here.
+    went = datetime(2026, 10, 1, 6, 0, tzinfo=UTC)
+    with session_factory(stored).begin() as session:
+        session.execute(update(models.AgreementPage).values(missing_since=went))
+    with session_factory(stored)() as session:
+        links = catalog_links(session)
+
+    assert [item.page_missing_since for item in links] == [went, went]
 
 
 def test_saving_an_extraction_twice_replaces_it(stored: Engine) -> None:

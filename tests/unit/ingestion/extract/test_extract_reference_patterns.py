@@ -236,6 +236,90 @@ def test_a_whole_number_after_a_named_section_is_its_list_item() -> None:
     ]
 
 
+def items(found: list[ReferenceMention]) -> list[tuple[str, ReferenceStatus | None]]:
+    return [(mention.key, mention.status) for mention in found if mention.rule == "R1"]
+
+
+ITEM = ReferenceStatus.LIST_ITEM
+
+
+# These lines are from questions logs; read outside a log, the section named next to the
+# number decides, not the log. A section number with no keyword before it ("6.16.3,") is
+# no mention.
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # e083c368b16a §43: the section's number before.
+        ("Ramavtalet\n\n6.16.3, punkt 2.\n\nVite kan utgå", [("2", ITEM)]),
+        # 20c753d88340 §38: the number, then "under".
+        ("Enligt 4.1.4.1 under punkt 4 hänvisar ni till", [("4.1.4.1", None), ("4", ITEM)]),
+        # bdf58b81d100 §204: the number and the title, quoted.
+        ('Fråga gällande "5.15.3 Kammarkollegiets uppsägningsrätt" punkt 2. Vi', [("2", ITEM)]),
+        # 087f9c5a2f56 §49: the section's number after.
+        (
+            "Anbudsgivaren föreslår därför att punkt 2 i 6.16.3 ändras",
+            [("2", ITEM), ("6.16.3", None)],
+        ),
+        # 39d8c1efe373 §117: a range of items, then the section with its keyword.
+        (
+            "gäller om punkterna 1-3 i avsnitt 7.17.3 är",
+            [("1", ITEM), ("3", ITEM), ("7.17.3", None)],
+        ),
+    ],
+)
+def test_a_whole_number_next_to_a_section_number_is_its_list_item(
+    text: str, expected: list[tuple[str, ReferenceStatus | None]]
+) -> None:
+    assert items(mentions(text)) == expected
+
+
+def test_a_whole_number_before_a_named_section_is_its_list_item() -> None:
+    # Made up, like 34d71a7e4da0 §8.16.4 with the section after the item.
+    found = mentions("enligt punkt 2 i avsnitt Kammarkollegiets uppsägningsrätt.")
+
+    assert items(found) == [("2", ITEM)]
+
+
+def test_a_section_number_in_another_sentence_names_no_list() -> None:
+    # Made up.
+    found = mentions("Se 6.16.3. Enligt punkt 2 gäller följande.")
+
+    assert items(found) == [("6.16.3", None), ("2", None)]
+
+
+def test_in_a_questions_log_a_whole_number_after_punkt_is_a_list_item() -> None:
+    # 20ddb9ebf9cc §22: items of the evaluation in the tender document, not its chapters.
+    text = "att poäng kommer att erhållas för punkterna 3-5 utifall att anbudsgivare förfogar"
+
+    in_log = mentions(text, DocumentType.QUESTIONS_AND_ANSWERS, questions_log=True)
+    outside = mentions(text)
+
+    assert items(in_log) == [("3", ITEM), ("5", ITEM)]
+    assert items(outside) == [("3", None), ("5", None)]
+
+
+def test_in_a_questions_log_a_chapter_stays_a_section() -> None:
+    # 20c753d88340 §72.
+    text = "kan använda sig av Underleverantör för att uppfylla berörda krav i kapitel 4."
+
+    found = mentions(text, DocumentType.QUESTIONS_AND_ANSWERS, questions_log=True)
+
+    assert items(found) == [("4", None)]
+
+
+@pytest.mark.parametrize(
+    ("text", "keys"),
+    [
+        # bdf58b81d100 §88.
+        ("har brutit mot villkoren under punkt 1 och 2, 7 gånger under en 12 månaders", ["1", "2"]),
+        # 50edddbad6c7 §322.
+        ("Som följdändring till vår fråga på punkt 10.18.1, 1 st, frågar vi om", ["10.18.1"]),
+    ],
+)
+def test_a_number_that_counts_ends_the_list(text: str, keys: list[str]) -> None:
+    assert [key for key, _ in items(mentions(text))] == keys
+
+
 # --- 4. Section titles ---------------------------------------------------------------------
 
 

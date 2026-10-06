@@ -20,13 +20,13 @@ What:
     answer leaves the reference as it was. `MatchStats` counts the questions.
 
 Why:
-    Decision 6 of the M4 design: the model is used for these two cases only,
-    and only to choose among the headings of a file the rules already found,
-    so it can never point a reference at a file or section that is not there.
-    The survey (references.md §8) found 143 references whose title matches no
-    heading (73 distinct) and 64 document references followed by a topic.
-    difflib alone pairs 66 of the titles at a ratio of 0.85 or more, but with
-    errors, so a model judges the candidates instead of a threshold. This
+    ADR 0009 decision 5: the model is used for these two cases only, and only
+    to choose among the headings of a file the rules already found, so it can
+    never point a reference at a file or section that is not there. Mapped
+    before the rules were built, the pilot had 143 references whose title
+    matches no heading (73 distinct) and 64 document references followed by a
+    topic. difflib alone pairs 66 of the titles at a ratio of 0.85 or more, but
+    with errors, so a model judges the candidates instead of a threshold. This
     module is pure: the matcher is a plain function, the OpenAI call and its
     cache are in `ingestion/llm_title_matcher.py`, and the tests pass fakes.
 
@@ -71,8 +71,9 @@ TitleMatcher = Callable[[str, str, Sequence[str]], str | None]
 TITLE_RULE = "R4-llm"
 TOPIC_RULE = "R2-llm"
 
-# In the pilot the heading the model chose was first or second in the list in 48
-# of the 51 title questions it answered (fifth once); eight leave room to spare.
+# In the pilot the heading the model chose was first or second in the list in 47
+# of the 50 title questions it answered (fourth twice, fifth once); eight leave room
+# to spare.
 MAX_CANDIDATES = 8
 # Low on purpose, since the model and not the ratio decides: right answers in the
 # pilot start at 0.57 (54211e718d8e §9.7 "avsnitt Betalning av socialförsäkrings-

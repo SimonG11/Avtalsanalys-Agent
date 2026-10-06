@@ -8,12 +8,14 @@ where the heading says "administrationsavgift".
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 import pytest
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.runnables import RunnableLambda
+from openai import OpenAIError
 from pydantic import SecretStr
 
 from avtalsagent.config import Settings
@@ -21,6 +23,7 @@ from avtalsagent.ingestion import llm_title_matcher
 from avtalsagent.ingestion.llm_title_matcher import (
     CACHE_FILE,
     HeadingChoice,
+    LanguageModelError,
     OpenAITitleMatcher,
     openai_title_matcher,
 )
@@ -133,6 +136,48 @@ def test_another_sentence_model_or_prompt_version_is_a_new_question(
     matcher(model, cache)(PHRASE, SENTENCE, HEADINGS)
 
     assert len(model.questions) == 4
+
+
+def test_a_cache_line_cut_short_is_skipped_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    cache = tmp_path / CACHE_FILE
+    matcher(FakeModel(1), cache)(PHRASE, SENTENCE, HEADINGS)
+    with cache.open("a", encoding="utf-8") as file:
+        file.write('{"key": "ab')  # a run killed while it wrote its second answer
+
+    model = FakeModel(2)
+    with caplog.at_level(logging.WARNING, logger=llm_title_matcher.__name__):
+        second_run = matcher(model, cache)
+
+    assert second_run(PHRASE, SENTENCE, HEADINGS) == HEADINGS[0]  # the first line still counts
+    assert model.questions == []
+    assert f"{cache} line 2 is not a cache entry" in caplog.text
+    # The next answer starts on a line of its own, so a third run reads it.
+    assert second_run(PHRASE, SENTENCE, HEADINGS[::-1]) == HEADINGS[0]
+    third_run = matcher(FakeModel(None), cache)
+    assert third_run(PHRASE, SENTENCE, HEADINGS[::-1]) == HEADINGS[0]
+    assert third_run.calls == 0
+
+
+class RevokedKeyError(OpenAIError):
+    """Stands in for openai.AuthenticationError, which needs an HTTP response to be built."""
+
+
+def test_an_openai_error_stops_the_run_and_names_only_its_type(tmp_path: Path) -> None:
+    def revoked(messages: LanguageModelInput) -> HeadingChoice:
+        raise RevokedKeyError("Incorrect API key provided: sk-test-****1234.")
+
+    cache = tmp_path / CACHE_FILE
+    title_matcher = OpenAITitleMatcher(RunnableLambda(revoked), "gpt-6-luna", cache)
+
+    with pytest.raises(LanguageModelError, match=r"\(RevokedKeyError\)") as raised:
+        title_matcher(PHRASE, SENTENCE, HEADINGS)
+
+    assert "sk-" not in str(raised.value)
+    assert raised.value.__suppress_context__  # OpenAI's message is not printed with it
+    assert not cache.exists()  # an error is not cached as "no answer"
+    assert title_matcher.calls == 0
 
 
 def test_without_an_openai_key_there_is_no_matcher(tmp_path: Path) -> None:

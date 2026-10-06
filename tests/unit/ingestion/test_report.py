@@ -10,8 +10,8 @@ of Bemanningstjänster's main document). The findings' messages and evidence are
 of the pilot's checks (185c8246e536 p1 "23.3-1688-2024 IT-konsulttjänster -
 IT-säkerhet"; the coverage of 6765/05 and of Bemanningstjänster). The pages are the
 pilot's (34d71a7e4da0 on two of the four Bemanningstjänster pages, 65d611d12eab on
-"IT-konsulttjänster 3. IT-säkerhet"). The references' texts are from the M4 survey,
-references.md §1 and §4. Which agreement is covered how, the reviewer's name and the
+"IT-konsulttjänster 3. IT-säkerhet"). The references' texts are written as the pilot's
+documents write them. Which agreement is covered how, the reviewer's name and the
 "*utkast*" title are made up. 23.3-2940-20:018's card ee6107229c37 and the printout cbe12fd30683
 of its sub-area are named, but not counted among the files of the run.
 """
@@ -63,6 +63,7 @@ from avtalsagent.ingestion.report import (
     build_report,
     render_json,
     render_markdown,
+    render_report,
     write_report,
 )
 from avtalsagent.ingestion.step3_chunk import ChunkedDocument, OutlineKind
@@ -405,7 +406,7 @@ FINDINGS = [PROCUREMENT, CITATION, ORG, PARTY, SCANNED, PAGE_PERIOD, UNCOVERED]
 
 STALE = AcceptedFinding.model_validate(
     {
-        "key": f"org_numbers:{sha('8d679cb2ebef')}:556866-4444",
+        "key": f"org_numbers:quarantine:{sha('8d679cb2ebef')}:556866-4444",
         "reason": "Numret står i en lista över tidigare leverantörer.",
         "reviewer": "Signe Granskare",
         "date": date(2026, 10, 7),
@@ -421,10 +422,11 @@ def agreement(
     cards: tuple[str, ...] = (),
     main_documents: tuple[str, ...] = (),
     not_counted: tuple[NotCountedFile, ...] = (),
+    procurement: str | None = None,  # by default the number without its sequence
 ) -> AgreementCoverage:
     return AgreementCoverage(
         agreement_number=number,
-        procurement_number=number.rsplit("-", 1)[0] if "-" in number else number,
+        procurement_number=procurement or (number.rsplit("-", 1)[0] if "-" in number else number),
         framework_area=area,
         supplier_name=supplier,
         status=status,
@@ -495,6 +497,7 @@ COVERAGE = [
         "Microsoft AB",
         CoverageStatus.HELD_BACK,
         not_counted=(not_counted(MICROSOFT, NotCounted.QUARANTINED),),
+        procurement="23.5-3718-2024",  # the register has the agreement as its procurement
     ),
     agreement("6765/05", PROGRAMVAROR, "IBM Svenska AB", CoverageStatus.NOT_COVERED),
 ]
@@ -555,7 +558,7 @@ NUMBER_STATUS = {
     NO_TEXT: NumberStatus.NO_NUMBER,
     NUTS: NumberStatus.CASE_MANAGEMENT_ONLY,
     PRICE: NumberStatus.DEVIATES,
-    CALL: NumberStatus.DEVIATES,
+    CALL: NumberStatus.MATCHES,  # its own number matches; it only cites another (CITATION)
     PRINTOUT: NumberStatus.MATCHES,
     MICROSOFT: NumberStatus.CASE_MANAGEMENT_ONLY,
 }
@@ -675,6 +678,30 @@ def test_run_info_needs_timezone_aware_times() -> None:
         RunInfo(datetime(2026, 10, 6, 14, 3), START, None, AREAS, None)
 
 
+def test_the_duration_agrees_with_the_clock_times_it_follows() -> None:
+    # The pilot run took 19.53 s, from 17:02:23.456 to 17:02:42.987; the times are printed
+    # to the second, so the duration is the 19 s between them, not 20.
+    run = RunInfo(
+        started_at=datetime(2026, 10, 6, 17, 2, 23, 456262, tzinfo=UTC),
+        finished_at=datetime(2026, 10, 6, 17, 2, 42, 986656, tzinfo=UTC),
+        register_version=None,
+        areas=AREAS,
+        model=None,
+    )
+    text = part(render_markdown(build_report(run_result(), run)), "Körning")
+    assert "- **Start:** 2026-10-06 17:02:23 (UTC)\n" in text
+    assert "- **Slut:** 2026-10-06 17:02:42 (UTC), efter 19 s\n" in text
+
+    # 0.2 s that cross a whole second (made up): the clock times say 1 s, not 0.
+    short = replace(
+        run,
+        started_at=datetime(2026, 10, 6, 17, 2, 23, 900000, tzinfo=UTC),
+        finished_at=datetime(2026, 10, 6, 17, 2, 24, 100000, tzinfo=UTC),
+    )
+    text = part(render_markdown(build_report(run_result(), short)), "Körning")
+    assert "- **Slut:** 2026-10-06 17:02:24 (UTC), efter 1 s\n" in text
+
+
 # --- Dokument ------------------------------------------------------------------------------
 
 
@@ -746,8 +773,20 @@ def test_files_with_scanned_pages_list_the_pages_in_runs(
 ) -> None:
     assert [item.file.sha256 for item in report.documents.ocr_files] == [TERMS, NO_TEXT]
     documents = part(markdown, "Dokument")
-    assert "| Allmänna villkor (`e04bad6a0ced`) | 1, 6–13 | 31 |" in documents
-    assert "| Volymavtal (`21dd4fde89d5`) | 1–10 | 10 |" in documents
+    assert "| Allmänna villkor (`e04bad6a0ced`) | 1, 6-13 | 31 |" in documents
+    assert "| Volymavtal (`21dd4fde89d5`) | 1-10 | 10 |" in documents
+
+
+def test_scanned_pages_are_written_as_the_missing_text_check_writes_them(
+    report: IngestionReport,
+) -> None:
+    # e04bad6a0ced in the pilot. Its missing_text note has the subject "s. 1, 6-13, 15-21,
+    # 24-25, 27-30"; the Dokument table gives the same pages the same way.
+    pages = (1, *range(6, 14), *range(15, 22), 24, 25, *range(27, 31))
+    terms = report.documents.ocr_files[0].model_copy(update={"pages": pages})
+    documents = report.documents.model_copy(update={"ocr_files": (terms,)})
+    markdown = render_markdown(report.model_copy(update={"documents": documents}))
+    assert "| Allmänna villkor (`e04bad6a0ced`) | 1, 6-13, 15-21, 24-25, 27-30 | 31 |" in markdown
 
 
 def test_files_no_page_links_to_any_more_are_listed(report: IngestionReport, markdown: str) -> None:
@@ -768,6 +807,16 @@ def test_sections_chunks_and_outlines_are_counted(report: IngestionReport) -> No
         OutlineKind.NONE: 3,
     }
     assert [ref.sha256 for ref in sections.without_sections] == [NO_TEXT]
+
+
+def test_a_section_is_not_said_to_be_numbered(markdown: str) -> None:
+    # 43 of the pilot's 207 files have headings without numbers, questions or no headings.
+    text = part(markdown, "Avsnitt och chunkar")
+    assert (
+        "Ett avsnitt är texten under en rubrik (”14.2 Leverantörens uppsägning”) eller före den "
+        "första, en fråga i en frågelogg, eller hela filen när den saknar rubriker;" in text
+    )
+    assert "numrerat avsnitt" not in text
 
 
 def test_a_table_of_contents_with_numbers_that_are_no_section_is_listed(
@@ -791,25 +840,57 @@ def test_each_files_numbers_are_counted_and_deviating_files_named(
 ) -> None:
     match = report.register_match
     assert match.by_status == {
-        NumberStatus.MATCHES: 4,
+        NumberStatus.MATCHES: 5,
         NumberStatus.NO_NUMBER: 3,
         NumberStatus.CASE_MANAGEMENT_ONLY: 2,
-        NumberStatus.DEVIATES: 2,
+        NumberStatus.DEVIATES: 1,
     }
     assert [(item.file.sha256, item.numbers) for item in match.deviating] == [
         (PRICE, {"23.3-1688-2024": Severity.QUARANTINE}),
-        (CALL, {"23.3-7067-2017": Severity.NOTE}),
     ]
     text = part(markdown, "Stämmer med registret")
-    assert "| Avviker | 2 |" in text
-    assert "- Prisbilaga - sammanställning Delområde 3 (`185c8246e536`): 23.3-1688-2024 " in text
+    assert "Varje fils egna diarie- och avtalsnummer jämförs" in text
+    # 54211e718d8e cites 23.3-7067-17 in parentheses: a note, not a file that deviates.
+    assert (
+        "Ett nummer som dokumentet citerar inom parentes ändrar inte utfallet; hör det till en "
+        "annan upphandling står det som en notering under Fynd." in text
+    )
+    assert "| Avviker | 1 |" in text
+    assert (
+        "- Prisbilaga - sammanställning Delområde 3 (`185c8246e536`): 23.3-1688-2024 (karantän)"
+        in text
+    )
 
 
 def test_a_deviating_file_lists_only_the_numbers_of_the_procurement_number_check() -> None:
     other = ORG.model_copy(update={"sha256": PRICE})  # another check's finding on the file
     report = build_report(run_result(findings=[PROCUREMENT, other]), RUN)
-    [price, _] = report.register_match.deviating
+    [price] = report.register_match.deviating
     assert price.numbers == {"23.3-1688-2024": Severity.QUARANTINE}
+
+
+def test_an_accepted_number_is_labelled_accepted_not_by_its_severity() -> None:
+    # Accepting 185c8246e536's number leaves the finding's severity as it was; the file is
+    # released (not in the quarantine below), so this section must not say "karantän".
+    accepted = PROCUREMENT.model_copy(update={"accepted_reason": "Rubriken är fel, inte filen."})
+    held = Quarantine(files=frozenset({MICROSOFT}), sections=frozenset({(TERMS, 1)}))
+    report = build_report(run_result(findings=[accepted, ORG, SCANNED], quarantine=held), RUN)
+
+    [price] = report.register_match.deviating
+    assert price.numbers == {"23.3-1688-2024": "accepted"}
+    markdown = render_markdown(report)
+    text = part(markdown, "Stämmer med registret")
+    assert (
+        "- Prisbilaga - sammanställning Delområde 3 (`185c8246e536`): 23.3-1688-2024 (godkänd)"
+        in text
+    )
+    assert "(karantän)" not in text
+    assert "185c8246e536" not in part(markdown, "Karantän")
+    data = render_json(report)
+    assert json.loads(data)["register_match"]["deviating"][0]["numbers"] == {
+        "23.3-1688-2024": "accepted"
+    }
+    assert IngestionReport.model_validate_json(data) == report
 
 
 # --- Täckning ------------------------------------------------------------------------------
@@ -837,10 +918,11 @@ def test_agreements_not_covered_come_in_the_coverage_checks_groups(
     report: IngestionReport,
 ) -> None:
     groups = report.coverage.groups
-    # By status, then in the order of the run's areas.
+    # By status, then in the order of the run's areas. A group's subject is its
+    # procurement, also for one agreement, unless that agreement is not covered.
     assert [(group.status, group.subject) for group in groups] == [
         (CoverageStatus.PROCUREMENT_VERSION, "23.3-14537-2023"),
-        (CoverageStatus.PROCUREMENT_VERSION, "23.3-2940-20:018"),
+        (CoverageStatus.PROCUREMENT_VERSION, "23.3-2940-20"),
         (CoverageStatus.HELD_BACK, "23.5-3718-2024"),
         (CoverageStatus.NOT_COVERED, "6765/05"),
     ]
@@ -961,7 +1043,18 @@ def test_references_are_counted_per_kind(report: IngestionReport) -> None:
     assert ReferenceKind.ANNEX_NUMBER not in kinds
 
 
-# --- Avvikelser ----------------------------------------------------------------------------
+# --- Fynd ----------------------------------------------------------------------------------
+
+
+def test_findings_of_every_severity_are_called_fynd(markdown: str) -> None:
+    # A note is no deviation (ADR 0009 decision 6), so the count and the headings say "fynd".
+    summary = part(markdown, "Sammanfattning")
+    assert "- 6 fynd: karantän 3, rapport 2, notering 1. 1 godkänt." in summary
+    assert "avvikelse" not in summary
+    assert "**Notering:** värt att veta, ingen avvikelse." in part(markdown, "Fynd")
+    assert "står under Fynd, Täckning." in part(markdown, "Täckning")
+    assert "## Godkända fynd\n" in markdown
+    assert "## Avvikelser" not in markdown
 
 
 def test_findings_are_counted_per_check_and_severity(report: IngestionReport) -> None:
@@ -984,11 +1077,11 @@ def test_open_findings_come_quarantine_first_and_leave_out_the_accepted(
     assert open_findings == [PROCUREMENT, ORG, SCANNED, PAGE_PERIOD, UNCOVERED, CITATION]
     assert PARTY not in open_findings
     keys = [item.key for item in report.findings.open]
-    assert keys[0] == f"procurement_number:{PRICE}:23.3-1688-2024"
+    assert keys[0] == PROCUREMENT.key
 
 
 def test_each_finding_is_printed_under_its_severity_and_check(markdown: str) -> None:
-    text = part(markdown, "Avvikelser")
+    text = part(markdown, "Fynd")
     assert "| Diarienummer | " in text
     assert "| 1 | 0 | 1 | 0 |" in text  # Diarienummer: Q, R, N, accepted
     quarantine = text.index("### Karantän (3)")
@@ -999,12 +1092,12 @@ def test_each_finding_is_printed_under_its_severity_and_check(markdown: str) -> 
         "  - Diarienumret 23.3-1688-2024 (s. 1) tillhör inte upphandlingen" in text
     )
     assert "  - Underlag: ”23.3-1688-2024 IT-konsulttjänster - IT-säkerhet”" in text
-    assert f"  - Nyckel: `procurement_number:{PRICE}:23.3-1688-2024`" in text
+    assert f"  - Nyckel: `{PROCUREMENT.key}`" in text
     assert "- Allmänna villkor (`e04bad6a0ced`), avsnitt 7.16 Prismodeller\n" in text
 
 
 def test_a_finding_about_a_page_or_an_agreement_is_named_by_it(markdown: str) -> None:
-    text = part(markdown, "Avvikelser")
+    text = part(markdown, "Fynd")
     assert f"- Sidan [{PAGE_TITLE}]({PAGE}): 2025-04-22 - 2029-04-21" in text
     assert "- Avtal 6765/05\n" in text  # the subject is the agreement; not repeated
 
@@ -1013,7 +1106,7 @@ def test_a_page_no_link_of_the_run_is_on_is_named_by_its_address() -> None:
     markdown = render_markdown(build_report(run_result(links=[]), RUN))
     assert (
         "- Sidan [bemanningstjanster---kontorstjanster-upp-till-1000-timmar]"
-        f"({PAGE}): 2025-04-22 - 2029-04-21" in part(markdown, "Avvikelser")
+        f"({PAGE}): 2025-04-22 - 2029-04-21" in part(markdown, "Fynd")
     )
 
 
@@ -1028,7 +1121,7 @@ def test_a_coverage_finding_about_a_group_is_named_by_its_procurement() -> None:
         ),
     )
     markdown = render_markdown(build_report(run_result(findings=[group]), RUN))
-    assert "- Avtal i 23.3-14537-2023\n  - 33 avtal inom" in part(markdown, "Avvikelser")
+    assert "- Avtal i 23.3-14537-2023\n  - 33 avtal inom" in part(markdown, "Fynd")
 
 
 # --- Karantän ------------------------------------------------------------------------------
@@ -1048,7 +1141,7 @@ def test_quarantine_lists_files_and_sections_with_the_findings_that_hold_them(
         1,
         "7.16 Prismodeller",
     )
-    assert [f.key for f in scanned.findings] == [f"missing_text:{TERMS}:7.16 Prismodeller"]
+    assert [f.key for f in scanned.findings] == [SCANNED.key]
 
 
 def test_quarantine_says_how_to_accept_a_finding(markdown: str) -> None:
@@ -1057,7 +1150,7 @@ def test_quarantine_says_how_to_accept_a_finding(markdown: str) -> None:
     assert "[[accepted]]" in text
     assert "date = 2026-10-06" in text
     assert "- **Volymavtalets huvudavtal 1.0 (`171a3cacf5fd`)**" in text
-    assert f"Nyckel: `org_numbers:{MICROSOFT}:502052-1307`" in text
+    assert f"Nyckel: `{ORG.key}`" in text
     assert "- **Allmänna villkor (`e04bad6a0ced`)**, avsnitt 7.16 Prismodeller" in text
 
 
@@ -1090,14 +1183,14 @@ def test_nothing_held_back_is_said_plainly() -> None:
     assert part(render_markdown(report), "Karantän").endswith("Inget hålls tillbaka.")
 
 
-# --- Godkända avvikelser -------------------------------------------------------------------
+# --- Godkända fynd -------------------------------------------------------------------------
 
 
 def test_accepted_findings_are_listed_with_their_reason(
     report: IngestionReport, markdown: str
 ) -> None:
     assert [item.finding for item in report.accepted.findings] == [PARTY]
-    text = part(markdown, "Godkända avvikelser")
+    text = part(markdown, "Godkända fynd")
     assert (
         "- Ramavtal 23.3-2940-20:033 (`7a49e1a61b31`) – Leverantör i avtalet: 556866-4444" in text
     )
@@ -1172,7 +1265,7 @@ def test_a_count_of_one_takes_the_singular(report: IngestionReport) -> None:
 
     for phrase in (
         "- 1 fil lästes in och gav 12 avsnitt och 1 chunk.",
-        "- 1 avvikelse: karantän 1, rapport 0, notering 0. 1 godkänd.",
+        "- 1 fynd: karantän 1, rapport 0, notering 0. 1 godkänt.",
         "- I karantän: 1 fil och 1 avsnitt.",
         "- Täckning: 1 av 2 avtal är täckt; 0 har bara upphandlingens version",
         "0 bara dokument i karantän och 1 är inte täckt.",
@@ -1230,7 +1323,7 @@ def test_the_json_holds_the_whole_report_and_reads_back(report: IngestionReport)
     data = json.loads(text)
     assert data["references"]["counted"] == 13
     assert data["documents"]["by_type"][0]["document_type"] == "supplier_agreement"
-    assert data["findings"]["open"][0]["key"] == f"procurement_number:{PRICE}:23.3-1688-2024"
+    assert data["findings"]["open"][0]["key"] == PROCUREMENT.key
     assert "sammanställning Delområde 3" in text  # written as UTF-8, not \\u escapes
 
 
@@ -1238,7 +1331,7 @@ def test_the_report_is_written_as_markdown_and_json_named_after_the_start(
     report: IngestionReport, tmp_path: Path
 ) -> None:
     folder = tmp_path / "data" / "reports"
-    markdown, data = write_report(report, folder)
+    markdown, data = write_report(render_report(report), folder)
     assert markdown == folder / "2026-10-06T140312-inlasning.md"
     assert data == folder / "2026-10-06T140312-inlasning.json"
     assert markdown.read_text(encoding="utf-8") == render_markdown(report)
@@ -1247,5 +1340,5 @@ def test_the_report_is_written_as_markdown_and_json_named_after_the_start(
 
 def test_the_start_in_utc_names_the_file_by_its_own_clock(tmp_path: Path) -> None:
     run = RunInfo(datetime(2026, 10, 6, 12, 3, 12, tzinfo=UTC), START, None, AREAS, None)
-    markdown, _ = write_report(build_report(run_result(), run), tmp_path)
+    markdown, _ = write_report(render_report(build_report(run_result(), run)), tmp_path)
     assert markdown.name == "2026-10-06T120312-inlasning.md"

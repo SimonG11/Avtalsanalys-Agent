@@ -17,14 +17,15 @@ Why:
 
 How:
     SQLAlchemy statements on the tables in `db/models.py`. Each run replaces
-    all rows, so files that are gone disappear. The pipeline calls
-    `save_sections`, `save_extraction` and `save_findings` in one transaction,
-    so the stored facts, references and findings always belong to the stored
-    sections. `save_sections` alone deletes every parsed_file row, which
-    cascades to the extraction tables; the files it inserts again then have no
-    document_metadata row, and `quarantine` counts each of them as unchecked
-    until steps 4 and 5 have run. Findings have no foreign key and are not
-    cascaded, so a file whose parse failed can still have one.
+    all rows, so files that are gone disappear. The `process` command
+    (`ingestion/__main__.py`) calls `save_sections`, `save_extraction` and
+    `save_findings` in one transaction, so the stored facts, references and
+    findings always belong to the stored sections. `save_sections` alone
+    deletes every parsed_file row, which cascades to the extraction tables;
+    the files it inserts again then have no document_metadata row, and
+    `quarantine` counts each of them as unchecked until steps 4 and 5 have
+    run. Findings have no foreign key and are not cascaded, so a file whose
+    parse failed can still have one.
 """
 
 from collections.abc import Sequence

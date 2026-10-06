@@ -16,9 +16,9 @@ Why:
     supplier's number: the generic main document for IT-säkerhet has supplier
     001's number in its page headers, 65d611d12eab p2 [page_header]:
     "23.3-8321-2024-001 IT-konsulttjänster - IT-säkerhet", while its text has
-    the unfilled "23.3-8321-2024-XXX" (M4 survey, identifiers.md §2). Such a
-    file could be taken for supplier 001's own agreement, so it is held back
-    until a person has looked at it (M4 design, decision 3).
+    the unfilled "23.3-8321-2024-XXX". Such a file could be taken for
+    supplier 001's own agreement, so it is held back until a person has
+    looked at it (ADR 0009 decision 6).
 
 How:
     Only AGREEMENT_NUMBER facts with the role SELF count; a number in

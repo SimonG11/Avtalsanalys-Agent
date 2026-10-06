@@ -1,10 +1,12 @@
 """Tests for avtalsagent.ingestion.__main__, the command line.
 
 The commands that read or write the database (`fetch`, `parse`, `process`,
-`run`, `outline`) are not run here: there is no database in the unit tests,
-and they only pass values between the steps. What they decide on their own is
-tested: the commands and options, the check of the run's framework areas, which
-files have a parse result, and the log line of each step. The findings, hashes
+`run`, `outline`) mostly pass values between the steps, and there is no
+database in the unit tests. What they decide on their own is tested: the
+commands and options, the check of the run's framework areas, which files have
+a parse result, and the log line of each step. `process` is also run with
+stand-ins for the database: the report is rendered before the save and written
+after it, and a missing accepted findings file is logged. The findings, hashes
 and numbers are those of the pilot run (M4, 2026-10-05 register): Microsoft
 Ireland's organisation number in 171a3cacf5fd, the scanned section 7.16 of
 e04bad6a0ced, and 6765/05 (IBM), whose main document step 1 does not fetch.
@@ -13,11 +15,14 @@ e04bad6a0ced, and 6765/05 (IBM), whose main document step 1 does not fetch.
 import logging
 from collections import Counter
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from avtalsagent.config import Settings
 from avtalsagent.domain.extracted import (
     DocumentExtraction,
     DocumentMetadata,
@@ -32,20 +37,24 @@ from avtalsagent.domain.extracted import (
     ReferenceStatus,
     Severity,
 )
-from avtalsagent.domain.parsed import Block, BlockKind, Chunk, ParsedDocument, Section
+from avtalsagent.domain.parsed import Block, BlockKind, Chunk, PageInfo, ParsedDocument, Section
 from avtalsagent.domain.register import RegisterEntry
+from avtalsagent.ingestion import __main__ as cli
 from avtalsagent.ingestion.__main__ import (
     build_parser,
     check_areas,
     configure_logging,
     counts_text,
     load_parsed,
+    process,
     step_lines,
 )
 from avtalsagent.ingestion.catalog import UnknownAreaError
 from avtalsagent.ingestion.checks.coverage import AgreementCoverage, CoverageStatus
 from avtalsagent.ingestion.extract.title_matcher import MatchStats
+from avtalsagent.ingestion.llm_title_matcher import LanguageModelError
 from avtalsagent.ingestion.pipeline import IngestionResult
+from avtalsagent.ingestion.report import build_report, write_report
 from avtalsagent.ingestion.step2_parse import SourceFile, cache_path
 from avtalsagent.ingestion.step3_chunk import ChunkedDocument, OutlineKind
 from avtalsagent.ingestion.step4_extract import CorpusExtraction
@@ -78,7 +87,7 @@ class TestCommands:
         assert build_parser().parse_args(["fetch", "--area", "IT-drift"]).area == ["IT-drift"]
 
     def test_chunk_is_replaced_by_process(self) -> None:
-        # Step 3 alone would store sections without their checks (M4 design §4).
+        # Step 3 alone would store sections without their checks (ADR 0009 decision 11).
         with pytest.raises(SystemExit):
             build_parser().parse_args(["chunk"])
 
@@ -244,7 +253,7 @@ SCANNED_NOTE = Finding(
 )
 ACCEPTED = AcceptedFinding.model_validate(
     {
-        "key": "org_numbers:" + "1" * 64 + ":556866-4444",
+        "key": "org_numbers:quarantine:" + "1" * 64 + ":556866-4444",
         "reason": "Påhittat godkännande för testet.",
         "reviewer": "Testare",
         "date": date(2026, 10, 7),
@@ -313,7 +322,7 @@ class TestStepLines:
         assert lines == [
             "Step 3: 2 files, 5 sections, 6 chunks (numbered 2, questions 0, headings 0, none 0); "
             "left out, no page links to them: 1",
-            # SELF and LAW are not in the rate (M4 design, decision 5): 2 of 3.
+            # SELF and LAW are not in the rate (ADR 0009 decision 9): 2 of 3.
             "Step 4: 3 facts, 5 references; resolved 2 of 3 counted (66.7%), by the rules alone "
             "33.3%; language model: asked 2, answered 1, calls 1, from the cache 1",
             "Step 5: 3 findings (quarantine 2, report 0, note 0, accepted 1); quarantine: files 1, "
@@ -324,6 +333,33 @@ class TestStepLines:
 
     def test_a_run_without_the_language_model_says_so(self) -> None:
         assert step_lines(result(None))[1].endswith("; language model not used")
+
+    def test_the_pages_of_an_e_signature_certificate_are_counted(self) -> None:
+        # 185872a6bb90 p18, the certificate after the last page of a signed card.
+        certificate = [
+            "Signaturerna i detta dokument är juridiskt bindande.",
+            "AbCdEfGhIjKlMnOpQrStUv 2023-02-22 15:14",
+            "Dokumentet är skyddat med ett Adobe CDS-certifikat.",
+        ]
+        card = parsed(MICROSOFT_MAIN).model_copy(
+            update={
+                "pages": tuple(
+                    PageInfo(number=n, char_count=900, needs_ocr=False) for n in (17, 18)
+                ),
+                "blocks": (
+                    Block(kind=BlockKind.TEXT, text="Ramavtal", page=17),
+                    *(Block(kind=BlockKind.TEXT, text=text, page=18) for text in certificate),
+                ),
+            }
+        )
+        signed = result(None)
+        signed.parsed[0] = card
+
+        assert step_lines(signed)[0].endswith(
+            "; left out, no page links to them: 1; "
+            "e-signature certificates left out: files 1, pages 1"
+        )
+        assert "certificates" not in step_lines(result(None))[0]
 
 
 def test_counts_are_given_for_every_kind_in_order() -> None:
@@ -353,11 +389,151 @@ class TestConfigureLogging:
         assert logging.getLogger("avtalsagent.ingestion").isEnabledFor(logging.DEBUG)
 
     def test_libraries_log_warnings_only(self, package_logger: logging.Logger) -> None:
-        # httpx logs every request at INFO; fetch makes hundreds.
+        # httpx logs every request at INFO; fetch makes hundreds. pytest has put handlers on
+        # the root logger, which would make basicConfig do nothing: without them, as when
+        # the command starts (the fixture puts them back).
+        logging.getLogger().handlers.clear()
+
         configure_logging("INFO")
 
+        root = logging.getLogger()
+        assert root.level == logging.WARNING
+        assert root.handlers  # the package's lines are printed
         assert not logging.getLogger("httpx").isEnabledFor(logging.INFO)
+        assert logging.getLogger("avtalsagent.ingestion").isEnabledFor(logging.INFO)
 
     def test_an_unknown_level_fails_at_start(self, package_logger: logging.Logger) -> None:
         with pytest.raises(ValueError, match="Unknown level"):
             configure_logging("LOUD")
+
+
+# --- process: the save and the report ---------------------------------------------------------
+
+
+class FakeDatabase:
+    """Stands in for `session_factory(...)` and records what `process` does, in order."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    @contextmanager
+    def __call__(self) -> Iterator[None]:  # a session that only reads
+        yield None
+
+    @contextmanager
+    def begin(self) -> Iterator[None]:  # a transaction: committed when the block ends
+        yield None
+        self.events.append("commit")
+
+
+@pytest.fixture
+def database(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeDatabase:
+    """`process` on an IT-drift register with no files, its database and model replaced."""
+    db = FakeDatabase()
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        accepted_findings_file=tmp_path / "accepted_findings.toml",
+        openai_api_key=None,
+    )
+
+    def record(event: str, wrapped: Any = None) -> Any:
+        def step(*args: Any) -> Any:
+            db.events.append(event)
+            return wrapped(*args) if wrapped else None
+
+        return step
+
+    replaced: dict[str, Any] = {
+        "get_settings": lambda: settings,
+        "create_db_engine": lambda: None,
+        "session_factory": lambda engine: db,
+        "source_files": lambda session, data_dir: [],
+        "catalog_links": lambda session: [],
+        "register_entries": lambda session: [entry("IT-drift")],
+        "register_version": lambda session: None,
+        "openai_title_matcher": lambda settings: None,
+        "save_sections": record("save_sections"),
+        "save_extraction": record("save_extraction"),
+        "save_findings": record("save_findings"),
+        "build_report": record("build_report", build_report),
+        "write_report": record("write_report", write_report),
+    }
+    for name, value in replaced.items():
+        monkeypatch.setattr(cli, name, value)
+    return db
+
+
+class TestProcess:
+    def test_the_report_is_built_before_the_save_and_written_after_it(
+        self, database: FakeDatabase, tmp_path: Path
+    ) -> None:
+        process(["IT-drift"])
+
+        assert database.events == [
+            "build_report",
+            "save_sections",
+            "save_extraction",
+            "save_findings",
+            "commit",
+            "write_report",
+        ]
+        assert len(list((tmp_path / "data" / "reports").glob("*-inlasning.*"))) == 2
+
+    def test_a_report_that_fails_saves_nothing(
+        self, database: FakeDatabase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A failed run leaves the previous run's results in place, also when the report fails.
+        def broken(*args: Any) -> None:
+            database.events.append("build_report")
+            raise RuntimeError("a finding the report cannot render")
+
+        monkeypatch.setattr(cli, "build_report", broken)
+
+        with pytest.raises(RuntimeError, match="cannot render"):
+            process(["IT-drift"])
+
+        assert database.events == ["build_report"]
+
+    def test_a_missing_accepted_findings_file_is_logged(
+        self, database: FakeDatabase, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A mistyped ACCEPTED_FINDINGS_FILE would otherwise accept nothing without a word.
+        with caplog.at_level(logging.WARNING, logger="avtalsagent.ingestion"):
+            process(["IT-drift"])
+
+        [warning] = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning.getMessage().startswith("No accepted findings file at ")
+        assert warning.getMessage().endswith("accepted_findings.toml, so no deviation is accepted")
+
+    def test_an_accepted_findings_file_without_entries_is_not_warned_about(
+        self, database: FakeDatabase, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        (tmp_path / "accepted_findings.toml").write_text("# Inga godkännanden.\n")
+
+        with caplog.at_level(logging.WARNING, logger="avtalsagent.ingestion"):
+            process(["IT-drift"])
+
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_a_language_model_error_stops_the_command_with_its_message(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def fail(areas: list[str]) -> None:
+        raise LanguageModelError("the language model gpt-6-luna could not be asked (APIError)")
+
+    monkeypatch.setattr(cli, "process", fail)
+    monkeypatch.setattr(cli, "configure_logging", lambda level: None)
+    monkeypatch.setattr("sys.argv", ["avtalsagent.ingestion", "process", "--area", "IT-drift"])
+
+    with (
+        caplog.at_level(logging.ERROR, logger="avtalsagent.ingestion"),
+        pytest.raises(SystemExit) as stopped,
+    ):
+        cli.main()
+
+    assert stopped.value.code == 1
+    assert caplog.messages == [
+        "process: the language model gpt-6-luna could not be asked (APIError)"
+    ]

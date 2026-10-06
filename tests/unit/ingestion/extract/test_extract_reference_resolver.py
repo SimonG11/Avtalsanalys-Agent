@@ -605,6 +605,46 @@ def test_r2_a_lower_section_of_that_name_is_no_chapter() -> None:
     assert reference.targets == (target("villkor"),)
 
 
+def test_r2_outside_a_tender_document_the_pages_file_comes_before_a_chapter() -> None:
+    # 5ff547269162 §1: a requirements report has a chapter "2 Kravkatalog" that quotes
+    # the page's Kravkatalog, which the sentence names.
+    text = (
+        "Dessa villkor finns i ramavtalets Huvuddokument och i Allmänna villkor samt i Kravkatalog."
+    )
+    sections = (section(0, "1", "Inledning", text), section(1, "2", "Kravkatalog"))
+    catalogue = document("kravkatalog", "Kravkatalog", T.REQUIREMENTS_CATALOGUE)
+
+    reference = document_reference(
+        text,
+        "Kravkatalog",
+        "kravkatalog",
+        T.REQUIREMENTS_REPORT,
+        catalogue,
+        referring_title="Redovisning av informationssäkerhetskrav",
+        sections=sections,
+    )
+
+    assert (reference.status, reference.targets) == (S.RESOLVED, (target("kravkatalog"),))
+
+
+def test_r2_outside_a_tender_document_a_chapter_counts_when_the_page_has_no_such_file() -> None:
+    # e0db1184576c §pos7: the licence terms' navigation bar names their own section
+    # "Allmänna villkor"; the Microsoft page has no file of that name.
+    text = "Innehållsförteckning →\n\nIntroduktion Allmänna villkor Dataskyddsvillkor"
+    sections = (section(0, None, "Tidigare versioner", text), section(1, None, "Allmänna villkor"))
+
+    reference = document_reference(
+        text,
+        "Allmänna villkor",
+        "allmänna villkor",
+        T.LICENCE_TERMS,
+        referring_title="Bilaga 10.1 Villkor för Dataskyddstillägg-DPA",
+        sections=sections,
+    )
+
+    assert (reference.status, reference.targets) == (S.RESOLVED, (target("referring", 1),))
+
+
 def test_r2_a_family_of_files_on_one_page_is_ambiguous() -> None:
     # 198d61824b3b §6.19: three levels of Säkerhetsskyddsavtal on every page.
     text = "kan framgå av eventuellt Säkerhetsskyddsavtal samt personuppgiftsbiträdesavtal"
@@ -994,6 +1034,48 @@ def test_r5_a_word_broken_over_two_lines_still_matches() -> None:
     assert (reference.status, reference.rule) == (S.SELF, "R5")
 
 
+def test_r5_a_link_title_must_end_where_a_word_of_the_name_ends() -> None:
+    # Made up: two suppliers' cards "Ramavtal" are no "Ramavtalsleverantörens prislista".
+    text = "Priserna framgår av bilaga Ramavtalsleverantörens prislista."
+    cards = [document(f"ramavtal-{n}", "Ramavtal", T.SUPPLIER_AGREEMENT) for n in (1, 2)]
+
+    reference = annex_name(text, "Ramavtalsleverantörens prislista", *cards)
+
+    assert (reference.status, reference.targets) == (S.NOT_PUBLISHED, ())
+
+
+@pytest.mark.parametrize(
+    ("text", "key", "title"),
+    [
+        # 49f36699a469 §2.5: a genitive.
+        (
+            "för vissa konsulttjänster enligt bilaga Kravkatalogs definitioner enligt följande;",
+            "Kravkatalogs definitioner enligt följande",
+            "Kravkatalog",
+        ),
+        # Made up: a definite form.
+        ("Avropet görs enligt bilaga Avropsmallen.", "Avropsmallen", "Avropsmall"),
+    ],
+)
+def test_r5_a_link_title_may_be_followed_by_an_ending(text: str, key: str, title: str) -> None:
+    # Without the mention's document name only the link title decides.
+    linked = document("linked", title, T.TEMPLATE)
+
+    reference = annex_name(text, key, linked)
+
+    assert (reference.status, reference.targets) == (S.RESOLVED, (target("linked"),))
+
+
+def test_r5_an_alias_may_be_followed_by_an_ending() -> None:
+    # Made up, like 34d71a7e4da0 §8.10.1.
+    text = "Ramavtalsleverantörens priser anges i bilaga Prisbilagan."
+    prices = document("prisbilaga", "Prisbilaga - sammanställning Delområde 1", T.PRICE_ANNEX)
+
+    reference = annex_name(text, "Prisbilagan", prices)
+
+    assert (reference.status, reference.targets) == (S.RESOLVED, (target("prisbilaga"),))
+
+
 # --- Questions-and-answers logs --------------------------------------------------------
 
 # A TendSign log entry; the dates are those of bdf58b81d100 §122 (answer before question).
@@ -1190,6 +1272,34 @@ def test_the_date_does_not_choose_among_a_log_and_tender_documents() -> None:
     reference = resolved(log, *tender_files)
 
     assert (reference.status, len(reference.targets)) == (S.AMBIGUOUS, 3)
+
+
+# 50edddbad6c7 §436.
+SIGNED = "Det är den svenska versionen enligt upphandlingsdokumenten som ska vara signerad"
+
+
+@pytest.mark.parametrize(
+    ("offer_on", "status", "targets"),
+    [
+        # Both phases were out before the question (2024-05-30): the whole package.
+        (date(2024, 5, 2), S.AMBIGUOUS, ("ansokan", "anbud")),
+        # Only the Ansökningsinbjudan was out.
+        (date(2024, 9, 5), S.RESOLVED, ("ansokan",)),
+    ],
+)
+def test_the_date_leaves_the_tender_package_whole(
+    offer_on: date, status: ReferenceStatus, targets: tuple[str, ...]
+) -> None:
+    log = log_with(SIGNED, "upphandlingsdokumenten", K.DOCUMENT, "upphandlingsdokument", "R2")
+    application = document(
+        "ansokan", "Ansökningsinbjudan", T.PROCUREMENT_DOCUMENT, published_on=date(2023, 9, 4)
+    )
+    offer = document("anbud", "Anbudsinbjudan", T.PROCUREMENT_DOCUMENT, published_on=offer_on)
+
+    reference = resolved(log, application, offer)
+
+    assert (reference.status, reference.rule) == (status, "R2")
+    assert reference.targets == tuple(target(sha256) for sha256 in targets)
 
 
 def test_the_date_chooses_only_in_a_log() -> None:

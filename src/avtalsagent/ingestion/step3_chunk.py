@@ -159,6 +159,12 @@ _MIN_CONTENTS_ENTRIES = 3  # fewer numbered entries are not a table of contents 
 # page of a signed card, and words such as "verifierar" also occur in agreement text.
 _CERTIFICATE = re.compile(r"Adobe CDS", re.IGNORECASE)
 _LEGALLY_BINDING = re.compile(r"juridiskt? bind[ae]nde", re.IGNORECASE)
+# The page must also say when someone signed: "<signer id> 2023-02-22 15:14" (185872a6bb90
+# p18), "2022-11-25 10:43" (a09791e460a4 p27), on the first certificate page in all 25
+# signed cards of the pilot. Agreement text that names both markers ("Signaturerna är
+# juridiskt bindande ... Adobe CDS-certifikat") is then not taken for the certificate,
+# which would remove that page and every page after it.
+_SIGNED_AT = re.compile(r"(?<![\d.-])(?:19|20)\d{2}-\d{2}-\d{2} \d{2}:\d{2}(?!\d)")
 _CONTENTS_TITLES = {"innehåll", "innehållsförteckning", "table of contents", "contents"}
 
 
@@ -291,14 +297,16 @@ def body_blocks(document: ParsedDocument) -> list[Block]:
 def signature_certificate_page(blocks: Sequence[Block]) -> int | None:
     """The first page of an e-signature certificate, or None (see `_CERTIFICATE`).
 
-    It is the first PDF page on which a block that is not a page header or footer
-    mentions the "Adobe CDS" certificate and one says the signatures are legally
-    binding. The certificate runs to the end of the file: in the IT-konsulttjänster
-    2020 cards its list of documents goes on to the next page. Word files have no
-    pages and no certificate.
+    It is the first PDF page on which blocks that are not page headers or footers
+    mention the "Adobe CDS" certificate, say the signatures are legally binding
+    and give the date and time of a signature (`_SIGNED_AT`). The certificate runs
+    to the end of the file: in the IT-konsulttjänster 2020 cards its list of
+    documents goes on to the next page. Word files have no pages and no
+    certificate.
     """
     certificate: set[int] = set()
     binding: set[int] = set()
+    signed: set[int] = set()
     for block in blocks:
         if block.page is None or block.kind in _HEADER_KINDS:
             continue
@@ -306,7 +314,9 @@ def signature_certificate_page(blocks: Sequence[Block]) -> int | None:
             certificate.add(block.page)
         if _LEGALLY_BINDING.search(block.text):
             binding.add(block.page)
-    return min(certificate & binding, default=None)
+        if _SIGNED_AT.search(block.text):
+            signed.add(block.page)
+    return min(certificate & binding & signed, default=None)
 
 
 def _run_in_headings(blocks: Sequence[Block]) -> list[Block]:

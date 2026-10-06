@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     # Checking the documents against the register (M4, step 5). Deviations a person has
     # looked at and accepted, each named by its key in the ingestion report; an accepted
     # deviation no longer holds the document back. The file is in git and reviewed like code.
+    # A relative path is read from the working directory: the repository root, where the
+    # commands are run. A missing file accepts nothing, and `process` logs a warning for it.
     accepted_findings_file: Path = Path("accepted_findings.toml")
 
     log_level: str = "INFO"

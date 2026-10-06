@@ -13,10 +13,10 @@ What:
 Why:
     Step 5 holds a document back when the period it states deviates from the
     register (architecture plan, section 4). The period is written in a few
-    fixed wordings, and a length in words always agrees with its digits (M4
-    survey dates.md §1: 2,931 lengths, 0 disagreements), so rules are enough;
-    no date needed a language model (dates.md §9). The blocks are read, not
-    the sections: the Microsoft volume agreement states its period only in a
+    fixed wordings, and a length in words always agrees with its digits (in
+    the pilot: 2,931 lengths, 0 disagreements), so rules are enough; no date
+    needed a language model. The blocks are read, not the sections (ADR 0009
+    decision 2): the Microsoft volume agreement states its period only in a
     page footer, which step 3 removes (171a3cacf5fd footer: "Volymavtalets
     huvuddokument 1.0 för avtalsperiod 2024-05-01 - 2027-04-30"). A guide can
     state one period per sub-area, so a fact says which sub-area it is for
@@ -25,27 +25,33 @@ Why:
     och med 2026-03-10 och till och med 2030-03-09", one list item per area.
 
 How:
-    The rules, each with its id in `Fact.rule` (dates.md §7; D is an ISO date),
-    and what they found in the 207 pilot files (matches / files):
+    The rules, each with its id in `Fact.rule` (D is an ISO date), and what
+    they found in the 207 pilot files (matches / files):
     - P1 cover (10/10): the cover table of a TendSign printout, "Startdatum D
       ... Slutdatum D", and "Förlängning Ingen förlängning" after it.
-    - P2 in force (13/12): "träder i kraft (den|per) D".
+    - P2 in force (13/12): "träder i kraft (den|per) D", said of the
+      agreement: "Ramavtalet", "Volymavtalet", "avtalet" or an area code
+      ("AO5") earlier in the sentence, or "träder Ramavtalet i kraft".
     - P3 end (11/11): "längst till och med (den) D".
     - P4 earliest start (18/18): "tidigast från och med (den) D".
     - P5 range in words (6/2): "giltigt|gäller från och med D till och med D",
       "med start från D och slutar D".
-    - P6 bare range (11/3): "D - D".
+    - P6 bare range (11/3): "D - D" after "avtalsperiod" or "avtalstid" in
+      the same sentence, or in a table whose header row has one.
     - P7 length (66/54): "löper (därefter) under en period av N månader|år".
     - P8 extension (23/21): "förlängning ... uppgå till|om|med (högst|maximalt)
-      N månader|år", within one sentence.
+      N månader|år", within one sentence; the longest length from there to
+      the end of the sentence ("med 12 månader i taget, dock maximalt 24
+      månader": 24).
     - P9 planned start (14/14): "beräknas träda i kraft (tidigast) D".
-    - P10 date field (53/25): "[DATUM ...]", "ÅÅ-MM-DD", "20xx-xx-xx",
+    - P10 date field (55/25): "[DATUM ...]", "ÅÅ-MM-DD", "20xx-xx-xx",
       "insert date".
     - P11 signature (52/25): "D HH:MM" on the pages of an e-signature
       certificate (`step3_chunk.signature_certificate_page`).
     A date that does not exist ("2023-02-30") gives no fact. A length is a
     whole number of months; a year counts as twelve. A number can be written
-    in digits ("48"), in words ("tre") or both ("tre (3)").
+    in digits ("48"), in words ("tre") or both ("trettio (30)", read from the
+    digits whatever the word).
 
     Windows: a rule reads one block at a time; every clause of the pilot is
     within one paragraph. The exception is P1: the layout model sometimes
@@ -83,8 +89,8 @@ _DATE = r"(?<![\d.-])(?:19|20)\d{2}-\d{2}-\d{2}(?!\d)"
 # Between a label and its value in a table: "Slutdatum | 2028-11-13", or a line break.
 _SEP = r"(?:\s*\|)*\s*"
 
-# Numbers written in words, as in "en period av fyrtioåtta (48) månader". The survey
-# found these forms in lengths (dates.md §1): digits, "tre (3)", words, "en/ett".
+# Numbers written in words alone: "en period av fyra år". A word followed by its digits
+# ("fyrtioåtta (48)", "trettio (30)") is read from the digits, so it need not be here.
 _NUMBER_WORDS = {
     "en": 1,
     "ett": 1,
@@ -105,7 +111,7 @@ _NUMBER_WORDS = {
     "fyrtioåtta": 48,
 }
 _WORD = "|".join(sorted(_NUMBER_WORDS, key=len, reverse=True))
-_NUMBER = rf"(?P<number>\d{{1,3}}|(?:{_WORD})(?:\s*\(\d{{1,3}}\))?)"
+_NUMBER = rf"(?P<number>\d{{1,3}}|[a-zåäö]+\s*\(\d{{1,3}}\)|(?:{_WORD}))"
 _UNIT = r"(?P<unit>månader|månad|år)\b"
 
 # P1: 76dfb5d1ae1f p1 "Avtalsnamn IT-drift 2023, område Större | Startdatum 2024-11-14 ⏎
@@ -123,6 +129,11 @@ _COVER = re.compile(
 # signerar det men träder i kraft 2023-02-27"; with "per" in 4b6c2a533fae b16 "när nya AO5
 # träder i kraft per 2025-08-23".
 _IN_FORCE = re.compile(rf"träder (?:Ramavtalet )?i ?kraft (?:den |per )?(?P<day>{_DATE})", re.I)
+# P2 counts only when the agreement is what enters into force: named in the sentence before
+# the match or in it ("träder Ramavtalet i kraft"). All 13 pilot hits name it; "De justerade
+# priserna träder i kraft D" (a price change) and "Tilläggsavtalet träder i kraft D" (an
+# amendment's own start) do not.
+_AGREEMENT = re.compile(r"\b(?:ramavtalet|volymavtalet|avtalet|AO\d+)\b", re.I)
 # P3: 185872a6bb90 §1.8 "Ramavtalet löper under en period av 48 månader, dock längst till
 # och med den 2027-02-26." "längst" is required: a bare "till och med D" is mostly the
 # validity of a bid or an extended deadline (25 of 41 hits).
@@ -144,6 +155,11 @@ _RANGE_IN_WORDS = re.compile(
 # 49f36699a469 b83. The space before the dash can be missing: 4b6c2a533fae b16
 # "avtalstiden (2026-03-10- 2030-03-09)".
 _RANGE = re.compile(rf"(?P<start>{_DATE})\s*[-–]\s*(?P<end>{_DATE})")
+# P6 counts only after a period label in the same sentence (the footer and 4b6c2a533fae
+# above), or in a table whose header row has one (49f36699a469 "Ramavtalområde |
+# Avtalsperiod"). A bare range is otherwise any period: "Prislistan gäller 2025-01-01 –
+# 2025-12-31".
+_PERIOD_LABEL = re.compile(r"avtalsperiod|avtalstid", re.I)
 # P7: 185872a6bb90 §1.8 "Ramavtalet löper under en period av 48 månader"; 14aa1cc8ee3d
 # §9.6.2 "Från 2022-12-01 löper ramavtalet därefter under en period av 24 månader".
 # "löper" is required: "säga upp Ramavtalet tidigast 24 månader innan Ramavtalet löper ut"
@@ -159,6 +175,9 @@ _EXTENSION = re.compile(
     rf"{_NUMBER} {_UNIT}",
     re.I,
 )
+# Any length, for the longest one after a P8 match: "förlängning med 12 månader i taget,
+# dock maximalt 24 månader totalt" allows 24 months, not 12.
+_ANY_LENGTH = re.compile(rf"\b{_NUMBER} {_UNIT}", re.I)
 # P9: c59dbfeeb576 §1.8 "Ramavtalet beräknas träda i kraft 2025-04-03, om upphandlingen
 # inte blir föremål för överprövning". A plan: 8 of 14 differ from the register.
 _PLANNED = re.compile(rf"beräknas träda i kraft (?:tidigast )?(?:den )?(?P<day>{_DATE})", re.I)
@@ -203,7 +222,7 @@ def find_dates(blocks: Sequence[Block]) -> list[Fact]:
     facts: list[Fact] = []
     for index, block in enumerate(blocks):
         text = texts[index]
-        found = [*_cover(texts, index), *_clause_facts(text)]
+        found = [*_cover(texts, index), *_clause_facts(text, block.kind is BlockKind.TABLE)]
         if certificate is not None and block.page is not None and block.page >= certificate:
             found += _signatures(text)
         for item in sorted(found, key=lambda item: item.offset):
@@ -259,8 +278,8 @@ def _cover(texts: Sequence[str], index: int) -> Iterator[_Found]:
             yield _Found(FactKind.EXTENSION_MONTHS, "0", raw, "P1", match.start())
 
 
-def _clause_facts(text: str) -> Iterator[_Found]:
-    """P2-P10 in one block's text."""
+def _clause_facts(text: str, table: bool = False) -> Iterator[_Found]:
+    """P2-P10 in one block's text; `table` when the block is a table."""
     for pattern, kind, rule in (
         (_IN_FORCE, FactKind.PERIOD_START, "P2"),
         (_LATEST_END, FactKind.PERIOD_END, "P3"),
@@ -268,25 +287,54 @@ def _clause_facts(text: str) -> Iterator[_Found]:
         (_PLANNED, FactKind.PLANNED_START, "P9"),
     ):
         for match in pattern.finditer(text):
+            if pattern is _IN_FORCE and not _of_the_agreement(text, match):
+                continue  # something else enters into force
             if (day := _iso(match["day"])) is not None:
                 yield _Found(kind, day.isoformat(), _raw(match), rule, match.start())
     for pattern, rule in ((_RANGE_IN_WORDS, "P5"), (_RANGE, "P6")):
         for match in pattern.finditer(text):
+            if pattern is _RANGE and not _period_label(text, match, table):
+                continue  # a range of something else
             start = _iso(match["start"] or match.groupdict().get("start2"))
             end = _iso(match["end"] or match.groupdict().get("end2"))
             if start is not None and end is not None:
                 raw = _raw(match)
                 yield _Found(FactKind.PERIOD_START, start.isoformat(), raw, rule, match.start())
                 yield _Found(FactKind.PERIOD_END, end.isoformat(), raw, rule, match.start())
-    for pattern, kind, rule in (
-        (_LENGTH, FactKind.PERIOD_MONTHS, "P7"),
-        (_EXTENSION, FactKind.EXTENSION_MONTHS, "P8"),
-    ):
-        for match in pattern.finditer(text):
-            months = _months(match["number"], match["unit"])
-            yield _Found(kind, str(months), _raw(match), rule, match.start())
+    for match in _LENGTH.finditer(text):
+        months = _months(match["number"], match["unit"])
+        yield _Found(FactKind.PERIOD_MONTHS, str(months), _raw(match), "P7", match.start())
+    for match in _EXTENSION.finditer(text):
+        yield _longest_extension(text, match)
     for match in _DATE_FIELD.finditer(text):
         yield _Found(FactKind.PLACEHOLDER, "date", match.group(), "P10", match.start())
+
+
+def _sentence(text: str, match: re.Match[str]) -> int:
+    """Where the sentence or table row of a match starts."""
+    return max(text.rfind(".", 0, match.start()), text.rfind("\n", 0, match.start())) + 1
+
+
+def _of_the_agreement(text: str, match: re.Match[str]) -> bool:
+    """Whether a P2 match is said of the agreement (see `_AGREEMENT`)."""
+    return _AGREEMENT.search(text, _sentence(text, match), match.end()) is not None
+
+
+def _period_label(text: str, match: re.Match[str], table: bool) -> bool:
+    """Whether a P6 range has a period label (see `_PERIOD_LABEL`)."""
+    if _PERIOD_LABEL.search(text, _sentence(text, match), match.start()):
+        return True
+    return table and _PERIOD_LABEL.search(text.split("\n", 1)[0]) is not None
+
+
+def _longest_extension(text: str, match: re.Match[str]) -> _Found:
+    """P8: the longest length from the one matched to the end of the sentence."""
+    end = text.find(".", match.end())
+    lengths = _ANY_LENGTH.finditer(text, match.start("number"), len(text) if end == -1 else end)
+    longest = max(lengths, key=lambda length: _months(length["number"], length["unit"]))
+    months = _months(longest["number"], longest["unit"])
+    raw = " ".join(text[match.start() : longest.end()].split())
+    return _Found(FactKind.EXTENSION_MONTHS, str(months), raw, "P8", match.start())
 
 
 def _signatures(text: str) -> Iterator[_Found]:

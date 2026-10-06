@@ -12,8 +12,8 @@ Why:
     as support, so a binding document could be missed: a person must look at
     it, and a new kind of document on avropa.se needs a rule. A type from the heading
     alone is right in the pilot, but it rests on the site's category, which is
-    wrong for 3 files there (M4 survey, doctypes.md §1), so it is worth
-    knowing and no deviation: 19c85c74c3b2 link "Nuts 2 indelning" under
+    wrong for 3 files there, so it is worth knowing and no deviation
+    (ADR 0009 decisions 4 and 6): 19c85c74c3b2 link "Nuts 2 indelning" under
     "Avtal" is an annex by F1, as are 83b9c9db99bf and f3f138d74139
     "Finansiella villkor vid köp av hårdvara som tjänst".
 
@@ -34,7 +34,7 @@ from avtalsagent.ingestion.extract.document_type import FALLBACK_RULES
 
 CHECK = "document_type"
 
-# The Swedish names of the types the fallback rules give (M4 survey, doctypes.md §2).
+# The Swedish names of the types the fallback rules give.
 _TYPE_NAMES = {
     DocumentType.ANNEX: "bilaga",
     DocumentType.PROCUREMENT_DOCUMENT: "upphandlingsdokument",

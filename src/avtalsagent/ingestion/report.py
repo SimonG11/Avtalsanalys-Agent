@@ -6,10 +6,10 @@ What:
     framework areas, language model), the documents by type, the sections and
     chunks, how each file's own numbers compare with the register, how the
     register's agreements are covered, the share of resolved references, every
-    finding, what is held back in quarantine, and the accepted deviations.
+    finding, what is held back in quarantine, and the accepted findings.
     `render_markdown` writes the report for a person, in Swedish, and
-    `render_json` the same numbers for a program. `write_report` saves both as
-    `<start>-inlasning.md` and `.json`.
+    `render_json` the same numbers for a program. `render_report` renders both,
+    named `<start>-inlasning.md` and `.json`, and `write_report` saves them.
 
 Why:
     The report is how a run is reviewed ("en inläsningsrapport per körning",
@@ -38,11 +38,21 @@ How:
       a decimal comma and a space before the percent sign ("74,4 %"). The space
       is a no-break space, so a number never breaks over two lines. A count of
       one takes the singular ("1 fil", "1 hänvisning").
-    - Nothing personal is printed. Findings carry no names or contact details
-      (the checks see to that), and of an acceptance in accepted_findings.toml
-      only the reason and date are shown, not the reviewer.
+    - What the report quotes from the documents is what steps 4 and 5 kept:
+      titles, numbers, dates, section headings, and a finding's evidence, the
+      text it rests on (in the markdown cut at 300 characters): a number with
+      its label, a stated period, a party clause with the companies' names, a
+      link text. Personal identity numbers and phone numbers in running text
+      are not read as organisation numbers
+      (`domain.identifiers.find_org_numbers`), and step 3 removes the
+      e-signature pages with the signers' names (ADR 0009 decision 10). A
+      party clause can name a sole trader, whose organisation number is a
+      personal identity number; a finding about it shows the number and the
+      clause as the document has them. Of an acceptance in
+      accepted_findings.toml the report shows the reason, and for one that
+      matched no finding also its date; never the reviewer.
     - The share of resolved references is `reference_resolver.resolution_rate`
-      (decision 5 of the M4 design). The report counts what the rate leaves
+      (ADR 0009 decision 9). The report counts what the rate leaves
       out, by kind first (laws, "fråga N") and then by status among the rest
       (list items, self-references, other external ones), so the formula it
       prints adds up to the rate's denominator.
@@ -51,6 +61,11 @@ How:
       by severity and check. The coverage check gives one finding per group of
       agreements (33 in the pilot have only the same TendSign printout), named
       by the group's procurement: "Avtal i 23.3-14537-2023".
+    - The report calls a finding of any severity "fynd": a quarantine or a
+      report is a deviation ("avvikelse"), a note is not (ADR 0009 decision 6).
+      An accepted finding holds nothing back whatever its severity (ADR 0009
+      decision 8), so where a finding is labelled by its severity, an accepted
+      one is labelled "godkänd" instead.
 """
 
 from collections import Counter, defaultdict
@@ -58,7 +73,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -102,8 +117,10 @@ from avtalsagent.ingestion.step5_validate import DOCUMENT_CHECKS, Validation
 
 REPORT_SUFFIX = "-inlasning"  # data/reports/2026-10-06T140312-inlasning.md
 # Where a person accepts a deviation (step5_validate): the default of the setting
-# ACCEPTED_FINDINGS_FILE, a path from the repository root.
+# ACCEPTED_FINDINGS_FILE, a path from the working directory, the repository root.
 ACCEPTED_FILE = Path("accepted_findings.toml")
+# In place of a severity, for a finding a person has accepted: it holds nothing back.
+ACCEPTED: Literal["accepted"] = "accepted"
 
 _FALLBACKS = FALLBACK_RULES | {NO_RULE}  # type rules listed last
 _NBSP = "\u00a0"  # between thousands and before "%": "13 175", "74,4 %"
@@ -146,7 +163,7 @@ OUTLINE_NAMES: dict[OutlineKind, str] = {
 
 NUMBER_STATUS_NAMES: dict[NumberStatus, str] = {
     NumberStatus.MATCHES: "Numren hör till upphandlingen på filens avtalssidor",
-    NumberStatus.NO_NUMBER: "Inget diarie- eller avtalsnummer i texten",
+    NumberStatus.NO_NUMBER: "Inget eget diarie- eller avtalsnummer i texten",
     NumberStatus.CASE_MANAGEMENT_ONLY: "Bara ärendenummer (23.5-serien, 96-15-2015)",
     NumberStatus.DEVIATES: "Avviker",
 }
@@ -190,8 +207,8 @@ REFERENCE_RULE_NAMES: dict[str, str] = {
 }
 _TEXT_RULE = "texten avgör (lag, mallfält, listpunkt, självhänvisning)"  # Reference.rule None
 
-# The statuses of the coverage check, as the report writes them after a count ("1 avtal är
-# täckt") or capitalised at the start of a line.
+# The statuses of the coverage check, as the head of a group of agreements not covered
+# writes them, capitalised: "Bara upphandlingens version: Bemanningstjänster, 33 avtal".
 COVERAGE_STATUS_NAMES: dict[CoverageStatus, str] = {
     CoverageStatus.COVERED: "täckt",
     CoverageStatus.PROCUREMENT_VERSION: "bara upphandlingens version",
@@ -226,7 +243,8 @@ CHECK_NAMES: dict[str, tuple[str, str]] = {
     ),
     agreement_period.CHECK: (
         "Avtalsperiod",
-        "Avtalsperioden i dokumentet och på avtalssidan stämmer med registret.",
+        "Avtalsperioden i dokumentet och på avtalssidan stämmer med registret, och "
+        "avtalssidans titel är ett delområde i registret.",
     ),
     document_type.CHECK: (
         "Dokumenttyp",
@@ -254,7 +272,9 @@ class RunInfo:
     """What the caller knows about the run that the result does not hold."""
 
     started_at: datetime  # timezone-aware
-    finished_at: datetime  # timezone-aware
+    # Timezone-aware: when steps 3-5 were done. `process` builds the report before it
+    # saves the results, so the time of the save is not in it.
+    finished_at: datetime
     register_version: RegisterVersion | None  # the edition compared with; None if none loaded
     areas: tuple[str, ...]  # the framework areas of the run, as the register names them
     model: str | None  # the language model that chose headings; None when it did not run
@@ -337,7 +357,9 @@ class SectionSummary(_Frozen):
 
 class DeviatingFile(_Frozen):
     file: FileRef
-    numbers: dict[str, Severity]  # the numbers the procurement_number check found, by severity
+    # The numbers the procurement_number check found, each with its finding's severity,
+    # or ACCEPTED when a person has accepted that finding.
+    numbers: dict[str, Severity | Literal["accepted"]]
 
 
 class RegisterMatch(_Frozen):
@@ -413,7 +435,7 @@ class RuleTally(ReferenceTally):
 
 
 class ReferenceSummary(_Frozen):
-    """Hänvisningar: the rate of decision 5 of the M4 design and what it is made of."""
+    """Hänvisningar: the rate of ADR 0009 decision 9 and what it is made of."""
 
     references: int
     # Left out of the rate, in this order: by kind, then by status among the rest.
@@ -449,7 +471,7 @@ class CheckCount(_Frozen):
 
 
 class FindingSummary(_Frozen):
-    """Avvikelser."""
+    """Fynd."""
 
     by_check: tuple[CheckCount, ...]  # every check of step 5, in the order they run
     open: tuple[ReportedFinding, ...]  # not accepted: QUARANTINE first, then REPORT, NOTE
@@ -484,7 +506,7 @@ class UnusedAcceptance(_Frozen):
 
 
 class AcceptedSummary(_Frozen):
-    """Godkända avvikelser."""
+    """Godkända fynd."""
 
     findings: tuple[ReportedFinding, ...]
     unused: tuple[UnusedAcceptance, ...]
@@ -580,7 +602,9 @@ def build_report(result: IngestionResult, run: RunInfo) -> IngestionReport:
         findings=_findings(validation.findings, files),
         quarantine=_quarantine(validation, files),
         accepted=AcceptedSummary(
-            findings=tuple(files.reported(f) for f in validation.findings if f.accepted_reason),
+            findings=tuple(
+                files.reported(f) for f in validation.findings if f.accepted_reason is not None
+            ),
             unused=tuple(
                 UnusedAcceptance(key=entry.key, reason=entry.reason, accepted_on=entry.accepted_on)
                 for entry in validation.unused_acceptances
@@ -643,10 +667,11 @@ def _sections(result: IngestionResult, files: _Files) -> SectionSummary:
 def _register_match(result: IngestionResult, files: _Files) -> RegisterMatch:
     statuses = result.validation.number_status
     counts = Counter(statuses.values())
-    numbers: defaultdict[str, dict[str, Severity]] = defaultdict(dict)
+    numbers: defaultdict[str, dict[str, Severity | Literal["accepted"]]] = defaultdict(dict)
     for finding in result.validation.findings:
         if finding.check == procurement_number.CHECK and finding.sha256:
-            numbers[finding.sha256][finding.subject] = finding.severity
+            accepted = finding.accepted_reason is not None
+            numbers[finding.sha256][finding.subject] = ACCEPTED if accepted else finding.severity
     return RegisterMatch(
         by_status={status: counts[status] for status in NumberStatus},
         deviating=tuple(
@@ -728,7 +753,7 @@ def _references(references: Sequence[Reference], rules_rate: float) -> Reference
     for reference in references:
         by_kind[reference.mention.kind].append(reference)
         by_rule[reference.rule].append(reference)
-    # Decision 5 of the M4 design: laws and "fråga N" are no references to a section or
+    # ADR 0009 decision 9: laws and "fråga N" are no references to a section or
     # document of the corpus, a list item is no section ("punkterna 1-6 i detta avsnitt",
     # 997bef854b06 §1.16.3), and a document naming itself is not a link to follow.
     rest = [
@@ -895,13 +920,14 @@ def _md_summary(report: IngestionReport) -> list[str]:
         f"- {_percent(refs.rate)} av hänvisningarna är upplösta "
         f"({_n(refs.resolved)} av {_n(refs.counted)}; bara med regler "
         f"{_percent(refs.rules_rate)}).",
-        # The severities as labels ("rapport 62"), so no noun takes a number.
-        f"- {_count(len(report.findings.open), 'avvikelse', 'avvikelser')}: "
+        # "Fynd" for all three severities, as one word in the singular and the plural; the
+        # severities as labels ("rapport 5"), so no noun takes a number.
+        f"- {_n(len(report.findings.open))} fynd: "
         + ", ".join(
             f"{SEVERITY_NAMES[severity].lower()} {_n(open_counts[severity])}"
             for severity in Severity
         )
-        + f". {_count(len(report.accepted.findings), 'godkänd', 'godkända')}.",
+        + f". {_count(len(report.accepted.findings), 'godkänt', 'godkända')}.",
         f"- I karantän: {_count(len(held.files) + len(held.unchecked), 'fil', 'filer')} och "
         f"{_n(len(held.sections))} avsnitt.",
     ]
@@ -941,7 +967,7 @@ def _md_run(report: IngestionReport) -> list[str]:
         "",
         f"- **Start:** {_moment(run.started_at)}",
         f"- **Slut:** {_moment(run.finished_at)}, efter "
-        f"{_duration(run.finished_at - run.started_at)}",
+        f"{_duration(run.started_at, run.finished_at)}",
         f"- **Registret:** {_md(register)}",
         f"- **Ramavtalsområden:** {_md(', '.join(run.areas)) or 'inga'}",
         f"- **Språkmodell:** {model}",
@@ -984,9 +1010,10 @@ def _md_documents(report: IngestionReport) -> list[str]:
     lines += [
         "",
         f"**Mallar och utkast:** {_count(len(templates), 'fil', 'filer')}. En fil är en mall när "
-        "länken säger det (typen Mall) eller när den har ett tomt datumfält (”[DATUM]”) och inte "
-        "anger någon avtalsperiod; ett tomt fält för leverantör eller avtalsnummer räcker inte, "
-        f"eftersom områdets huvuddokument alltid har det. {_n(len(typed))} har typen Mall"
+        "länken säger det (typen Mall) eller när den har ett tomt datumfält (som ”[DATUM]”, "
+        "”20xx-xx-xx” eller ”insert date”) och inte anger någon avtalsperiod; ett tomt fält för "
+        "leverantör eller avtalsnummer räcker inte, eftersom områdets huvuddokument alltid har "
+        f"det. {_n(len(typed))} har typen Mall"
         + (f" och {_n(len(others))} har ett tomt datumfält:" if others else "."),
     ]
     if others:
@@ -1010,7 +1037,7 @@ def _md_documents(report: IngestionReport) -> list[str]:
             "|---|---|---:|",
         ]
         lines += [
-            f"| {_file(item.file)} | {_pages(item.pages)} | {_n(item.page_count)} |"
+            f"| {_file(item.file)} | {missing_text.page_list(item.pages)} | {_n(item.page_count)} |"
             for item in documents.ocr_files
         ]
 
@@ -1030,9 +1057,10 @@ def _md_sections(report: IngestionReport) -> list[str]:
         "## Avsnitt och chunkar",
         "",
         f"Steg 3 delade {_count(files, 'fil', 'filer')} i {_n(sections.sections)} avsnitt och "
-        f"{_count(sections.chunks, 'chunk', 'chunkar')}. Ett avsnitt är ett numrerat avsnitt i "
-        "dokumentet (”14.2 Leverantörens uppsägning”); ett långt avsnitt delas i flera chunkar "
-        "för sökningen. Dispositionen säger hur filen delades:",
+        f"{_count(sections.chunks, 'chunk', 'chunkar')}. Ett avsnitt är texten under en "
+        "rubrik (”14.2 Leverantörens uppsägning”) eller före den första, en fråga i en "
+        "frågelogg, eller hela filen när den saknar rubriker; ett långt avsnitt delas i flera "
+        "chunkar för sökningen. Dispositionen säger hur filen delades:",
         "",
         "| Disposition | Filer |",
         "|---|---:|",
@@ -1077,7 +1105,9 @@ def _md_register_match(report: IngestionReport) -> list[str]:
         "",
         "Varje fils egna diarie- och avtalsnummer jämförs med upphandlingarna på de "
         "avtalssidor som länkar till filen (kontrollen Diarienummer). Det visar om dokumentet "
-        "hör till rätt avtal, och hur väl tolkningen läser numren.",
+        "hör till rätt avtal, och hur väl tolkningen läser numren. Ett nummer som dokumentet "
+        "citerar inom parentes ändrar inte utfallet; hör det till en annan upphandling står "
+        "det som en notering under Fynd.",
         "",
     ]
     if not sum(match.by_status.values()):
@@ -1091,8 +1121,7 @@ def _md_register_match(report: IngestionReport) -> list[str]:
         lines += ["", "Filer som avviker:", ""]
         for item in match.deviating:
             numbers = ", ".join(
-                f"{_md(number)} ({SEVERITY_NAMES[severity].lower()})"
-                for number, severity in item.numbers.items()
+                f"{_md(number)} ({_label(severity)})" for number, severity in item.numbers.items()
             )
             lines.append(f"- {_file(item.file)}" + (f": {numbers}" if numbers else ""))
     return lines
@@ -1141,8 +1170,8 @@ def _md_coverage(report: IngestionReport) -> list[str]:
     # (23.3-14537-2023) have only 34d71a7e4da0, a TendSign printout.
     lines += [
         "",
-        "Avtalen som inte är täckta, i grupper efter dokumenten som täcker dem. Avvikelsen för "
-        "varje grupp, med avtalsnumren, står under Avvikelser, Täckning.",
+        "Avtalen som inte är täckta, i grupper efter dokumenten som täcker dem. Fyndet för "
+        "varje grupp, med avtalsnumren, står under Fynd, Täckning.",
         "",
     ]
     for group in summary.groups:
@@ -1151,9 +1180,12 @@ def _md_coverage(report: IngestionReport) -> list[str]:
             f"{status[:1].upper()}{status[1:]}: {_md(', '.join(group.framework_areas))}, "
             f"{_n(len(group.agreements))} avtal"
         )
+        # A group of one agreement by its number and supplier, though its finding's subject
+        # is its procurement unless it is not covered; a larger group by that subject.
         about = _md(group.subject)
         if len(group.agreements) == 1:
-            about += f", {_md(group.agreements[0].supplier_name)}"
+            [one] = group.agreements
+            about = f"{_md(one.agreement_number)}, {_md(one.supplier_name)}"
         why = "; ".join(
             f"{_file(item.file)}, {NOT_COUNTED_NAMES[item.reason]}"
             # A supplier's own agreement is named by its number, others by their pages.
@@ -1255,12 +1287,12 @@ def _md_references(report: IngestionReport) -> list[str]:
 def _md_findings(report: IngestionReport) -> list[str]:
     summary = report.findings
     lines = [
-        "## Avvikelser",
+        "## Fynd",
         "",
-        "Steg 5 jämför det steg 4 hittade med registret och avtalssidorna. **Karantän:** "
-        "filen eller avsnittet indexeras inte förrän en person har godkänt avvikelsen. "
-        "**Rapport:** en avvikelse att titta på; dokumentet indexeras. **Notering:** värt att "
-        "veta, ingen avvikelse.",
+        "Steg 5 jämför det steg 4 hittade med registret och avtalssidorna. Varje fynd har en "
+        "av tre grader. **Karantän:** filen eller avsnittet indexeras inte förrän en person har "
+        "godkänt avvikelsen. **Rapport:** en avvikelse att titta på; dokumentet indexeras. "
+        "**Notering:** värt att veta, ingen avvikelse.",
         "",
         "| Kontroll | Vad den kontrollerar | Karantän | Rapport | Notering | Godkända |",
         "|---|---|---:|---:|---:|---:|",
@@ -1270,7 +1302,7 @@ def _md_findings(report: IngestionReport) -> list[str]:
         severities = " | ".join(_n(count.by_severity[severity]) for severity in Severity)
         lines.append(f"| {name} | {what or '–'} | {severities} | {_n(count.accepted)} |")
     if not summary.open:
-        return [*lines, "", "Inga avvikelser."]
+        return [*lines, "", "Inga fynd."]
     checks = [count.check for count in summary.by_check]
     for severity in Severity:
         items = [item for item in summary.open if item.finding.severity is severity]
@@ -1382,10 +1414,10 @@ def _md_reasons(findings: Sequence[ReportedFinding]) -> list[str]:
 def _md_accepted(report: IngestionReport) -> list[str]:
     accepted = report.accepted
     lines = [
-        "## Godkända avvikelser",
+        "## Godkända fynd",
         "",
-        f"Avvikelser som en person har godkänt i {report.run.accepted_file}, med skälet. De "
-        "håller inte tillbaka något.",
+        f"Fynd som en person har godkänt i {report.run.accepted_file}, med skälet. De håller "
+        "inte tillbaka något.",
         "",
     ]
     if accepted.findings:
@@ -1396,8 +1428,8 @@ def _md_accepted(report: IngestionReport) -> list[str]:
     if accepted.unused:
         lines += [
             "",
-            f"Godkännanden i {report.run.accepted_file} som inte motsvarar någon avvikelse i den "
-            "här körningen (avvikelsen finns inte längre, eller nyckeln är fel):",
+            f"Godkännanden i {report.run.accepted_file} som inte motsvarar något fynd i den här "
+            "körningen (fyndet finns inte längre, eller nyckeln är fel):",
             "",
         ]
         lines += [
@@ -1430,6 +1462,11 @@ def _share(tally: ReferenceTally) -> str:
 
 def _check_name(check: str) -> str:
     return CHECK_NAMES[check][0] if check in CHECK_NAMES else _md(check)
+
+
+def _label(severity: Severity | Literal["accepted"]) -> str:
+    """'karantän', 'notering', or 'godkänd' for an accepted finding."""
+    return SEVERITY_NAMES[severity].lower() if isinstance(severity, Severity) else "godkänd"
 
 
 def _word(value: int, one: str, many: str) -> str:
@@ -1481,19 +1518,6 @@ def _on_pages(ref: FileRef) -> str:
     return f", på {where} {_md(_join(ref.pages))}"
 
 
-def _pages(pages: Sequence[int]) -> str:
-    """Page numbers with runs of three or more joined: "1, 6–13, 15"."""
-    runs: list[list[int]] = []
-    for page in sorted(pages):
-        if runs and page == runs[-1][-1] + 1:
-            runs[-1].append(page)
-        else:
-            runs.append([page])
-    return ", ".join(
-        f"{run[0]}–{run[-1]}" if len(run) > 2 else ", ".join(map(str, run)) for run in runs
-    )
-
-
 def _moment(moment: datetime) -> str:
     """'2026-10-06 14:03:12 (UTC+02:00)'."""
     offset = moment.utcoffset() or timedelta()
@@ -1505,9 +1529,14 @@ def _moment(moment: datetime) -> str:
     return f"{moment:%Y-%m-%d %H:%M:%S} ({zone})"
 
 
-def _duration(span: timedelta) -> str:
-    """'4 min 12 s', '1 h 2 min', '9 s'."""
-    total = max(round(span.total_seconds()), 0)
+def _duration(start: datetime, end: datetime) -> str:
+    """'4 min 12 s', '1 h 2 min', '9 s': the time between the two as `_moment` prints them.
+
+    `_moment` drops the fractions of a second, so the duration is taken between
+    whole seconds too: 17:02:23.46 to 17:02:42.99 is "19 s", as the clock times say.
+    """
+    span = end.replace(microsecond=0) - start.replace(microsecond=0)
+    total = max(int(span.total_seconds()), 0)
     hours, rest = divmod(total, 3600)
     minutes, seconds = divmod(rest, 60)
     if hours:
@@ -1525,12 +1554,33 @@ def render_json(report: IngestionReport) -> str:
     return report.model_dump_json(indent=2) + "\n"
 
 
-def write_report(report: IngestionReport, reports_dir: Path) -> tuple[Path, Path]:
-    """Write the report as markdown and JSON, named after the run's start; return both paths."""
+@dataclass(frozen=True)
+class ReportFiles:
+    """The report rendered and not yet written: its name and its two texts."""
+
+    stem: str  # "2026-10-06T140312-inlasning", after the run's start
+    markdown: str
+    json: str
+
+
+def render_report(report: IngestionReport) -> ReportFiles:
+    """The report as markdown and JSON, named after the run's start; nothing is written.
+
+    Kept apart from `write_report` so `process` can render the report before it
+    saves the run and write it after the commit.
+    """
+    return ReportFiles(
+        stem=f"{report.run.started_at:%Y-%m-%dT%H%M%S}{REPORT_SUFFIX}",
+        markdown=render_markdown(report),
+        json=render_json(report),
+    )
+
+
+def write_report(files: ReportFiles, reports_dir: Path) -> tuple[Path, Path]:
+    """Write the rendered report as `<stem>.md` and `.json`; return both paths."""
     reports_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{report.run.started_at:%Y-%m-%dT%H%M%S}{REPORT_SUFFIX}"
-    markdown = reports_dir / f"{stem}.md"
-    json = reports_dir / f"{stem}.json"
-    markdown.write_text(render_markdown(report), encoding="utf-8")
-    json.write_text(render_json(report), encoding="utf-8")
+    markdown = reports_dir / f"{files.stem}.md"
+    json = reports_dir / f"{files.stem}.json"
+    markdown.write_text(files.markdown, encoding="utf-8")
+    json.write_text(files.json, encoding="utf-8")
     return markdown, json

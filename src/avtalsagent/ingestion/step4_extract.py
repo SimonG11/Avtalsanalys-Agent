@@ -23,17 +23,17 @@ How:
     1. The type comes first, from the links (`document_type.classify`), since
        the mention finder needs it.
     2. Facts are read from every block of the parsed file, page headers and
-       footers included: 34 files state their case number only there (M4
-       design, decision 1). Mentions are read from the sections of step 3,
+       footers included: 39 files state their case numbers only there (ADR
+       0009 decision 2). Mentions are read from the sections of step 3,
        since a reference is an edge between sections.
     3. A case or agreement number is found as its key ("23.3-2940-2020-018")
        and stored in the register's spelling when the register has that key
        ("23.3-2940-20:018"), so the report and the database write it as the
-       register does (decision 2). The checks compare keys either way.
-    4. `is_template` (decision 4): the type TEMPLATE, or a date field
-       ("[DATUM]") in a file that states no start or end of an agreement
-       period. An empty supplier or number field alone never makes a template:
-       the main document of every area leaves the supplier slot empty.
+       register does (ADR 0009 decision 3). The checks compare keys either way.
+    4. `is_template`: the type TEMPLATE, or a date field ("[DATUM]") in a
+       file that states no start or end of an agreement period. An empty
+       supplier or number field alone never makes a template: the main
+       document of every area leaves the supplier slot empty.
     5. The title is the link text used most often, as in step 3's context
        header; `site_updated` is the latest "Senast uppdaterad" of the links.
 """

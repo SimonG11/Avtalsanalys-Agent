@@ -263,6 +263,19 @@ class TestSignatureCertificate:
         assert signature_certificate_page(blocks) is None
         assert len(body_blocks(document(*blocks))) == 4 + len(lines)
 
+    def test_agreement_text_naming_both_markers_is_no_certificate(self) -> None:
+        # Without the date and time of a signature the page is agreement text, and it and
+        # the pages after it are kept (made up: no agreement in the pilot says this).
+        lines = [
+            "Signaturerna är juridiskt bindande och dokumentet skyddas med ett Adobe "
+            "CDS-certifikat när det undertecknas elektroniskt.",
+            "Ramavtalsleverantören ska signera Ramavtalet inom fem arbetsdagar.",
+        ]
+        blocks = signed_card(lines)
+
+        assert signature_certificate_page(blocks) is None
+        assert len(body_blocks(document(*blocks))) == 4 + len(lines)
+
     def test_the_markers_count_only_outside_page_headers_and_footers(self) -> None:
         blocks = [
             block(text, 18, BlockKind.PAGE_FOOTER) if "Adobe CDS" in text else block(text, 18)

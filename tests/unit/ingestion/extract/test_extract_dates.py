@@ -1,9 +1,10 @@
 """Tests for avtalsagent.ingestion.extract.dates.
 
-The lines are real, from the pilot files of the M4 survey (dates.md), cited as
-sha[:12] §section or block. Signers' names and ids are replaced by made-up ones.
-Three are changed on purpose and say so: a length in words (no period clause in
-the pilot writes one), a date that does not exist and a table without labels.
+The lines are real, from the pilot files, cited as sha[:12] §section or block.
+Signers' names and ids are replaced by made-up ones. Some are changed on purpose
+and say so: lengths in words (no period clause in the pilot writes one), a date
+that does not exist, a table without labels, an en dash, and wordings of rule
+alternatives that no pilot file uses. Lines whose source is not cited are made up.
 """
 
 from datetime import date
@@ -93,6 +94,22 @@ class TestPeriodRules:
         # P2.
         assert found(block(IN_FORCE)) == [("period_start", "2023-02-27", "P2")]
 
+    def test_in_force_date_with_the_agreement_after_the_verb(self) -> None:
+        # P2, IN_FORCE's second sentence with a date, the agreement named only after
+        # the verb (changed).
+        text = "Om Parterna signerar vid ett senare datum träder Ramavtalet i kraft 2023-03-01."
+        assert found(block(text)) == [("period_start", "2023-03-01", "P2")]
+
+    def test_something_else_entering_into_force_is_no_start(self) -> None:
+        # A price change and an amendment's own start.
+        assert (
+            found(
+                block("De justerade priserna träder i kraft 2026-01-01."),
+                block("Tilläggsavtalet träder i kraft den 2024-06-01."),
+            )
+            == []
+        )
+
     def test_length_and_latest_end(self) -> None:
         # P7 and P3, the paragraph after the one above.
         assert found(block(LENGTH_AND_END)) == [
@@ -127,7 +144,7 @@ class TestPeriodRules:
         )
         assert found(block(text)) == []
 
-    def test_longest_extension_within_one_sentence(self) -> None:
+    def test_extension_within_one_sentence(self) -> None:
         # P8: the first "förlängning" is in a sentence without a length.
         facts = find_dates([block(EXTENSION)])
 
@@ -137,6 +154,19 @@ class TestPeriodRules:
         assert facts[0].raw == (
             "förlängningar av Ramavtalets giltighetstid uppgå till maximalt 24 månader"
         )
+
+    def test_longest_extension_in_the_sentence(self) -> None:
+        # P8 with "med", then a longer length later in the sentence.
+        text = (
+            "Ramavtalet kan förlängas genom förlängning med 12 månader i taget, dock maximalt "
+            "24 månader totalt. Förlängning om 6 månader meddelas skriftligen."
+        )
+        facts = find_dates([block(text)])
+
+        assert [(f.value, f.raw) for f in facts] == [
+            ("24", "förlängning med 12 månader i taget, dock maximalt 24 månader"),
+            ("6", "Förlängning om 6 månader"),
+        ]
 
     def test_range_in_words_with_its_area(self) -> None:
         # P5, 4b6c2a533fae b39-b40: one list item per area.
@@ -177,6 +207,21 @@ class TestPeriodRules:
             ("period_start", "2024-05-01", "P6"),
             ("period_end", "2027-04-30", "P6"),
         ]
+        # The same with an en dash (changed).
+        assert found(block(footer.replace(" - ", " – "), kind=BlockKind.PAGE_FOOTER)) == [
+            ("period_start", "2024-05-01", "P6"),
+            ("period_end", "2027-04-30", "P6"),
+        ]
+
+    def test_bare_range_without_a_period_label_is_no_period(self) -> None:
+        # A price list's own period, in a sentence and in a table.
+        assert (
+            found(
+                block("Prislistan gäller 2025-01-01 – 2025-12-31."),
+                block("Prisperiod | Timpris\n2025-01-01 - 2025-12-31 | 950 kr", kind=TABLE),
+            )
+            == []
+        )
 
     def test_table_rows_are_statements_scoped_by_their_label(self) -> None:
         # P6, 49f36699a469 b83 (two of its four rows).
@@ -255,6 +300,14 @@ class TestPeriodRules:
         assert found(block("Ramavtalet löper under en period av fyra år.")) == [
             ("period_months", "48", "P7")
         ]
+        assert found(block("Ramavtalet löper under en period av arton månader.")) == [
+            ("period_months", "18", "P7")
+        ]
+
+    def test_length_in_any_word_with_its_digits(self) -> None:
+        # EARLIEST's length in a word that is not in the list (changed on purpose).
+        text = "Från 2022-12-01 löper ramavtalet därefter under en period av trettio (30) månader."
+        assert found(block(text)) == [("period_months", "30", "P7")]
 
     def test_a_date_that_does_not_exist_gives_no_fact(self) -> None:
         # IN_FORCE with the day changed to 30 February (on purpose).
@@ -280,11 +333,19 @@ class TestPlaceholders:
         ]
 
     def test_other_spellings_of_a_date_field(self) -> None:
-        # 37f6a4caa617 §2.6 (Word, no pages) and 5b38873c2b7a §1.1.
-        assert found(
-            block("Avropssvaret ska vara giltigt till och med ÅÅ-MM-DD", page=None),
-            block("Microsoft Enterprise Support Services börjar gälla den 20xx-xx-xx"),
-        ) == [("placeholder", "date", "P10"), ("placeholder", "date", "P10")]
+        # 37f6a4caa617 §2.6 (Word, no pages), 5b38873c2b7a §1.1, a16f04246875 b18 and
+        # d54ed0900be5 b46: the last two have no other date field.
+        assert (
+            found(
+                block("Avropssvaret ska vara giltigt till och med ÅÅ-MM-DD", page=None),
+                block("Microsoft Enterprise Support Services börjar gälla den 20xx-xx-xx"),
+                block(
+                    "Konsulttjänsterna ska påbörjas den insert date eller det datum då Microsoft"
+                ),
+                block("Business and Services-avtalet att vara Insert Date. Med undantag för dessa"),
+            )
+            == [("placeholder", "date", "P10")] * 4
+        )
 
     def test_unfilled_agreement_number_is_no_date_field(self) -> None:
         # 5d6e948959cc §5.2.1: a typo in the year, then an unfilled supplier sequence.
@@ -319,6 +380,13 @@ class TestSignatures:
         assert [(f.kind.value, f.value, f.raw, f.block, f.statement) for f in facts] == [
             ("signed_on", "2023-02-22", "2023-02-22 15:14", 4, None)
         ]
+
+    def test_signatures_on_the_page_after_the_certificate_count(self) -> None:
+        # The certificate runs to the end of the file (an envelope's list goes on).
+        later = block("ErIkExEmPeLsSoN 2023-02-23 09:01", 19)
+        facts = find_dates([*self.certificate(18), later])
+
+        assert [(f.value, f.page) for f in facts] == [("2023-02-22", 18), ("2023-02-23", 19)]
 
     def test_a_timestamp_outside_a_certificate_is_no_signature(self) -> None:
         # A TendSign print footer ("Utskrivet: 2021-02-09 12:21 Sida 5 av 111") is no signature.
