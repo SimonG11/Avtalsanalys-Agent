@@ -18,9 +18,11 @@ How:
     `ingestion/avropa_pages.py` builds these objects from the page HTML.
     `ingestion/step1_fetch.py` downloads the linked files. The parsed content
     of a file (blocks, sections, chunks) is in `domain/parsed.py`.
+    `CatalogLink` is one stored link with its page and the file's hash, as
+    steps 4 and 5 read the catalog back.
 """
 
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict
 
@@ -50,3 +52,22 @@ class AgreementPage(BaseModel):
     procurement_numbers: tuple[str, ...]  # from "Ramavtalsnummer", e.g. ("23.3-5890-2023",)
     agreement_period: str | None  # e.g. "2024-11-14 - 2028-11-13", as written
     documents: tuple[DocumentLink, ...]
+
+
+class CatalogLink(BaseModel):
+    """A link from an agreement page to a downloaded file, as stored in the catalog."""
+
+    model_config = ConfigDict(frozen=True)
+
+    sha256: str  # the downloaded file
+    url: str  # the file's URL without "?v=..."
+    title: str
+    category: str | None
+    agreement_number: str | None
+    site_updated: date | None
+    page_url: str
+    page_title: str
+    page_procurement_numbers: tuple[str, ...]
+    page_period: str | None  # the page's agreement period, as written
+    # Set when the page was no longer listed on avropa.se at the latest fetch.
+    page_missing_since: datetime | None = None

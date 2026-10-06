@@ -3,6 +3,8 @@
 What:
     `RegisterRow`: a row of "Alla giltiga ramavtal" after normalisation, and
     `RegisterVersion`: which edition of the list the rows come from.
+    `RegisterEntry`: one agreement in one sub-area as read back from the
+    register tables, the form step 5 of the ingestion compares documents with.
 
 Why:
     The Excel list has one row per supplier and sub-area, not one per
@@ -52,3 +54,24 @@ class RegisterRow(BaseModel):
     valid_from: date
     valid_to: date
     max_extension_to: date | None  # "Max förl. till", often empty
+
+
+class RegisterEntry(BaseModel):
+    """One agreement in one sub-area, read back from the register tables."""
+
+    model_config = ConfigDict(frozen=True)
+
+    agreement_number: str
+    procurement_number: str
+    org_number: str
+    supplier_name: str
+    former_supplier_name: str | None
+    framework_area: str
+    sub_area_path: tuple[str, ...]
+    valid_from: date
+    valid_to: date
+    max_extension_to: date | None
+
+    @classmethod
+    def from_row(cls, row: RegisterRow) -> "RegisterEntry":
+        return cls.model_validate(row.model_dump(exclude={"source_row", "sequence"}))
