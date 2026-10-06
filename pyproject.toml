@@ -13,6 +13,8 @@ dependencies = [
     # without GUI libraries.
     "docling-ibm-models[opencv-python-headless]>=4.0.3",
     "httpx>=0.28.1",
+    # OpenAI models through LangChain (ADR 0005). M4 uses one to choose section headings.
+    "langchain-openai>=1.6.7",
     "openpyxl>=3.1.5",
     "psycopg[binary]>=3.3.6",
     "pydantic>=2.13",
