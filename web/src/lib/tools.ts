@@ -5,9 +5,9 @@
  * (search_documents, read_section ...), but the person asking reads Swedish, and a step is
  * only useful if it says what the agent looked for ("Söker i dokumenten: uppsägningstid").
  *
- * How: AgentSteps calls `describeToolCall` for every tool call event. Unknown tools still get
- * a step, with the raw tool name, so a tool added to avtal-mcp later shows up without a code
- * change here. `summarizeResult` gives the step a line with what the tool found, for the tools
+ * How: the timeline (components/Timeline.tsx) calls `describeToolCall` for every tool call.
+ * Unknown tools still get a step, with the raw tool name, so a tool added to avtal-mcp later
+ * shows up without a code change here. `summarizeResult` gives the step a line with what the tool found, for the tools
  * whose answer has one.
  */
 
@@ -35,9 +35,8 @@ export const TOOL_LABELS: Record<string, ToolLabel> = {
 };
 
 /**
- * The tool the agent hands in its answer with. It is not a step: the answer is shown from the
- * state, so the call and the check's reply to it are hidden, and while the check runs the chat
- * shows that the answer is being checked (components/AnswerCheck.tsx).
+ * The tool the agent hands in its answer with. It is not a step but a draft: the answer is shown
+ * from the state, and the timeline shows the check of each draft instead (lib/turns.ts).
  */
 export const ANSWER_TOOL = "FinalAnswer";
 

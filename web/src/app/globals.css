@@ -1,42 +1,83 @@
-/* Colours and base styles for the whole app. Components use these variables, so a theme
-   change happens here only. Dark mode follows the operating system. */
+/* Colours and base styles for the whole app. Components use only these variables, so the light
+   and dark themes are defined here and nowhere else. Every text colour has a contrast of at
+   least 4.5:1 against the surfaces it is used on, in both themes. The theme follows the
+   operating system unless the person picks one with the button in the header, which sets
+   data-theme on <html> (see ThemeToggle.tsx and the script in layout.tsx). */
 :root {
-  --text: #0f172a;
-  --text-muted: #55627a;
+  color-scheme: light;
+  --bg: #f8f7f4;
   --surface: #ffffff;
-  --surface-muted: #f5f7fb;
-  --background: #eef1f6;
-  --border: #dbe1ea;
-  --accent: #1f5fd1;
-  --accent-soft: #e4edff;
-  --accent-strong: #1747a0;
-  --ok: #16834a;
-  --ok-soft: #dcf5e6;
-  --ok-strong: #11663a;
-  --warn-soft: #fff1d6;
-  --warn-strong: #8a5300;
-  --neutral-soft: #e9edf3;
+  --surface-2: #f2f0eb;
+  --surface-3: #e9e6df;
+  --text: #1b1a17;
+  --text-2: #57534b;
+  --text-3: #6f6a60;
+  --border: #e4e0d8;
+  --border-strong: #d3cec4;
+  --accent: #2b59c3;
+  --accent-soft: #e8eefb;
+  --on-accent: #ffffff;
+  --ok: #17784a;
+  --ok-soft: #e3f3ea;
+  --warn: #8a5300;
+  --warn-soft: #fbf0d9;
+  --danger: #b3261e;
+  --danger-soft: #fbe9e7;
   --mark: rgb(255 200 0 / 0.45);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 6px 20px rgb(0 0 0 / 0.06);
+  --radius: 14px;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --text: #e6eaf2;
-    --text-muted: #9aa6ba;
-    --surface: #161c27;
-    --surface-muted: #1d2533;
-    --background: #0f141c;
-    --border: #2c3647;
-    --accent: #5b8ff0;
-    --accent-soft: #1d2d4d;
-    --accent-strong: #9dbcf7;
-    --ok: #2fa866;
-    --ok-soft: #12321f;
-    --ok-strong: #7fd8a4;
-    --warn-soft: #3a2a0d;
-    --warn-strong: #f1c26b;
-    --neutral-soft: #242d3c;
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #1a1917;
+    --surface: #23221f;
+    --surface-2: #2c2a27;
+    --surface-3: #36342f;
+    --text: #eeebe5;
+    --text-2: #b4afa5;
+    --text-3: #9a9489;
+    --border: #393631;
+    --border-strong: #4a4640;
+    --accent: #8fb0ff;
+    --accent-soft: #24304a;
+    --on-accent: #10172a;
+    --ok: #6cd39b;
+    --ok-soft: #1d3326;
+    --warn: #f0c46c;
+    --warn-soft: #3a2f17;
+    --danger: #ff8a80;
+    --danger-soft: #3d1f1c;
+    --mark: rgb(255 200 0 / 0.5);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 20px rgb(0 0 0 / 0.3);
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1a1917;
+  --surface: #23221f;
+  --surface-2: #2c2a27;
+  --surface-3: #36342f;
+  --text: #eeebe5;
+  --text-2: #b4afa5;
+  --text-3: #9a9489;
+  --border: #393631;
+  --border-strong: #4a4640;
+  --accent: #8fb0ff;
+  --accent-soft: #24304a;
+  --on-accent: #10172a;
+  --ok: #6cd39b;
+  --ok-soft: #1d3326;
+  --warn: #f0c46c;
+  --warn-soft: #3a2f17;
+  --danger: #ff8a80;
+  --danger-soft: #3d1f1c;
+  --mark: rgb(255 200 0 / 0.5);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 20px rgb(0 0 0 / 0.3);
 }
 
 * {
@@ -47,23 +88,71 @@ html,
 body {
   margin: 0;
   padding: 0;
+  height: 100%;
 }
 
 body {
-  background: var(--background);
+  background: var(--bg);
   color: var(--text);
-  font-family:
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    Roboto,
-    "Helvetica Neue",
-    Arial,
-    sans-serif;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 
 h1,
-h2 {
+h2,
+h3 {
   line-height: 1.25;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.spinner {
+  animation: spin 0.9s linear infinite;
 }

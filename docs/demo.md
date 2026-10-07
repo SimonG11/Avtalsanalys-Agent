@@ -20,7 +20,7 @@ och webbappen från PR #23. Hämta `main` före demot. Beslutet bakom urvalet st
 
 | # | Fråga | Visar | Status | Tid i webbappen | Tid i terminalen |
 |---|---|---|---|---|---|
-| 1 | Uppsägningstiden i IT-drift | Agenten frågar när frågan är oklar | Verifierat | 52–55 s med dialogen | 54 s med dialogen |
+| 1 | Uppsägningstiden i IT-drift | Agenten frågar när frågan är oklar | Verifierat | 52–55 s med frågan | 54 s med frågan |
 | 2 | q10 Nordlo Advance | Registret i stället för dokumenten | Verifierat | 12–14 s | 19 s |
 | 3 | q14 Lördagsarbete | Flera steg genom hänvisningar | Verifierat | 39–62 s | 50 s |
 | 4 | q21 Antal anbud | En rättelse ersätter klausulen | Verifierat | 32–45 s | 36 s |
@@ -75,9 +75,10 @@ letar efter ändringar. I terminalen läste den också 6.21.7 och 6.21.9; i webb
 för både IT-drift Mindre och IT-drift Större.
 
 **Visa:**
-- Dialogen. Körningen står still i grafen tills du svarar, och fortsätter sedan från samma
-  checkpoint i Postgres.
-- Stegen ovanför svaret: varje verktyg agenten valde, med argumenten. "Visa svaret från
+- Agentens fråga i chatten. Körningen står still i grafen tills du svarar, och fortsätter sedan
+  från samma checkpoint i Postgres.
+- Stegen ovanför svaret: varje verktyg agenten valde, med argumenten. När svaret har kommit är
+  de ihopfällda till raden "Arbetade i … s · N steg"; klicka på den. "Visa svaret från
   verktyget" visar vad den fick tillbaka.
 - Statusen "Verifierat" och citatet i källkortet under svaret. Källpanelen med PDF-sidan visar du
   hellre i fråga 3 (se "Om det går fel" nedan).
@@ -90,7 +91,7 @@ ett workflow."
 efter tre år, om kontraktet inte säger annat (6.21.8). Vid uppsägning enligt 6.21.7, till exempel
 vid leverantörens väsentliga avtalsbrott, sker uppsägningen skriftligen, med omedelbar verkan eller senast nio månader efter uppsägningen (6.21.7).
 Leverantören har minst sex månaders uppsägningstid om ni inte rättar ett väsentligt avtalsbrott
-inom 30 dagar (6.21.9). Vilka av punkterna svaret tar med beror på vad du svarade i dialogen.
+inom 30 dagar (6.21.9). Vilka av punkterna svaret tar med beror på vad du svarade på agentens fråga.
 
 **Om det går fel:**
 - Agenten frågar inte utan svarar för alla fall direkt: det är också ett rimligt svar. Säg att

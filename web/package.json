@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Webbappen för Avtalsanalys-Agent: chatt, agentens steg, källpanel och frågedialog.",
+  "description": "Webbappen för Avtalsanalys-Agent: chatt med agentens tankar och steg, svar med källor och källpanel.",
   "engines": {
     "node": ">=22.18"
   },

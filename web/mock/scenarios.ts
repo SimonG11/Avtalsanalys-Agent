@@ -131,10 +131,12 @@ class RunBuilder {
   }
 
   /**
-   * The model reasons before it acts. The backend asks for no summary of the reasoning, so the
-   * reasoning message is empty: CopilotKit shows only that the model thinks.
+   * The model reasons before it acts. With a text, the summary of its reasoning streams in
+   * pieces (webbapp-kontrakt.md, point 29); without one, the reasoning message is empty, as
+   * before the backend asked OpenAI for summaries. Like the real stream, the messages snapshot
+   * at the end has no reasoning messages; the client keeps the streamed ones.
    */
-  reason(): void {
+  reason(text = ""): void {
     const messageId = this.nextId("reasoning");
     this.push({ type: EventType.REASONING_START, messageId } as BaseEvent);
     this.push({
@@ -142,6 +144,9 @@ class RunBuilder {
       messageId,
       role: "reasoning",
     } as BaseEvent);
+    for (const delta of text.match(/\S+\s*/g) ?? []) {
+      this.push({ type: EventType.REASONING_MESSAGE_CONTENT, messageId, delta } as BaseEvent, 40);
+    }
     this.push({ type: EventType.REASONING_MESSAGE_END, messageId } as BaseEvent, 600, 300);
     this.push({ type: EventType.REASONING_END, messageId } as BaseEvent);
   }
@@ -395,7 +400,11 @@ function answerNoticePeriod(
 ): void {
   let answer = noticePeriodAnswer(context, area);
   run.step("research_agent", () => {
-    run.reason();
+    run.reason(
+      "**Letar efter reglerna om uppsägning**\n\n" +
+        `Frågan gäller hur ett kontrakt inom ${area} sägs upp. Jag söker i de allmänna ` +
+        "villkoren efter avsnitten om uppsägning.",
+    );
     run.toolCall(
       "search_documents",
       { query: "uppsägningstid kontrakt", framework_area: area },
@@ -404,12 +413,21 @@ function answerNoticePeriod(
         ["6.21.10", "Uppsägning vid väsentligt avtalsbrott", 2],
       ]),
     );
+    run.reason(
+      "**Läser avsnittet om uppsägning**\n\n" +
+        "Sökningen pekar på 6.21.9. Jag läser hela avsnittet, så att jag kan citera det ordagrant.",
+    );
     run.toolCall(
       "read_section",
       { sha256: context.documentSha256, section_number: "6.21.9" },
       { section_number: "6.21.9", page: 2, text: "Kunden har rätt att säga upp Kontraktet ..." },
     );
     if (endDate) {
+      run.reason(
+        "**Räknar ut sista dagen för uppsägning**\n\n" +
+          `Kontraktet ska upphöra ${endDate} och uppsägningstiden är tre månader, så jag ` +
+          "räknar tre månader bakåt.",
+      );
       const args = { start: endDate, amount: 3, unit: "months", direction: "before" };
       const calculation = monthsBefore(endDate, 3);
       run.toolCall("calculate_date", args, calculation);
@@ -558,6 +576,7 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
       answerFromRegister(run);
     } else if (lower.includes("vite")) {
       run.step("research_agent", () => {
+        run.reason();
         run.toolCall(
           "search_documents",
           { query: "vite försenad leverans" },
