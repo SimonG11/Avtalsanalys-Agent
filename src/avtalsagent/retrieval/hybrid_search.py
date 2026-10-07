@@ -105,7 +105,7 @@ def vector_candidates(
     rows = session.execute(
         select(chunk.sha256, chunk.section_position, chunk.position, chunk.section_hash)
         .join(models.DocumentScope, models.DocumentScope.sha256 == chunk.sha256)
-        .where(*_scope_conditions(filters))
+        .where(*scope_conditions(filters))
         .order_by(
             chunk.embedding.max_inner_product(query),
             chunk.sha256,
@@ -143,7 +143,7 @@ def text_candidates(
     rows = session.execute(
         select(chunk.sha256, chunk.section_position, chunk.position, chunk.section_hash)
         .join(models.DocumentScope, models.DocumentScope.sha256 == chunk.sha256)
-        .where(minus_score < 0, *_scope_conditions(filters))
+        .where(minus_score < 0, *scope_conditions(filters))
         .order_by(minus_score, chunk.sha256, chunk.section_position, chunk.position)
         .limit(n)
     )
@@ -196,7 +196,7 @@ def check_index(session: Session, embedding_model: str) -> None:
         )
 
 
-def _scope_conditions(filters: SearchFilters) -> list[ColumnElement[bool]]:
+def scope_conditions(filters: SearchFilters) -> list[ColumnElement[bool]]:
     """The WHERE conditions of the filters on `document_scope`; none without filters."""
     scope = models.DocumentScope
     conditions: list[ColumnElement[bool]] = []
@@ -254,7 +254,7 @@ def _copies(
             (section.sha256 == chunk.sha256) & (section.position == chunk.section_position),
         )
         .join(models.DocumentMetadata, models.DocumentMetadata.sha256 == chunk.sha256)
-        .where(chunk.section_hash.in_(list(shown)), *_scope_conditions(filters))
+        .where(chunk.section_hash.in_(list(shown)), *scope_conditions(filters))
         .order_by(chunk.section_hash, chunk.sha256, chunk.section_position)
     )
     copies: defaultdict[str, list[SectionCopy]] = defaultdict(list)

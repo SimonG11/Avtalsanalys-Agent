@@ -20,6 +20,7 @@ How:
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, PostgresDsn, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -32,6 +33,9 @@ class Settings(BaseSettings):
         # An empty value in .env (e.g. `OPENAI_API_KEY=`) counts as "not set".
         env_ignore_empty=True,
         extra="ignore",
+        # A value that fails validation is named by its field, not shown: DATABASE_URL holds
+        # the database password.
+        hide_input_in_errors=True,
     )
 
     # Matches the postgres service in docker-compose.yml with its default values.
@@ -90,6 +94,32 @@ class Settings(BaseSettings):
     rrf_k: int = Field(default=60, gt=0)
     # Sections a search returns when the caller sets no limit.
     search_limit: int = Field(default=8, gt=0)
+
+    # The tool layer avtal-mcp (M6, mcp_server/; ADR 0012): where the agent reaches it, the
+    # port it listens on, and the Host headers it accepts (DNS rebinding protection; "mcp:8001"
+    # is its name in docker compose, the others are this machine).
+    mcp_url: str = "http://localhost:8001/mcp"
+    mcp_port: int = Field(default=8001, gt=0, lt=65536)
+    mcp_allowed_hosts: list[str] = ["localhost:*", "127.0.0.1:*", "mcp:8001"]
+
+    # The agent (M7, agent/; ADR 0013). How much the agent model reasons before each step;
+    # the model takes these four levels and no temperature.
+    agent_reasoning_effort: Literal["low", "medium", "high", "xhigh"] = "low"
+    # Model calls per run, new attempts included: a question, or its continuation after the
+    # user has answered ask_user. A run that reaches the limit gets the status no_answer, so a
+    # run that never settles has a bounded cost.
+    agent_model_call_limit: int = Field(default=16, gt=0)
+    # New attempts after a draft fails the citation check; after them the answer is given
+    # with reservation (with_reservation), its failed citations marked as not verified.
+    citation_retries: int = Field(default=1, ge=0)
+    # How the agent reaches avtal-mcp: "stdio" starts the server as its own child process
+    # (the command line, local work), "streamable_http" connects to MCP_URL (the API's
+    # container).
+    mcp_transport: Literal["stdio", "streamable_http"] = "stdio"
+    # Where a conversation's checkpoints are kept, which let a run pause for a question to
+    # the user and go on: "memory" lasts as long as the process (the command line),
+    # "postgres" is the database in DATABASE_URL (the API; ADR 0004).
+    checkpointer: Literal["memory", "postgres"] = "memory"
 
     log_level: str = "INFO"
 

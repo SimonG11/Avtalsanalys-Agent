@@ -27,11 +27,14 @@ How:
     refuses it. An error from OpenAI (a revoked key, no network, a rate
     limit after the client's retries) becomes `EmbeddingError`, which names
     the error's type only: the error's own message can quote part of the key.
+    The client keeps the SDK's timeout and retries (600 s, two retries) unless
+    `openai_embedder` is given others: avtal-mcp embeds a question with a
+    short timeout and one retry, so a hung API fails fast.
 """
 
 import math
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Any, Protocol
 
 import openai
 
@@ -121,11 +124,22 @@ class OpenAIEmbedder:
         return [normalise(vector) for vector in vectors]
 
 
-def openai_embedder(settings: Settings) -> OpenAIEmbedder | None:
-    """The embedder of the configured model; None without an OpenAI key."""
+def openai_embedder(
+    settings: Settings, *, timeout: float | None = None, max_retries: int | None = None
+) -> OpenAIEmbedder | None:
+    """The embedder of the configured model; None without an OpenAI key.
+
+    `timeout` (seconds per request) and `max_retries` replace the client's
+    defaults when given.
+    """
     if settings.openai_api_key is None:
         return None
-    client = openai.OpenAI(api_key=settings.openai_api_key.get_secret_value())
+    options: dict[str, Any] = {}
+    if timeout is not None:
+        options["timeout"] = timeout
+    if max_retries is not None:
+        options["max_retries"] = max_retries
+    client = openai.OpenAI(api_key=settings.openai_api_key.get_secret_value(), **options)
     return OpenAIEmbedder(
         client,
         settings.embedding_model,

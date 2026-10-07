@@ -4,7 +4,7 @@ En agent som besvarar frågor om Statens inköpscentrals ramavtal (avropa.se) d�
 påstående har en verifierad källa. Inläsningen av avtalen är ett fast workflow, och
 frågebesvarandet är en agent i LangGraph som själv väljer verktyg och ordning.
 
-> **Status:** M5 (sökindex, hybridsökning och första mätningen). Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
+> **Status:** M7 (agenten med citatkontrollen). Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
 > förklaras i [`docs/steg/`](docs/steg/) och varje designbeslut i [`docs/adr/`](docs/adr/).
 
 ## Kom igång
@@ -30,6 +30,11 @@ uv run python -m avtalsagent.ingestion search "Hur stort är vitet?"   # provar 
 uv run python -m avtalsagent.ingestion outline     # visar hur varje dokument delades
 uv run python -m avtalsagent.ingestion verify      # jämför avsnitten med PDF:ernas textlager
 uv run python -m evals.run_retrieval_eval          # mäter sökningen på testsamlingen
+uv run python -m avtalsagent.mcp_server http       # verktygslagret avtal-mcp på http://127.0.0.1:8001/mcp
+uv run python -m avtalsagent.mcp_server stdio      # samma verktyg över stdin och stdout
+uv run python -m avtalsagent.agent "Hur stort är vitet i IT-drift Mindre?"   # frågar agenten
+uv run python -m avtalsagent.agent                 # ett samtal: en fråga i taget, följdfrågor i samma tråd
+uv run python -m avtalsagent.agent --json "…"      # svaret som JSON, som webbappen får det
 ```
 
 Första gången tar `parse` för urvalet ungefär två timmar på fyra processorkärnor. `uv sync`
@@ -46,6 +51,16 @@ och `fetch`, `process` och `run` tar `--area` för att välja andra ramavtalsomr
 
 `index`, `run`, `search` och mätningen behöver `OPENAI_API_KEY` för embeddings. `process` tömmer
 sökindexet, så kör `index` efter den; embeddings som redan finns hämtas ur en cache i databasen.
+
+`avtal-mcp` ([M6](docs/steg/06-verktyg.md)) läser databasen utan att kunna skriva och visar bara det
+som sökindexet visar. Utan `OPENAI_API_KEY` svarar `search_documents` med ett fel och de andra
+verktygen fungerar. `/health` svarar utan databas.
+
+Agenten ([M7](docs/steg/07-agent.md)) behöver `OPENAI_API_KEY` och ett byggt sökindex (`index`).
+Den startar avtal-mcp själv över stdio (`MCP_TRANSPORT=streamable_http` ansluter i stället till
+`MCP_URL`), visar varje verktygsanrop medan den arbetar och ställer sina frågor till dig i
+terminalen. Svaret skrivs ut med status (Kontrollerat, Med reservation eller Inget svar) och
+källorna, där ✓ betyder att citatet finns ordagrant i avsnittet.
 
 Kontroller som CI kör (pre-commit kör de tre första):
 
