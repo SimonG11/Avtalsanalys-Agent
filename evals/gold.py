@@ -40,6 +40,15 @@ How:
     A question is a retrieval question when it has at least one document
     source; register-only questions and questions the agreements do not
     answer belong to the agent evaluation and are skipped.
+
+    A question that fits several agreements or sub-areas may say whether
+    the agent should ask the user which one (`should_ask`), the choices a
+    good question offers (`options`) and the user's reply (`clarification`),
+    which the answer evaluation gives when the agent asks. The three keys
+    are optional, so the gold file reads as before; `should_ask` true needs
+    at least two options and a clarification, and options or a
+    clarification without `should_ask` are refused, since they would be
+    silently unused.
 """
 
 import hashlib
@@ -136,6 +145,11 @@ class GoldQuestion:
     sources: tuple[DocumentSource | RegisterSource, ...]
     why_hard: str
     difficulty: int
+    # Whether the agent should ask the user (ask_user) before it answers; None when the gold
+    # does not say. The options a good question offers, and the user's reply to it.
+    should_ask: bool | None = None
+    options: tuple[str, ...] = ()
+    clarification: str | None = None
 
     @property
     def document_sources(self) -> tuple[DocumentSource, ...]:
@@ -347,6 +361,7 @@ def _question(data: Mapping[str, object], where: str) -> GoldQuestion:
     )
     if answerable and not sources:
         raise GoldError(f"{where}: an answerable question needs at least one source")
+    should_ask, options, clarification = _asking(data, where)
     return GoldQuestion(
         id=question_id,
         category=_text(data, "category", where),
@@ -358,7 +373,28 @@ def _question(data: Mapping[str, object], where: str) -> GoldQuestion:
         sources=sources,
         why_hard=_text(data, "why_hard", where, blank=True),
         difficulty=_whole(data, "difficulty", where),
+        should_ask=should_ask,
+        options=options,
+        clarification=clarification,
     )
+
+
+def _asking(
+    data: Mapping[str, object], where: str
+) -> tuple[bool | None, tuple[str, ...], str | None]:
+    """`should_ask`, `options` and `clarification`, each optional, checked together."""
+    should_ask = None if data.get("should_ask") is None else _flag(data, "should_ask", where)
+    options = () if data.get("options") is None else _texts(data, "options", where)
+    if any(not option.strip() for option in options):
+        raise GoldError(f"{where}: an option is blank")
+    clarification = _optional_text(data, "clarification", where)
+    if should_ask is None and (options or clarification is not None):
+        raise GoldError(f"{where}: options and clarification need should_ask")
+    if should_ask and len(options) < 2:
+        raise GoldError(f"{where}: should_ask needs at least two options")
+    if should_ask and clarification is None:
+        raise GoldError(f"{where}: should_ask needs a clarification")
+    return should_ask, options, clarification
 
 
 def _scope(data: Mapping[str, object], where: str) -> GoldScope:

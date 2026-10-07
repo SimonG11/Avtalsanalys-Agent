@@ -12,6 +12,7 @@ import shutil
 import subprocess
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ from evals import run_answer_eval as runner
 from evals.answer_report import AnswerReport, RunInfo
 from evals.answer_run import QuestionRun, TokenUse
 from evals.answer_scores import score
+from evals.ask_judge import AskJudgement, ModelAskJudge
 from evals.gold import GoldError, GoldFile, GoldQuestion, GoldScope, RegisterSource
 from evals.judge import Judgement, ModelJudge
 from evals.run_answer_eval import (
@@ -46,11 +48,13 @@ from evals.run_answer_eval import (
     code_commit,
     evaluate,
     judge_answer,
+    judge_ask,
     measured_commit,
     run_info,
     run_settings,
     select_questions,
 )
+from evals.workflow_baseline import workflow_template
 
 SECRET = "sk-test-not-a-real-key"
 CORRECT = Judgement(verdict="correct", missing=[], wrong=[], reason="Samma som facit.")
@@ -103,11 +107,13 @@ class FakeJudge(Judge):
 
     def __init__(self) -> None:
         self.read: list[str] = []
+        self.clarifications: list[str | None] = []
 
     async def judge(
-        self, question: GoldQuestion, answer: Answer
+        self, question: GoldQuestion, answer: Answer, clarification: str | None = None
     ) -> tuple[Judgement | None, Mapping[str, TokenUse]]:
         self.read.append(question.id)
+        self.clarifications.append(clarification)
         return CORRECT, {"judge-model": TokenUse(calls=1)}
 
 
@@ -370,6 +376,7 @@ async def test_the_questions_run_at_once_and_the_results_keep_the_golds_order(
         question: GoldQuestion,
         t: float,
         trace: Any = None,
+        mode: str = "agent",
     ) -> QuestionRun:
         nonlocal running, most
         traces.append(trace)
@@ -436,6 +443,7 @@ async def test_with_tracing_each_question_is_a_trace_named_by_its_id_in_the_runs
         question: GoldQuestion,
         t: float,
         trace: Any = None,
+        mode: str = "agent",
     ) -> QuestionRun:
         traces[question.id] = trace["metadata"]
         return ANSWERED
@@ -605,17 +613,27 @@ def test_the_judges_model_needs_the_judge() -> None:
 
 def test_the_judge_is_made_on_the_judge_model(monkeypatch: pytest.MonkeyPatch) -> None:
     made: list[tuple[str, str]] = []
+    clients: list[tuple[str, object]] = []
 
     def make(settings: Settings, model: str, effort: str) -> Any:
         made.append((model, effort))
         return object()
+
+    def answer_judge(model: object) -> ModelJudge:
+        clients.append(("answer", model))
+        return ModelJudge.__new__(ModelJudge)
+
+    def ask_judge(model: object) -> ModelAskJudge:
+        clients.append(("ask", model))
+        return ModelAskJudge.__new__(ModelAskJudge)
 
     async def fake_evaluate(settings: Settings, gold: GoldFile, questions: Any, **kw: Any) -> Any:
         assert isinstance(kw["judge"], Judge)
         raise CommandError("stopp")
 
     monkeypatch.setattr(runner, "make_judge_model", make)
-    monkeypatch.setattr(runner, "ModelJudge", lambda model: ModelJudge.__new__(ModelJudge))
+    monkeypatch.setattr(runner, "ModelJudge", answer_judge)
+    monkeypatch.setattr(runner, "ModelAskJudge", ask_judge)
     monkeypatch.setattr(runner, "evaluate", fake_evaluate)
     monkeypatch.setattr(
         runner, "get_settings", lambda: Settings(_env_file=None, reviewer_model="the-reviewer")
@@ -627,3 +645,165 @@ def test_the_judge_is_made_on_the_judge_model(monkeypatch: pytest.MonkeyPatch) -
         runner.main(["--only", "q01", "--judge-model", "other", "--judge-effort", "high"])
 
     assert made == [("the-reviewer", "medium"), ("other", "high")]
+    # The ask judge is the answer judge's model at its effort: one client for both.
+    assert [role for role, _ in clients] == ["answer", "ask", "answer", "ask"]
+    assert clients[0][1] is clients[1][1] and clients[2][1] is clients[3][1]
+
+
+# --- the baseline and the questions to the user -----------------------------------------------
+
+
+def asking(id: str, should_ask: bool) -> GoldQuestion:
+    return replace(
+        gold(id),
+        should_ask=should_ask,
+        options=("Delområde 1", "Delområde 2"),
+        clarification="Delområde 2.",
+    )
+
+
+SEPARATES = AskJudgement(separates=True, reason="Båda delområdena går att välja.")
+
+
+class AskingJudge(FakeJudge):
+    """A FakeJudge that also judges the agent's questions to the user."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.asks: list[str] = []
+
+    async def judge_ask(
+        self, question: GoldQuestion, run: QuestionRun
+    ) -> tuple[AskJudgement | None, Mapping[str, TokenUse]]:
+        self.asks.append(question.id)
+        return SEPARATES, {"judge-model": TokenUse(calls=1)}
+
+
+def asked(*questions: str) -> QuestionRun:
+    return replace(ANSWERED, asked=questions, asked_options=tuple(("A", "B") for _ in questions))
+
+
+@pytest.mark.anyio
+async def test_the_judge_reads_the_clarification_only_when_the_agent_asked() -> None:
+    judge = AskingJudge()
+
+    await judge_answer(judge, asking("a01", True), ANSWERED)
+    await judge_answer(judge, asking("a01", True), asked("Vilket delområde?"))
+    await judge_answer(judge, gold("q01"), asked("Vilket avtal?"))  # no clarification in the gold
+
+    assert judge.clarifications == [None, "Delområde 2.", None]
+
+
+@pytest.mark.anyio
+async def test_only_a_question_that_should_ask_and_did_gets_the_ask_judge() -> None:
+    judge = AskingJudge()
+
+    assert await judge_ask(judge, asking("a01", True), ANSWERED) == (None, {})
+    assert await judge_ask(judge, asking("a05", False), asked("Större eller Mindre?")) == (None, {})
+    assert await judge_ask(judge, gold("q01"), asked("Vilket avtal?")) == (None, {})
+    assert await judge_ask(None, asking("a01", True), asked("Vilket?")) == (None, {})
+    verdict, usage = await judge_ask(judge, asking("a01", True), asked("Vilket delområde?"))
+
+    assert (verdict, usage) == (SEPARATES, {"judge-model": TokenUse(calls=1)})
+    assert judge.asks == ["a01"]
+
+
+@pytest.mark.anyio
+async def test_both_judges_tokens_and_the_ask_judgement_reach_the_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    modes: list[str] = []
+
+    async def ask(*args: Any, mode: str = "agent", **kwargs: Any) -> QuestionRun:
+        modes.append(mode)
+        return asked("Vilket delområde?")
+
+    async def reachable(settings: Settings) -> None:
+        return None
+
+    monkeypatch.setattr(runner, "make_agent_model", lambda settings: object())
+    monkeypatch.setattr(runner, "make_reviewer", lambda settings: object())
+    monkeypatch.setattr(runner, "check_mcp", reachable)
+    monkeypatch.setattr(runner, "ask_question", ask)
+    questions = (asking("a01", True),)
+
+    report = await evaluate(
+        Settings(_env_file=None),
+        replace(GOLD, questions=questions),
+        questions,
+        concurrency=1,
+        timeout=10,
+        judge=AskingJudge(),
+        info=info(mode="workflow"),
+    )
+
+    (result,) = report.results
+    assert modes == ["workflow"]
+    assert result.ask_judgement == SEPARATES and result.asked_right is True
+    assert result.judge_usage == {"judge-model": TokenUse(calls=2)}
+
+
+@pytest.mark.anyio
+async def test_the_workflow_mode_builds_the_baseline_and_replies_with_the_clarification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built: list[str] = []
+    replies: list[str | None] = []
+
+    @asynccontextmanager
+    async def tools(settings: Settings) -> AsyncIterator[Any]:
+        yield object()
+
+    def builder(name: str) -> Any:
+        def build(*args: Any, **kwargs: Any) -> str:
+            built.append(name)
+            return name
+
+        return build
+
+    async def fake_run(graph: Any, question: str, **kwargs: Any) -> QuestionRun:
+        replies.append(kwargs["clarification"])
+        return ANSWERED
+
+    monkeypatch.setattr(runner, "open_mcp_tools", tools)
+    monkeypatch.setattr(runner, "build_agent", builder("agent"))
+    monkeypatch.setattr(runner, "build_workflow", builder("workflow"))
+    monkeypatch.setattr(runner, "run_question", fake_run)
+    settings = Settings(_env_file=None)
+
+    await ask_question(settings, None, None, None, asking("a01", True), 10, mode="workflow")  # type: ignore[arg-type]
+    await ask_question(settings, None, None, None, gold("q01"), 10)  # type: ignore[arg-type]
+
+    assert built == ["workflow", "agent"]
+    assert replies == ["Delområde 2.", None]
+
+
+def test_the_mode_is_agent_by_default_and_names_the_prompt_measured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "code_commit", lambda path: ("abc1234", False))
+    assert build_parser().parse_args([]).mode == "agent"
+    args = build_parser().parse_args(["--mode", "workflow"])
+
+    info = run_info(Settings(_env_file=None), args, None)
+
+    assert info.mode == "workflow"
+    assert info.system_prompt_sha256 == hashlib.sha256(workflow_template().encode()).hexdigest()
+    assert info.system_prompt_sha256 != hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
+
+
+def test_a_workflow_run_is_named_so_in_its_reports(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def fake_evaluate(settings: Settings, gold: GoldFile, questions: Any, **kw: Any) -> Any:
+        report = fixed_report(tuple(questions), None)
+        return replace(report, info=kw["info"])
+
+    monkeypatch.setattr(runner, "evaluate", fake_evaluate)
+    monkeypatch.setattr(runner, "get_settings", lambda: Settings(_env_file=None))
+    monkeypatch.setattr(runner, "code_commit", lambda path: ("abc1234", False))
+
+    runner.main(["--mode", "workflow", "--only", "q01", "--no-judge", "--out", str(tmp_path)])
+
+    assert capsys.readouterr().out.startswith("Answer evaluation, gpt-6.1-sol (low, workflow)")
+    assert (tmp_path / "answers-gpt-6.1-sol-low-workflow.md").exists()

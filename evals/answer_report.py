@@ -12,7 +12,14 @@ What:
     judge's reason for each verdict, and each answer next to the gold
     answer. `report_json` holds the same, with each answer as the web app
     gets it and every tool call with its arguments; `overall_lines` is what
-    the command prints, and `write_reports` writes both files.
+    the command prints, and `write_reports` writes both files. A run of
+    the baseline (`RunInfo.mode` "workflow", ADR 0024) is named so in the
+    file names, the title and the run, and its report lists the fixed
+    steps. A gold file with questions that say whether the agent should ask
+    the user gets a section "Motfrågor": per question whether it should ask,
+    whether it asked, its question and options, whether the question
+    separates the gold's options and why, and the verdict, with a summary
+    line; the JSON has the same per question and as `asks`.
 
 Why:
     The Markdown is what is shown and read: the numbers first, then what it
@@ -35,7 +42,8 @@ How:
     check passed. What a run did not save (one that never reached the
     graph: its path, model calls and rejections) is named as not saved
     ("inte sparat"), null in the JSON, and left out of the path's numbers,
-    never counted as zero.
+    never counted as zero. A baseline never asks, so it asked when it
+    should in 0 of the questions that should ask.
 """
 
 import json
@@ -60,6 +68,7 @@ from evals.answer_run import (
 )
 from evals.answer_scores import (
     STATUSES,
+    AskSummary,
     PathSummary,
     QuestionResult,
     Summary,
@@ -68,9 +77,11 @@ from evals.answer_scores import (
     median,
     percentile,
     summarize,
+    summarize_asks,
     summarize_paths,
 )
 from evals.answer_steps import RESOLVE_REFERENCE, CheckRule, Rejection, Step, rule_counts
+from evals.workflow_baseline import FIXED_STEPS
 
 VERDICT_NAMES = {"correct": "Rätt", "partly_correct": "Delvis rätt", "incorrect": "Fel"}
 UNJUDGED_NAME = "Ej bedömd"
@@ -85,6 +96,8 @@ NOT_SAVED = "inte sparat"
 # Where the commit measured came from: git, or the variable set where git cannot tell.
 CommitSource = Literal["git", "environment"]
 COMMIT_VARIABLE = "AVTALSAGENT_COMMIT"
+# What was asked: the agent, or the baseline's fixed workflow (ADR 0024).
+Mode = Literal["agent", "workflow"]
 # How much of an argument a path shows, and of a problem the check found.
 ARG_CHARS = 40
 PROBLEM_CHARS = 200
@@ -110,8 +123,10 @@ class RunInfo:
     commit: str | None = None  # the short sha of the agent's and the measurement's code
     commit_source: CommitSource | None = None
     uncommitted: bool = False  # by git: its working tree had changes that were not committed
-    system_prompt_sha256: str | None = None  # of SYSTEM_PROMPT, before the date is filled in
+    # Of SYSTEM_PROMPT, or of the baseline's prompt in workflow mode, before the date is in.
+    system_prompt_sha256: str | None = None
     reviewer_prompt_sha256: str | None = None  # of REVIEWER_PROMPT
+    mode: Mode = "agent"
 
 
 @dataclass(frozen=True)
@@ -126,8 +141,10 @@ class AnswerReport:
 
 
 def report_stem(report: AnswerReport) -> str:
-    """`answers-<agent model>-<effort>[-<label>]`, safe as a file name."""
+    """`answers-<agent model>-<effort>[-workflow][-<label>]`, safe as a file name."""
     parts = ["answers", report.info.agent_model, report.info.agent_effort]
+    if report.info.mode == "workflow":
+        parts.append("workflow")
     if report.info.label:
         parts.append(report.info.label)
     return "-".join(re.sub(r"[^A-Za-z0-9.-]+", "_", part).strip("_") or "_" for part in parts)
@@ -151,6 +168,7 @@ def report_json(report: AnswerReport) -> str:
             for category, group in by_category(report.results).items()
         },
         "path": _path_json(summarize_paths(report.results), report.info.model_call_limit),
+        "asks": _asks_json(summarize_asks(report.results)),
         "questions": [_result_json(result) for result in report.results],
     }
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
@@ -167,6 +185,10 @@ def _path_json(paths: PathSummary, limit: int) -> dict[str, Any]:
         "at_limit": sum(1 for count in calls if count >= limit) if calls else None,
     }
     return data
+
+
+def _asks_json(asks: AskSummary | None) -> dict[str, Any] | None:
+    return asdict(asks) if asks is not None else None
 
 
 def _summary_json(summary: Summary) -> dict[str, Any]:
@@ -234,6 +256,12 @@ def _result_json(result: QuestionResult) -> dict[str, Any]:
         "model_calls": run.model_calls,
         "steps": [asdict(step) for step in run.steps] if run.path_saved else None,
         "asked": list(run.asked),
+        "asked_options": [list(options) for options in run.asked_options],
+        "should_ask": result.should_ask,
+        "expected_options": list(result.expected_options),
+        "ask_judgement": result.ask_judgement.model_dump() if result.ask_judgement else None,
+        "asked_right": result.asked_right,
+        "unnecessary_ask": result.unnecessary_ask,
         "seconds": round(run.seconds, 1),
         "usage": _usage_json(run.usage),
         "cost": _range_json(result.cost),
@@ -250,19 +278,34 @@ _UNJUDGED = "unjudged"
 def render_markdown(report: AnswerReport) -> str:
     """The Markdown report, in Swedish."""
     info = report.info
-    lines = [
-        f"# Mätning av agentens svar: {_md(info.agent_model)}, resonemang {_md(info.agent_effort)}",
-        "",
-        "Guldfrågorna ställs till agenten med samma graf, kontroll och granskare som API:t "
-        "kör. En domare (en språkmodell) jämför varje svar med facit, och svarets källor "
-        "jämförs med facits.",
-        "",
-    ]
+    model = f"{_md(info.agent_model)}, resonemang {_md(info.agent_effort)}"
+    if info.mode == "workflow":
+        lines = [
+            f"# Mätning av baslinjens svar (fast arbetsflöde): {model}",
+            "",
+            "Guldfrågorna ställs till baslinjen: ett fast arbetsflöde med agentens modell, "
+            "kontroll, granskare och gränser, men utan agentens val av steg (ADR 0024). En "
+            "domare (en språkmodell) jämför varje svar med facit, och svarets källor jämförs "
+            "med facits.",
+            "",
+        ]
+    else:
+        lines = [
+            f"# Mätning av agentens svar: {model}",
+            "",
+            "Guldfrågorna ställs till agenten med samma graf, kontroll och granskare som API:t "
+            "kör. En domare (en språkmodell) jämför varje svar med facit, och svarets källor "
+            "jämförs med facits.",
+            "",
+        ]
     lines += _md_summary(report)
     lines += _md_run(report)
+    if info.mode == "workflow":
+        lines += _md_fixed_steps()
     lines += _md_method(report)
     lines += _md_categories(report.results)
     lines += _md_questions(report.results)
+    lines += _md_asks(report)
     lines += _md_paths(report)
     lines += _md_usage(report)
     lines += _md_judgements(report)
@@ -339,8 +382,15 @@ def _md_summary(report: AnswerReport) -> list[str]:
             )
         )
     lines.append(line + ".")
-    lines.append(f"- **Följdfrågor:** agenten frågade användaren i {s.asked} av {n} frågor.")
-    lines.append(f"- **Agentens modellanrop per fråga:** {_model_calls(paths, report.info)}.")
+    if report.info.mode == "workflow":
+        lines.append("- **Följdfrågor:** baslinjen kan inte fråga användaren.")
+    else:
+        lines.append(f"- **Följdfrågor:** agenten frågade användaren i {s.asked} av {n} frågor.")
+    if (asks := summarize_asks(report.results)) is not None:
+        lines.append(f"- **Motfrågor:** {_asks_line(asks)} (se Motfrågor).")
+    lines.append(
+        f"- **{_whose(report.info)} modellanrop per fråga:** {_model_calls(paths, report.info)}."
+    )
     lines.append(f"- **Mål ur en hänvisning:** {_reads(paths)}.")
     lines.append(f"- **`resolve_reference`:** {_resolved(paths)}.")
     lines.append(
@@ -363,13 +413,31 @@ def _md_run(report: AnswerReport) -> list[str]:
         if info.judge_model
         else "ingen (--no-judge)"
     )
+    if info.mode == "workflow":
+        who = (
+            f"- **Baslinje (fast arbetsflöde):** {_md(info.agent_model)}, resonemang "
+            f"{_md(info.agent_effort)}, högst {info.model_call_limit} modellanrop per fråga "
+            f"(läsningen av frågan inräknad), högst {info.validation_retries} nya försök"
+        )
+        prompt = (
+            f"baslinjens systemprompt {_sha(info.system_prompt_sha256)} (`workflow_template`, "
+            "byggd av delar av agentens `SYSTEM_PROMPT`, innan dagens datum fylls i)"
+        )
+    else:
+        who = (
+            f"- **Agent:** {_md(info.agent_model)}, resonemang {_md(info.agent_effort)}, högst "
+            f"{info.model_call_limit} modellanrop per körning av grafen (en fråga där agenten "
+            f"frågar användaren är två körningar), högst {info.validation_retries} nya försök"
+        )
+        prompt = (
+            f"agentens systemprompt {_sha(info.system_prompt_sha256)} (mallen `SYSTEM_PROMPT`, "
+            "innan dagens datum fylls i)"
+        )
     return [
         "## Körning",
         "",
         f"- **Tid:** {_moment(report.created_at)}, {_seconds(report.seconds)} totalt",
-        f"- **Agent:** {_md(info.agent_model)}, resonemang {_md(info.agent_effort)}, högst "
-        f"{info.model_call_limit} modellanrop per körning av grafen (en fråga där agenten frågar "
-        f"användaren är två körningar), högst {info.validation_retries} nya försök",
+        who,
         f"- **Granskare:** {_md(info.reviewer_model)}, resonemang {_md(info.reviewer_effort)}",
         f"- **Domare:** {judge}",
         f"- **avtal-mcp:** {_md(info.mcp)}",
@@ -377,11 +445,21 @@ def _md_run(report: AnswerReport) -> list[str]:
         f"{len(report.results)} av {report.gold_questions} frågor",
         f"- **Samtidiga frågor:** {info.concurrency}; tidsgräns {_seconds(info.timeout)} per fråga",
         f"- **Kod:** {_commit(info)}",
-        f"- **Prompter, sha256:** agentens systemprompt {_sha(info.system_prompt_sha256)} "
-        "(mallen `SYSTEM_PROMPT`, innan dagens datum fylls i), granskarens prompt "
-        f"{_sha(info.reviewer_prompt_sha256)}",
+        f"- **Prompter, sha256:** {prompt}, granskarens prompt {_sha(info.reviewer_prompt_sha256)}",
         "",
     ]
+
+
+def _md_fixed_steps() -> list[str]:
+    lines = [
+        "## Baslinjens fasta steg",
+        "",
+        "Samma steg i samma ordning för varje fråga, utan att modellen väljer något av dem. "
+        "Ett verktyg som svarar med fel noteras, och flödet går vidare.",
+        "",
+    ]
+    lines += [f"{number}. {step}" for number, step in enumerate(FIXED_STEPS, start=1)]
+    return [*lines, ""]
 
 
 def _commit(info: RunInfo) -> str:
@@ -416,14 +494,16 @@ def _sha(sha256: str | None) -> str:
 
 
 def _md_method(report: AnswerReport) -> list[str]:
-    return [
+    lines = [
         "## Vad som mättes och hur",
         "",
         "- Varje fråga ställs i ett eget samtal, med en egen session mot avtal-mcp som i API:t. "
-        "Frågar agenten användaren svarar mätningen "
+        "Frågar agenten användaren svarar mätningen med frågans förtydligande när "
+        "testsamlingen har ett (en oklar fråga, där facit bygger på förtydligandet), och annars "
         f"”{ASK_USER_REPLY}”, eftersom guldfrågorna ska kunna besvaras som de är ställda.",
         "- **Bedömning:** domaren får frågan, facit, om avtalen besvarar frågan enligt facit och "
-        "agentens svar, och dömer bara mot facit: *rätt* när svaret har kärnan i facit (det "
+        "agentens svar (och förtydligandet, när agenten frågade och fick det), och dömer bara "
+        "mot facit: *rätt* när svaret har kärnan i facit (det "
         "frågan efterfrågar) och inget i det motsäger facit, *delvis rätt* när det har en del "
         "av kärnan, annars *fel*. För en fråga som avtalen inte besvarar är ”framgår inte” "
         "rätt. Ett svar som inte blev klart inom gränsen för modellanrop är fel utan domare. "
@@ -472,8 +552,27 @@ def _md_method(report: AnswerReport) -> list[str]:
         "arkitekturvalideringen (oktober 2026). Där saknas priset för cachad indata, så "
         "kostnaden anges från cachad indata utan kostnad till cachad indata till fullt pris; "
         "det verkliga priset ligger mellan. Domarens anrop räknas för sig.",
-        "",
     ]
+    if report.info.mode == "workflow":
+        lines.append(
+            "- **Baslinjen** har agentens modell, kontroll, granskare och gränser, men inga "
+            "verktyg: modellen kan bara lämna svaret. Stegen före svaret är de fasta stegen "
+            "ovan, och de står i vägen per fråga som agentens anrop gör. Modellanropen räknar "
+            "också läsningen av frågan, som görs innan modellen skriver sitt första utkast, och "
+            "den räknas mot gränsen."
+        )
+    if summarize_asks(report.results) is not None:
+        lines.append(
+            "- **Motfrågor:** för en fråga där testsamlingen säger att agenten ska fråga "
+            "användaren (för att frågan passar flera avtal eller delområden med olika svar) "
+            "räknas en motfråga som rätt bara när en domare (samma modell och nivå som för "
+            "svaren) finner att den låter användaren välja mellan de väntade alternativen. För "
+            "en fråga där svaret är detsamma i alla alternativ är det rätt att inte fråga, och "
+            "en motfråga räknas som onödig. Svaret bedöms mot facit som förut, med "
+            "förtydligandet när agenten frågade, och mot frågan som den ställdes när agenten "
+            "inte frågade."
+        )
+    return [*lines, ""]
 
 
 def _md_categories(results: Sequence[QuestionResult]) -> list[str]:
@@ -561,9 +660,97 @@ def _md_questions(results: Sequence[QuestionResult]) -> list[str]:
     return lines
 
 
+def _whose(info: RunInfo) -> str:
+    """'Agentens', or 'Baslinjens' for a run of the baseline."""
+    return "Baslinjens" if info.mode == "workflow" else "Agentens"
+
+
+def _asks_line(asks: AskSummary) -> str:
+    """'frågade när den borde i 3 av 4 frågor (2 med en motfråga som skiljer …); …'.
+
+    Each half is left out when the gold has no question of its kind.
+    """
+    parts = []
+    if asks.should_ask:
+        part = (
+            f"frågade när den borde i {asks.asked} av {asks.should_ask} frågor "
+            f"({asks.separating} med en motfråga som skiljer alternativen åt"
+        )
+        if asks.unjudged:
+            part += f", {asks.unjudged} ej bedömda"
+        parts.append(part + ")")
+    if asks.should_not_ask:
+        parts.append(
+            f"frågade i onödan i {asks.asked_unnecessarily} av {asks.should_not_ask} frågor"
+        )
+    return "; ".join(parts)
+
+
+def _md_asks(report: AnswerReport) -> list[str]:
+    """The section Motfrågor; nothing when no question says whether the agent should ask."""
+    results = report.results
+    asks = summarize_asks(results)
+    if asks is None:
+        return []
+    who = "Baslinjen" if report.info.mode == "workflow" else "Agenten"
+    lines = [
+        "## Motfrågor",
+        "",
+        f"{who} {_asks_line(asks)}.",
+        "",
+        _row(["Fråga", "Ska fråga", "Frågade", "Skiljer", "Motfrågan", "Svaret"]),
+        _row(["---", "---", "---", "---", "---", "---"]),
+    ]
+    asked_results = [r for r in results if r.should_ask is not None]
+    for r in asked_results:
+        separates = (
+            ("ja" if r.ask_judgement.separates else "nej") if r.ask_judgement is not None else "–"
+        )
+        outcome = {True: "rätt", False: "fel", None: UNJUDGED_NAME.lower()}[r.asked_right]
+        if r.unnecessary_ask:
+            outcome = "onödig"
+        lines.append(
+            _row(
+                [
+                    _md(r.id),
+                    "ja" if r.should_ask else "nej",
+                    "ja" if r.asked else "nej",
+                    separates,
+                    outcome,
+                    _verdict_name(r),
+                ]
+            )
+        )
+    lines += [
+        "",
+        "Skiljer: om motfrågan låter användaren välja mellan de väntade alternativen, enligt "
+        "domaren; bara för en fråga där agenten skulle fråga och frågade. Motfrågan: rätt när "
+        "agenten frågade med en motfråga som skiljer, eller inte frågade när den inte skulle. "
+        "Svaret: domarens bedömning av svaret.",
+        "",
+    ]
+    for r in asked_results:
+        line = f"- **{_md(r.id)}** "
+        line += "(ska fråga" if r.should_ask else "(ska svara utan att fråga"
+        if r.expected_options:
+            line += f"; väntade alternativ: {_listed(r.expected_options)[:-1]}"
+        line += ")."
+        if not r.asked:
+            line += " Frågade inte."
+        for number, question in enumerate(r.run.asked):
+            offered = r.run.asked_options[number] if number < len(r.run.asked_options) else ()
+            line += f" Frågade: ”{_md(question)}”"
+            line += f" Alternativ: {_listed(offered)}" if offered else " (inga alternativ)."
+        if r.ask_judgement is not None:
+            verdict = "skiljer" if r.ask_judgement.separates else "skiljer inte"
+            line += f" Domaren: {verdict}. {_md(r.ask_judgement.reason)}"
+        lines.append(line)
+    return [*lines, ""]
+
+
 def _md_paths(report: AnswerReport) -> list[str]:
     paths = summarize_paths(report.results)
-    lines = ["## Agentens väg", ""]
+    lines = [f"## {_whose(report.info)} väg", ""]
     if paths.tools:
         lines += [
             "Anrop till avtal-mcp per verktyg, i alla frågor:",
@@ -972,8 +1159,9 @@ def overall_lines(report: AnswerReport) -> list[str]:
     v = s.verdicts
     n = s.questions
     statuses = ", ".join(f"{status} {s.statuses[status]}" for status in (*STATUSES, "error"))
+    mode = ", workflow" if report.info.mode == "workflow" else ""
     lines = [
-        f"Answer evaluation, {report.info.agent_model} ({report.info.agent_effort}): "
+        f"Answer evaluation, {report.info.agent_model} ({report.info.agent_effort}{mode}): "
         f"{n} questions in {report.seconds:.0f} s",
         f"judge: correct {v['correct']}, partly {v['partly_correct']}, incorrect "
         f"{v['incorrect']}, unjudged {v[_UNJUDGED]}"
@@ -990,6 +1178,12 @@ def overall_lines(report: AnswerReport) -> list[str]:
         "retries by rule (a draft under each rule that sent it back): "
         + (", ".join(f"{rule} {n.drafts}" for rule, n in paths.rejections.items()) or "none"),
     ]
+    if (asks := summarize_asks(report.results)) is not None:
+        lines.append(
+            f"asks: asked when it should {asks.asked}/{asks.should_ask} (separating "
+            f"{asks.separating}, unjudged {asks.unjudged}); asked unnecessarily "
+            f"{asks.asked_unnecessarily}/{asks.should_not_ask}"
+        )
     if s.cost is not None:
         lines.append(f"cost: ${s.cost[0]:.2f}-{s.cost[1]:.2f} (agent and reviewer)")
     return lines

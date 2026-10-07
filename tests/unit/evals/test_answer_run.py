@@ -288,6 +288,35 @@ async def test_the_agents_question_to_the_user_gets_the_fixed_reply() -> None:
 
 
 @pytest.mark.anyio
+async def test_a_clarification_is_the_reply_and_each_questions_options_are_kept() -> None:
+    model = NamedModel(
+        script=[
+            tool_call("ask_user", {"question": "Vilket delområde?", "options": ["1", "2"]}, "c1"),
+            tool_call("ask_user", {"question": "Och  kontraktet?"}, "c2"),
+            final_answer("Tre månader [1].", [GOOD], call_id="c3"),
+        ]
+    )
+
+    run = await run_question(
+        build(model),
+        QUESTION,
+        thread_id=f"t-{uuid.uuid4()}",
+        timeout=30,
+        redact=lambda text: text,
+        clarification="Delområde 2.",
+    )
+
+    assert run.asked == ("Vilket delområde?", "Och kontraktet?")
+    assert run.asked_options == (("1", "2"), ())
+    replies = [
+        m.content for m in model.calls[2] if isinstance(m, ToolMessage) and m.name == "ask_user"
+    ]
+    assert replies == ["Delområde 2.", "Delområde 2."]
+    assert ASK_USER_REPLY not in replies
+    assert read_run({}, [], 1.0, {}, None).asked_options == ()
+
+
+@pytest.mark.anyio
 async def test_a_draft_the_check_sends_back_is_counted_and_the_retry_is_the_draft() -> None:
     model = NamedModel(
         script=[

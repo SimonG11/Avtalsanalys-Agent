@@ -23,7 +23,12 @@ How:
     (`agent/reviewer.py`): the model can only answer in `Judgement`'s shape,
     and the request is not streamed. The model reads one message: the
     question, whether the agreements answer it according to the gold, the
-    gold answer and the agent's answer, each in an element of its own. Every
+    gold answer and the agent's answer, each in an element of its own. When
+    the agent asked the user and the measurement replied with the gold's
+    clarification (`gold.GoldQuestion.clarification`), the gold answer
+    assumes that reply, so the question's element has the question and the
+    clarification after it (CLARIFICATION_LEAD); the prompt stays the same
+    for every run. Every
     text is NFKC-normalised and every "<" in it escaped, so no text can end
     its element, and the prompt says that the elements are data. Any error,
     or a verdict that does not parse, gives None; the log names the error's
@@ -50,6 +55,8 @@ TIMEOUT_SECONDS = 120
 MAX_RETRIES = 2
 
 Verdict = Literal["correct", "partly_correct", "incorrect"]
+# Before the user's reply to the agent's question, in the question's element.
+CLARIFICATION_LEAD = "Användarens svar när agenten frågade:"
 ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 
 JUDGE_PROMPT = """\
@@ -117,9 +124,15 @@ class ModelJudge:
         answerable: bool,
         answer_text: str,
         config: RunnableConfig | None = None,
+        clarification: str | None = None,
     ) -> Judgement | None:
-        """The model's verdict on the answer, or None when there is none to read."""
-        messages = judge_messages(question, gold_answer, answerable, answer_text)
+        """The model's verdict on the answer, or None when there is none to read.
+
+        `clarification` is the user's reply to the agent's question, when the agent asked.
+        """
+        messages = judge_messages(
+            question, gold_answer, answerable, answer_text, clarification=clarification
+        )
         try:
             result = await self._judge.ainvoke(messages, config=config)
         except Exception as error:  # a failed judgement leaves the question unjudged
@@ -153,19 +166,26 @@ def make_judge_model(settings: Settings, model: str, effort: ReasoningEffort) ->
 
 
 def judge_messages(
-    question: str, gold_answer: str, answerable: bool, answer_text: str
+    question: str,
+    gold_answer: str,
+    answerable: bool,
+    answer_text: str,
+    *,
+    clarification: str | None = None,
 ) -> list[BaseMessage]:
     """The judge's messages: the prompt, and the question and both answers as data."""
+    if clarification is not None:
+        question = f"{question.strip()}\n\n{CLARIFICATION_LEAD} {clarification.strip()}"
     parts = [
-        _element("fråga", question),
+        element("fråga", question),
         f"Avtalen besvarar frågan enligt facit: {'ja' if answerable else 'nej'}",
-        _element("facit", gold_answer),
-        _element("svar", answer_text),
+        element("facit", gold_answer),
+        element("svar", answer_text),
     ]
     return [SystemMessage(JUDGE_PROMPT), HumanMessage("\n\n".join(parts))]
 
 
-def _element(tag: str, text: str) -> str:
+def element(tag: str, text: str) -> str:
     """`text` in the element `tag`, NFKC-normalised and with every "<" in it escaped."""
     escaped = unicodedata.normalize("NFKC", text.strip()).replace("<", "&lt;")
     return f"<{tag}>\n{escaped}\n</{tag}>"

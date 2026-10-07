@@ -5,9 +5,9 @@ What:
     in a thread of its own and returns a `QuestionRun`: the checked answer,
     the draft it was checked from, the tools called, every tool call with
     its arguments (`answer_steps`), the agent's model calls, the agent's
-    questions to the user, the drafts the check sent back (and why) or the
-    schema refused, the time, the tokens of every model call by model, and
-    the error, if any.
+    questions to the user and the options it offered with each, the drafts
+    the check sent back (and why) or the schema refused, the time, the
+    tokens of every model call by model, and the error, if any.
     `UsageCounter` is the callback that counts the tokens, `TokenUse` one
     model's count, and `cost` its price in dollars at PRICES.
 
@@ -19,10 +19,14 @@ Why:
 
 How:
     The graph runs with `ainvoke` until it stops without an interrupt; a
-    stop at `ask_user` is resumed with ASK_USER_REPLY, since the gold
-    questions are meant to be answered as asked. `anyio.fail_after` bounds
-    the whole question. The final state is read even after an error: the
-    answer is None unless the check set one. The draft is the last
+    stop at `ask_user` is resumed with the question's clarification when the
+    gold has one (a question that fits several agreements, where the gold
+    answer assumes the user's reply), else with ASK_USER_REPLY, since the
+    other gold questions are meant to be answered as asked. Each question
+    asked is kept with the options it offered, from the interrupt's
+    payload. `anyio.fail_after` bounds the whole question. The final state
+    is read even after an error: the answer is None unless the check set
+    one. The draft is the last
     `FinalAnswer` call that parses (`last_draft`); the steps and the
     rejections are read from the messages (`answer_steps`). The model calls
     are the count `ModelCallLimitMiddleware` keeps in the thread's state:
@@ -222,6 +226,8 @@ class QuestionRun:
     steps: tuple[Step, ...] = ()  # every tool call in order: avtal-mcp's, ask_user, each draft
     model_calls: int | None = None  # the agent's model calls in the question
     rejections: tuple[Rejection, ...] = ()  # why the check sent each draft back, in order
+    # The options the agent offered with each question in `asked`, in the same order.
+    asked_options: tuple[tuple[str, ...], ...] = ()
 
     @property
     def path_saved(self) -> bool:
@@ -237,10 +243,12 @@ async def run_question(
     timeout: float,
     redact: Callable[[str], str],
     trace: RunnableConfig | None = None,
+    clarification: str | None = None,
 ) -> QuestionRun:
     """Ask `graph` the question and read what it did; an error or a timeout is recorded.
 
     `trace` is merged into the run's config: the tracing's callbacks and metadata.
+    `clarification` is the reply to the agent's questions to the user; ASK_USER_REPLY without.
     """
     usage = UsageCounter()
     config = traced({"configurable": {"thread_id": thread_id}, "callbacks": [usage]}, trace or {})
@@ -248,6 +256,8 @@ async def run_question(
         "messages": [{"role": "user", "content": question}]
     }
     asked: list[str] = []
+    options: list[tuple[str, ...]] = []
+    reply = clarification if clarification is not None else ASK_USER_REPLY
     error: str | None = None
     started = time.monotonic()
     try:
@@ -258,7 +268,8 @@ async def run_question(
                 if not state.interrupts:
                     break
                 asked += [_asked(interrupt.value) for interrupt in state.interrupts]
-                run_input = Command(resume=_replies(state.interrupts))
+                options += [_offered(interrupt.value) for interrupt in state.interrupts]
+                run_input = Command(resume=_replies(state.interrupts, reply))
     except TimeoutError:
         error = f"tidsgränsen på {timeout:g} s nåddes"
     except Exception as failure:  # recorded; the next question is asked all the same
@@ -271,7 +282,7 @@ async def run_question(
         values = (await graph.aget_state(config)).values
     except Exception as failure:  # the checkpointer is in memory; this is not expected
         error = error or redact(error_text(failure))
-    return read_run(values, asked, seconds, usage.by_model, error)
+    return read_run(values, asked, seconds, usage.by_model, error, asked_options=options)
 
 
 def read_run(
@@ -280,6 +291,8 @@ def read_run(
     seconds: float,
     usage: Mapping[str, TokenUse],
     error: str | None,
+    *,
+    asked_options: Sequence[tuple[str, ...]] = (),
 ) -> QuestionRun:
     """The run as the graph's final state shows it."""
     messages: list[BaseMessage] = list(values.get("messages") or [])
@@ -310,6 +323,7 @@ def read_run(
         steps=read_steps(messages),
         model_calls=int(values.get(MODEL_CALL_COUNT, 0)) if values else None,
         rejections=read_rejections(messages),
+        asked_options=tuple(asked_options),
     )
 
 
@@ -362,7 +376,15 @@ def _asked(payload: Any) -> str:
     return " ".join(str(fields.get("question")).split())
 
 
-def _replies(interrupts: Sequence[Interrupt]) -> Any:
-    """ASK_USER_REPLY for each question, as `Command(resume=...)` takes them."""
-    replies = {interrupt.id: ASK_USER_REPLY for interrupt in interrupts}
-    return ASK_USER_REPLY if len(replies) == 1 else replies
+def _offered(payload: Any) -> tuple[str, ...]:
+    """The options a question to the user offered; none when it gave none."""
+    options = payload.get("options") if isinstance(payload, Mapping) else None
+    if not isinstance(options, list | tuple):
+        return ()
+    return tuple(" ".join(str(option).split()) for option in options)
+
+
+def _replies(interrupts: Sequence[Interrupt], reply: str) -> Any:
+    """`reply` for each question, as `Command(resume=...)` takes them."""
+    replies = {interrupt.id: reply for interrupt in interrupts}
+    return reply if len(replies) == 1 else replies

@@ -15,11 +15,20 @@ What:
       whether it asked the user, how long it took, and the tokens and cost
       of each model (`answer_run`, `answer_steps`).
     It writes a Markdown report in Swedish and a JSON report to
-    evals/reports/ (`answers-<agent model>-<effort>[-<label>]`,
-    `answer_report`) and prints the overall numbers.
+    evals/reports/ (`answers-<agent model>-<effort>[-workflow][-<label>]`,
+    `answer_report`) and prints the overall numbers. `--mode workflow`
+    asks the baseline instead of the agent: a fixed workflow with the same
+    model, answer check, reviewer and bounds (`workflow_baseline`, ADR
+    0024); the scoring, the judge and the cost are the same.
+    For a gold question that says whether the agent should ask the user
+    (`should_ask`), the agent's questions get the gold's clarification as
+    the user's reply, the judge reads the clarification with the question
+    when the agent asked, and an ask judge (`ask_judge`) decides whether a
+    question it should ask separates the gold's options.
 
         uv run python -m evals.run_answer_eval
         uv run python -m evals.run_answer_eval --only q01 q21 --effort medium
+        uv run python -m evals.run_answer_eval --mode workflow
         docker compose --profile eval run --rm eval
 
 Why:
@@ -67,7 +76,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import anyio
 from langchain_core.language_models import BaseChatModel
@@ -92,6 +101,7 @@ from evals.answer_report import (
     COMMIT_VARIABLE,
     AnswerReport,
     CommitSource,
+    Mode,
     RunInfo,
     check_writable,
     overall_lines,
@@ -105,10 +115,13 @@ from evals.answer_run import (
     error_text,
     run_question,
     stops_the_run,
+    total_use,
 )
 from evals.answer_scores import JudgedBy, QuestionResult, rule_judgement, score
+from evals.ask_judge import AskJudgement, ModelAskJudge
 from evals.gold import GoldError, GoldFile, GoldQuestion, load_gold
 from evals.judge import Judgement, ModelJudge, ReasoningEffort, make_judge_model
+from evals.workflow_baseline import build_workflow, workflow_template
 
 _log = logging.getLogger("evals.answers")
 
@@ -119,18 +132,20 @@ DEFAULT_TIMEOUT = 600  # seconds per question, new attempts and the review inclu
 DEFAULT_JUDGE_EFFORT: ReasoningEffort = "medium"
 EFFORTS: tuple[ReasoningEffort, ...] = ("low", "medium", "high", "xhigh")
 GIT_TIMEOUT = 10  # seconds for each git command that finds the commit measured
+MODES: tuple[Mode, ...] = get_args(Mode)
 
 # --- The run (models, avtal-mcp) --------------------------------------------------------------
 
 
 class Judge:
-    """The judge and the tokens of its calls."""
+    """The judges (of the answer, and of a question to the user) and the tokens of their calls."""
 
-    def __init__(self, judge: ModelJudge) -> None:
+    def __init__(self, judge: ModelJudge, ask_judge: ModelAskJudge) -> None:
         self._judge = judge
+        self._ask_judge = ask_judge
 
     async def judge(
-        self, question: GoldQuestion, answer: Answer
+        self, question: GoldQuestion, answer: Answer, clarification: str | None = None
     ) -> tuple[Judgement | None, Mapping[str, TokenUse]]:
         usage = UsageCounter()
         judgement = await self._judge.judge(
@@ -138,6 +153,20 @@ class Judge:
             question.answer,
             question.answerable,
             answer.text,
+            config={"callbacks": [usage]},
+            clarification=clarification,
+        )
+        return judgement, usage.by_model
+
+    async def judge_ask(
+        self, question: GoldQuestion, run: QuestionRun
+    ) -> tuple[AskJudgement | None, Mapping[str, TokenUse]]:
+        usage = UsageCounter()
+        judgement = await self._ask_judge.judge(
+            question.question,
+            question.options,
+            run.asked,
+            run.asked_options,
             config={"callbacks": [usage]},
         )
         return judgement, usage.by_model
@@ -151,12 +180,17 @@ async def ask_question(
     question: GoldQuestion,
     timeout: float,
     trace: RunnableConfig | None = None,
+    mode: Mode = "agent",
 ) -> QuestionRun:
-    """One question on its own MCP session and graph, as one run of the API."""
+    """One question on its own MCP session and graph, as one run of the API.
+
+    `mode` is the graph: the agent's (`build_agent`) or the baseline's (`build_workflow`).
+    """
+    build = build_workflow if mode == "workflow" else build_agent
     started = time.monotonic()
     try:
         async with open_mcp_tools(settings) as mcp:
-            graph = build_agent(model, mcp, reviewer, checkpointer, settings)
+            graph = build(model, mcp, reviewer, checkpointer, settings)
             return await run_question(
                 graph,
                 question.question,
@@ -164,6 +198,7 @@ async def ask_question(
                 timeout=timeout,
                 redact=settings.redact,
                 trace=trace,
+                clarification=question.clarification,
             )
     except Exception as error:  # the session to avtal-mcp failed; the run goes on
         if stops_the_run(error):
@@ -186,13 +221,27 @@ async def ask_question(
 async def judge_answer(
     judge: Judge | None, question: GoldQuestion, run: QuestionRun
 ) -> tuple[Judgement | None, JudgedBy | None, Mapping[str, TokenUse]]:
-    """The verdict on the run's answer: by rule, by the judge, or none without a judge."""
+    """The verdict on the run's answer: by rule, by the judge, or none without a judge.
+
+    When the agent asked the user, the judge reads the reply it got (the
+    gold's clarification) with the question, since the gold answer assumes it.
+    """
     if run.answer is None or judge is None:
         return None, None, {}
     if (by_rule := rule_judgement(run)) is not None:
         return by_rule, "rule", {}
-    judgement, usage = await judge.judge(question, run.answer)
+    clarification = question.clarification if run.asked else None
+    judgement, usage = await judge.judge(question, run.answer, clarification)
     return judgement, "judge", usage
+
+
+async def judge_ask(
+    judge: Judge | None, question: GoldQuestion, run: QuestionRun
+) -> tuple[AskJudgement | None, Mapping[str, TokenUse]]:
+    """The ask judge's verdict, for a question that should ask where the agent asked."""
+    if judge is None or question.should_ask is not True or not run.asked:
+        return None, {}
+    return await judge.judge_ask(question, run)
 
 
 async def check_mcp(settings: Settings) -> None:
@@ -222,9 +271,10 @@ async def evaluate(
     info: RunInfo,
     tracing: Tracing = TRACING_OFF,
 ) -> AnswerReport:
-    """Ask the agent every question, `concurrency` at a time, and score the answers.
+    """Ask the agent (or the baseline, by `info.mode`) every question, and score the answers.
 
-    With tracing on, each question is a trace named by its id, and the run their session.
+    `concurrency` questions run at once. With tracing on, each question is a
+    trace named by its id, and the run their session.
     """
     model = make_agent_model(settings)  # without a key, before a server is started
     reviewer = make_reviewer(settings)
@@ -245,10 +295,19 @@ async def evaluate(
                     name=question.id, session_id=session, tags=["eval", question.category]
                 )
                 run = await ask_question(
-                    settings, model, reviewer, checkpointer, question, timeout, trace=trace
+                    settings,
+                    model,
+                    reviewer,
+                    checkpointer,
+                    question,
+                    timeout,
+                    trace=trace,
+                    mode=info.mode,
                 )
                 judgement, judged_by, judge_usage = await judge_answer(judge, question, run)
-            result = score(question, run, judgement, judged_by, judge_usage)
+                asking, ask_usage = await judge_ask(judge, question, run)
+            usage = total_use([judge_usage, ask_usage])
+            result = score(question, run, judgement, judged_by, usage, ask_judgement=asking)
             results[index] = result
             done += 1
             _log.info(
@@ -296,6 +355,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--gold", type=Path, default=DEFAULT_GOLD, help=f"the gold file; default {DEFAULT_GOLD}"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=MODES,
+        default="agent",
+        help="ask the agent, or the baseline's fixed workflow (ADR 0024); default agent",
     )
     parser.add_argument(
         "--only", nargs="+", metavar="ID", help="ask only these questions, e.g. --only q01 q21"
@@ -413,7 +478,10 @@ def sha256_of(text: str) -> str:
 
 
 def run_info(settings: Settings, args: argparse.Namespace, judge_model: str | None) -> RunInfo:
+    """How the run is made; the prompt's hash is the baseline's own in workflow mode."""
     commit, uncommitted, source = measured_commit(Path(avtalsagent.__file__).parent)
+    mode: Mode = args.mode
+    prompt = workflow_template() if mode == "workflow" else SYSTEM_PROMPT
     return RunInfo(
         agent_model=settings.agent_model,
         agent_effort=settings.agent_reasoning_effort,
@@ -430,8 +498,9 @@ def run_info(settings: Settings, args: argparse.Namespace, judge_model: str | No
         commit=commit,
         commit_source=source,
         uncommitted=uncommitted,
-        system_prompt_sha256=sha256_of(SYSTEM_PROMPT),
+        system_prompt_sha256=sha256_of(prompt),
         reviewer_prompt_sha256=sha256_of(REVIEWER_PROMPT),
+        mode=mode,
     )
 
 
@@ -451,11 +520,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise SystemExit(1) from None
     try:
         judge_model = None if args.no_judge else (args.judge_model or settings.reviewer_model)
-        judge = (
-            Judge(ModelJudge(make_judge_model(settings, judge_model, args.judge_effort)))
-            if judge_model
-            else None
-        )
+        judge = None
+        if judge_model:
+            judge_client = make_judge_model(settings, judge_model, args.judge_effort)
+            judge = Judge(ModelJudge(judge_client), ModelAskJudge(judge_client))
         check_writable(args.out)  # before the questions are paid for
         with open_tracing(settings) as tracing:
             report = asyncio.run(
