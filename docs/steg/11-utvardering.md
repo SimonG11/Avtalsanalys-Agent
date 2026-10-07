@@ -1,5 +1,8 @@
 # M11 – Mätning av agentens svar (förenklad)
 
+> Ögonblicksbild från M11; senare tillägg säger när de kom. Läget efter körningen mot
+> den riktiga databasen står i [steg 12](12-demo.md).
+
 **Mål:** mäta det en användare får för de 30 testfrågorna: om svaret är rätt, om det är
 kontrollerat, vilka källor det citerar, hur lång tid det tar och vad det kostar, och visa det i en
 rapport till presentationen. Förenklad jämfört med arkitekturplanens avsnitt 8: DeepEval i CI, fler

@@ -3,7 +3,8 @@
 **Status:** Godkänt av Simon 2026-10-05 (arkitekturvalideringen, fas 3). Punkten om den yttre
 grafen ersätts av [ADR 0013](0013-agenten.md): stegen runt agentloopen är middleware i en enda
 `create_agent`-graf, eftersom webbappen annars inte ser agentens steg medan den väntar på
-användaren.
+användaren. Varför LangGraph och `create_agent` ändå är ramverket, nu när den yttre grafen är
+borta, står i [ADR 0023](0023-langgraph-utan-yttre-graf.md).
 
 ## Kontext
 

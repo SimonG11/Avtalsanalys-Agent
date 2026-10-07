@@ -1,5 +1,8 @@
 # M10 – Webbappen
 
+> Ögonblicksbild från M10; senare tillägg säger när de kom. Läget efter körningen mot
+> den riktiga databasen står i [steg 12](12-demo.md).
+
 **Mål:** en webbsida där man ställer en fråga om ramavtalen och ser hur agenten arbetar: vilka
 verktyg den anropar, svaret med källhänvisningar och, med ett klick på en källa, PDF:en på rätt
 sida med citatet markerat. När agenten behöver veta mer frågar den i en dialog.

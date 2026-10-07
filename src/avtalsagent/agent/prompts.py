@@ -6,15 +6,24 @@ What:
     date it is given.
 
 Why:
-    The prompt says how to work with the tools in the order that gives a
-    checkable answer: find the agreement, search, read the whole section,
-    look for the amendments to it, quote it word for word, name the
-    agreements whose register facts the answer uses, and say "framgår inte"
-    rather than guess. Many
-    questions depend on the date ("gäller avtalet nu?"), and the API runs
-    for days, so the date is set when the model is called, not when the
-    graph is built (`graph.py`). TokenTek reviews the prompt, so it is kept
-    short and concrete, in one place.
+    The prompt holds three kinds of lines. Invariants that the answer check
+    also enforces in code: quote a section word for word, so read it before
+    citing it; cite an amended section together with its amendment; copy
+    register facts from search_register (`validation/`). Conditional
+    guidelines: if the question names an area or an agreement, filter on
+    it; if it compares sub-areas, search each; if the answer differs
+    between agreements, ask the user; if nothing asked is in the
+    agreements, say "framgår inte" rather than guess. And knowledge about
+    the tools: what each is for and how its filters are written. The model
+    chooses the order and the number of steps. One sub-routine is required
+    on purpose: find_amendments on every section the answer cites, since
+    the code checks only the amendments that certainly concern a cited
+    section, so an ambiguous one or one of a whole file is left to the
+    agent (`validation/latest_wording.py`). Many questions depend on the
+    date ("gäller avtalet nu?"), and the API runs for days, so the date is
+    set when the model is called, not when the graph is built
+    (`graph.py`). TokenTek reviews the prompt, so it is kept short and
+    concrete, in one place.
 
 How:
     A plain string with one format field, the date as ISO 8601. The date is

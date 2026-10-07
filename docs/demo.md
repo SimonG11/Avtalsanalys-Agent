@@ -1,9 +1,10 @@
 # Demoskript
 
 Fem frågor som visar vad agenten gör: den frågar när frågan är oklar, väljer registret i stället
-för dokumenten, följer hänvisningar i flera steg, hittar en rättelse som ersätter klausulen och
-säger "framgår inte" i stället för att gissa. Fråga 3 och 4 visar det som ett fast workflow inte
-klarar, eftersom nästa steg beror på vad agenten just har läst. Fyra
+för dokumenten, tar sig i flera steg från en punkt till definitionen den bygger på, hittar en
+rättelse som ersätter klausulen och säger "framgår inte" i stället för att gissa. Fråga 3 och 4
+visar det som ett fast workflow inte klarar, eftersom nästa steg beror på vad agenten just har
+läst. Fyra
 av frågorna kommer ur testsamlingen ([`evals/datasets/gold_sv.jsonl`](../evals/datasets/gold_sv.jsonl)),
 så de har ett facit och en mätning bakom sig. Den första är en öppnare variant av q04, gjord för
 att agenten ska behöva fråga.
@@ -22,7 +23,7 @@ och webbappen från PR #23. Hämta `main` före demot. Beslutet bakom urvalet st
 |---|---|---|---|---|---|
 | 1 | Uppsägningstiden i IT-drift | Agenten frågar när frågan är oklar | Verifierat | 52–55 s med dialogen | 54 s med dialogen |
 | 2 | q10 Nordlo Advance | Registret i stället för dokumenten | Verifierat | 12–14 s | 19 s |
-| 3 | q14 Lördagsarbete | Flera steg genom hänvisningar | Verifierat | 39–62 s | 50 s |
+| 3 | q14 Lördagsarbete | Flera steg utifrån det agenten läser | Verifierat | 39–62 s | 50 s |
 | 4 | q21 Antal anbud | En rättelse ersätter klausulen | Verifierat | 32–45 s | 36 s |
 | 5 | q27 Rangordnad etta | Agenten gissar inte | Inget svar eller Verifierat | 35–48 s | 31 s |
 | R | q24 Lägsta takpris | Jämförelse mellan leverantörer | Verifierat | – | 42 s |
@@ -124,7 +125,7 @@ finns i registret eller i en kontrollerad källa går svaret tillbaka till agent
 **Om det går fel:** frågan är den snabbaste och mest stabila. Svarar den inte alls är det
 tjänsten, inte agenten: se felsökningen nedan.
 
-## Fråga 3: flera steg genom hänvisningar
+## Fråga 3: flera steg utifrån det agenten läser
 
 **Fråga:** `Vår inhyrda IT-tekniker, avropad genom rangordning, behöver jobba en lördag. Vad får bemanningsföretaget ta betalt för de timmarna?`
 
@@ -144,8 +145,10 @@ nio steg med prisbilagan. Ordningen och stegen kan variera.
   visar PDF-sidan med citatet ur 9.9.2 markerat.
 
 **Säg:** "Det här är frågan som visar varför det är en agent. Svaret står i en punkt om särskild
-ersättning, som prisbilagan hänvisar till, och i en definition på ett annat ställe. Ingen enskild
-sökning ger båda. Agenten letar upp delarna själv, i flera steg."
+ersättning och i en definition på ett annat ställe, och ingen enskild sökning ger båda. Nästa steg
+beror på vad agenten just läst: den läste 9.9.2, såg att punkten gäller arbete utanför Arbetsdag
+och sökte själv upp definitionen. Inläsningen kopplar ungefär tre fjärdedelar av hänvisningarna
+till sina mål, men en definition är ingen hänvisning, så den delen hittar agenten själv."
 
 **Rätt svar:** särskild ersättning efter överenskommelse: konsultens kompensation enligt
 kollektivavtalet gånger 2,0, där faktorn redan innehåller arbetsgivaravgift, OH och påslag

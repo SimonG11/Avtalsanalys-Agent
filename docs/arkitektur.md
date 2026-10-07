@@ -65,6 +65,13 @@
 >   callback-hanterare för LangChain, i Langfuse Cloud (EU). Varje fråga blir en spårning med
 >   modellanrop, verktygsanrop, kontrollen och granskaren, och samtalet är dess session. Utan
 >   nycklar är spårningen avstängd ([steg 7](steg/07-agent.md#spårning-med-langfuse)).
+> - **Inte byggt:** parallella delagenter med `Send` (avsnitt 5.1), en egen plan i agentens
+>   tillstånd (`plan` i avsnitt 5.2), sammanfattning av lång kontext, en gräns för antalet
+>   verktygsanrop, en tidsgräns per nod (avsnitt 5.1) och begränsningar per användare (avsnitt
+>   10). Det som begränsar agenten är högst 16 modellanrop per körning och två nya försök
+>   ([ADR 0013](adr/0013-agenten.md), [ADR 0015](adr/0015-valideringskedjan.md)); varför de andra
+>   delarna inte används står i [steg 7](steg/07-agent.md#middleware-som-inte-används-och-varför)
+>   och vad det betyder i README:ns kända begränsningar.
 
 ---
 

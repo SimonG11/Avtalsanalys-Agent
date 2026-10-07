@@ -1,5 +1,8 @@
 # M9 – API:t och hela systemet i Docker Compose
 
+> Ögonblicksbild från M9; senare tillägg säger när de kom. Läget efter körningen mot
+> den riktiga databasen står i [steg 12](12-demo.md).
+
 **Mål:** göra agenten (M7) nåbar för webbappen (M10) och starta hela systemet med ett kommando på
 en Mac med Apple silicon, där demot körs. API:t kör agenten över AG-UI, protokollet som
 CopilotKit talar, och ger PDF:en som ett citat pekar på. Besluten och varför står i

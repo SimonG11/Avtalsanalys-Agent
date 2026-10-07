@@ -1,6 +1,10 @@
 # ADR 0001: Workflow för inläsning, agent för frågor
 
-**Status:** Godkänt av Simon 2026-10-05 (arkitekturplanen, fas 2)
+**Status:** Godkänt av Simon 2026-10-05 (arkitekturplanen, fas 2). Av ramarna under Konsekvenser
+byggdes högst 16 modellanrop per körning, nya försök inräknade ([ADR 0013](0013-agenten.md)),
+högst två nya försök efter ett underkänt svar ([ADR 0015](0015-valideringskedjan.md)) och en
+tidsgräns på 60 sekunder för granskarens anrop (`agent/reviewer.py`). En gräns för antalet
+verktygsanrop och en tidsgräns per nod byggdes inte.
 
 ## Kontext
 
