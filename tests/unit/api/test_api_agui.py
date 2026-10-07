@@ -264,6 +264,9 @@ async def test_a_question_streams_the_steps_and_ends_with_the_checked_answer() -
                 "page": None,
                 "quote": QUOTE,
                 "verified": True,
+                # The agreements' document, not a file the user uploaded (ADR 0026).
+                "source": "framework",
+                "upload_id": None,
             }
         ],
         "reservations": [],

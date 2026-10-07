@@ -30,7 +30,10 @@ How:
     "tre månader" alone proves nothing. A citation's page is the section's
     first page, also when the quote is on a later one. Its page title is
     the one the draft chose when the section has it, else the section's
-    first (a file shared by several agreement pages has them all).
+    first (a file shared by several agreement pages has them all). Whether
+    the section is the agreements' or the user's own uploaded file, and the
+    upload's id, are the section's too (`agent/upload_readers.py`); a
+    source whose section could not be read is the agreements'.
 """
 
 import re
@@ -171,6 +174,8 @@ def _citation(source: DraftCitation, section: CitedSection | None, *, verified: 
         page=section.page_start,
         quote=_trim(source.quote) or source.quote,  # never empty, for the web app
         verified=verified,
+        source=section.source,
+        upload_id=section.upload_id,
     )
 
 

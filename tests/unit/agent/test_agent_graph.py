@@ -251,6 +251,8 @@ async def test_a_draft_that_passes_is_verified_with_fields_from_the_section() ->
         "page": 14,
         "quote": "uppsägningstid om tre (3) månader",
         "verified": True,
+        "source": "framework",
+        "upload_id": None,
     }
     assert (answer.reservations, answer.register_facts) == ([], [])
     assert reader.reads == [(SHA, 41)]

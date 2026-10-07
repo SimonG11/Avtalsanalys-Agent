@@ -10,14 +10,20 @@ What:
     be checked, its sources, each marked ✓ or ✗ by the citation check, and
     the register rows its facts were checked against. `--json` prints the
     answer as the web app gets it, the state's `answer`, and the steps on
-    stderr.
+    stderr. `--fil PATH`, once per file, attaches the user's own files to
+    the conversation, as an upload in the web app does, so the agent can
+    compare them with the agreements; a source in such a file is printed
+    as "Din fil".
 
 Why:
     The command line is the agent's fallback in a demo and the quickest way
     to try a prompt or a tool by hand, without the API and the web app (M9).
     It runs the same graph, with the same check, as the API will; only the
     checkpointer (memory) and the way the user answers differ. The messages
-    are in Swedish, for the people who ask.
+    are in Swedish, for the people who ask. The attached files are read by
+    the API's rules and limits (`uploads/local_file.py`) into a store in
+    memory, for this run only, so `--fil` is also the demo's fallback for
+    the comparison when the web app is not there (ADR 0026).
 
 How:
     Starts the model clients (`make_agent_model` and `make_reviewer`;
@@ -26,7 +32,8 @@ How:
     checkpointer (`open_checkpointer`) and the tracing (`open_tracing`: off
     without Langfuse's keys; with them each question is a trace, the
     user's answers to the agent's questions included, and the conversation
-    its session), and builds the graph (`build_agent`). Each
+    its session), and builds the graph (`build_agent`; with `--fil`, on
+    the store that holds the files for the conversation's thread). Each
     question runs with `astream` in "updates" mode, so a tool call is
     printed when the model makes it. A run that stops at
     `ask_user` is resumed with `Command(resume=...)`: a number picks that
@@ -49,6 +56,7 @@ import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, TextIO
 
 import anyio
@@ -70,8 +78,13 @@ from avtalsagent.agent.reviewer import make_reviewer
 from avtalsagent.agent.schemas import Answer, Citation, RegisterFact
 from avtalsagent.config import Settings, get_settings
 from avtalsagent.domain.identifiers import agreement_key
+from avtalsagent.domain.uploads import Upload
 from avtalsagent.observability.tracing import OFF as TRACING_OFF
 from avtalsagent.observability.tracing import Tracing, open_tracing, traced
+from avtalsagent.uploads.errors import UploadRejected
+from avtalsagent.uploads.local_file import read_local_file
+from avtalsagent.uploads.parse import UploadLimits
+from avtalsagent.uploads.store import MemoryUploadStore, TooManyUploads, retention
 
 STATUS_NAMES = {
     "verified": "Kontrollerat",
@@ -132,6 +145,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skriv svaret som JSON, som webbappen får det (answer); stegen går till stderr",
     )
+    parser.add_argument(
+        "--fil",
+        action="append",
+        type=Path,
+        default=[],
+        dest="files",
+        metavar="FIL",
+        help=(
+            "bifoga en egen fil (PDF med text, .docx, .txt eller .md) som agenten kan läsa och "
+            "jämföra med ramavtalen; ange --fil en gång per fil"
+        ),
+    )
     return parser
 
 
@@ -146,7 +171,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     log = sys.stderr if args.json else sys.stdout
     terminal = Terminal(out=sys.stdout, log=log, read_line=lambda prompt: _read_line(prompt, log))
     try:
-        asyncio.run(run(settings, question, terminal, as_json=args.json))
+        asyncio.run(run(settings, question, terminal, as_json=args.json, files=args.files))
     except BaseException as error:  # Ctrl-C and the errors the user can act on; others go on
         failure = describe_failure(error, settings)
         if failure is None:
@@ -157,11 +182,21 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 
 async def run(
-    settings: Settings, question: str | None, terminal: Terminal, *, as_json: bool
+    settings: Settings,
+    question: str | None,
+    terminal: Terminal,
+    *,
+    as_json: bool,
+    files: Sequence[Path] = (),
 ) -> None:
-    """Start the agent and answer `question`, or each question typed, until the input ends."""
+    """Start the agent and answer `question`, or each question typed, until the input ends.
+
+    `files` are attached to the conversation before the first question.
+    """
     model = make_agent_model(settings)  # without a key, before a server is started
     reviewer = make_reviewer(settings)
+    thread_id = f"cli-{uuid.uuid4()}"
+    uploads = await attach_files(files, thread_id, settings, terminal) if files else None
     async with AsyncExitStack() as stack:
         tracing = stack.enter_context(open_tracing(settings))  # closed last: sends what is left
         try:
@@ -175,8 +210,36 @@ async def run(
                 f"Agentens checkpoints (CHECKPOINTER={settings.checkpointer}) gick inte att "
                 f"öppna: {_causes(error)}"
             ) from error
-        graph = build_agent(model, mcp, reviewer, checkpointer, settings)
-        await converse(graph, question, terminal, as_json=as_json, tracing=tracing)
+        graph = build_agent(model, mcp, reviewer, checkpointer, settings, uploads=uploads)
+        await converse(
+            graph, question, terminal, as_json=as_json, tracing=tracing, thread_id=thread_id
+        )
+
+
+async def attach_files(
+    paths: Sequence[Path], thread_id: str, settings: Settings, terminal: Terminal
+) -> MemoryUploadStore:
+    """A store in memory with the files read into sections for the thread, each one named."""
+    store = MemoryUploadStore(retention(settings))
+    limits = UploadLimits.from_settings(settings)
+    for path in paths:
+        try:
+            new = await asyncio.to_thread(read_local_file, path, thread_id, limits)
+        except UploadRejected as error:
+            raise CommandError(f"Filen {path} kunde inte bifogas: {error.detail}") from None
+        except OSError as error:
+            raise CommandError(
+                f"Filen {path} gick inte att öppna: {error.strerror or error}"
+            ) from None
+        try:
+            upload, _ = await store.add_upload(new, settings.upload_max_per_thread)
+        except TooManyUploads:
+            raise CommandError(
+                f"Högst {settings.upload_max_per_thread} filer kan bifogas i ett samtal."
+            ) from None
+        for line in attached_lines(upload):
+            terminal.say(line)
+    return store
 
 
 async def converse(
@@ -186,9 +249,13 @@ async def converse(
     *,
     as_json: bool,
     tracing: Tracing = TRACING_OFF,
+    thread_id: str | None = None,
 ) -> None:
-    """Answer `question`, or else each question the user types, in one conversation."""
-    thread_id = f"cli-{uuid.uuid4()}"
+    """Answer `question`, or else each question the user types, in one conversation.
+
+    `thread_id` is the conversation's; a new one when None.
+    """
+    thread_id = thread_id or f"cli-{uuid.uuid4()}"
     thread: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
     def config() -> RunnableConfig:  # each question its own trace, the conversation its session
@@ -357,13 +424,28 @@ def status_line(answer: Answer) -> str:
     return f"{name}: allt i svaret kunde inte kontrolleras."
 
 
+def attached_lines(upload: Upload) -> list[str]:
+    """An attached file: `Bifogad fil: avtal.pdf (pdf, 3 sidor, 9 avsnitt)` and its warnings."""
+    details = [upload.kind.value]
+    if upload.pages is not None:
+        details.append("1 sida" if upload.pages == 1 else f"{upload.pages} sidor")
+    details.append(f"{upload.sections} avsnitt")
+    lines = [f"Bifogad fil: {upload.filename} ({', '.join(details)})"]
+    return lines + [f"  ! {warning}" for warning in upload.warnings]
+
+
 def source_lines(citation: Citation) -> list[str]:
-    """One source: `[1] Allmänna villkor (avtalssida), 6.21.9 Uppsägning, s. 14 ✓` and its quote."""
+    """One source: `[1] Allmänna villkor (avtalssida), 6.21.9 Uppsägning, s. 14 ✓` and its quote.
+
+    A source in the user's own file is `[1] Din fil: avtal.pdf, 7 Ansvar, s. 2 ✓`.
+    """
     mark = "✓" if citation.verified else "✗"
     if not citation.file_title:  # the check could not read the section
         where = f"avsnittet kunde inte läsas (dokument {citation.sha256[:12]}…)"
     else:
         where = citation.file_title
+        if citation.source == "upload":
+            where = f"Din fil: {where}"
         if citation.page_title:
             where += f" ({citation.page_title})"
         heading = " ".join(filter(None, (citation.section_number, citation.section_title)))

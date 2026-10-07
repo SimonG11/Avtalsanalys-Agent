@@ -32,7 +32,8 @@ How:
     creates its tables and deletes expired files), after the tracing
     (`open_tracing`, off without Langfuse's keys), which closes last and so
     sends what is left. It puts the settings, `AgentRuns`, the lookup and
-    the upload store on `app.state`, where the routes read them. `GET /health` answers
+    the upload store on `app.state`, where the routes read them; the agent's
+    runs read the same store (`agui.AgentRuns`). `GET /health` answers
     without touching the database or avtal-mcp: it says the process serves
     HTTP, which is what a container's health check asks.
 """
@@ -108,7 +109,9 @@ def create_app(
             app.state.documents = stack.enter_context(open_documents(current))
             app.state.uploads = await stack.enter_async_context(open_uploads(current))
             app.state.settings = current
-            app.state.runs = AgentRuns(current, model, reviewer, checkpointer, open_tools, tracing)
+            app.state.runs = AgentRuns(
+                current, model, reviewer, checkpointer, open_tools, tracing, app.state.uploads
+            )
             yield
 
     app = FastAPI(

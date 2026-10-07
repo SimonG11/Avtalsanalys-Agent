@@ -220,9 +220,10 @@ gång fäller jobbet i stället för att låta det vänta i timmar.
 ## Egna filer (2026-10-07)
 
 Simon vill kunna ladda upp egna filer i chatten och låta agenten jämföra dem med ramavtalen
-(webbapp-kontrakt.md, punkterna 33-38). Det här är första delen: API:t tar emot, läser och sparar
-filerna. Agentens verktyg för att läsa dem (`list_uploads`, `read_upload`), citaten ur dem och
-ADR 0026 kommer i nästa del, och webbappen bygger knappen.
+(webbapp-kontrakt.md, punkterna 33-38). Här står API:ts del: det tar emot, läser och sparar
+filerna. Agentens verktyg för att läsa dem (`list_uploads`, `read_upload`) och citaten ur dem står
+i [steg 07](07-agent.md#egna-filer-2026-10-07), hela designen i
+[ADR 0026](../adr/0026-egna-filer.md), och webbappen bygger knappen.
 
 | Route | Vad |
 |---|---|
