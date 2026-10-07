@@ -6,8 +6,9 @@ import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
 
 import { parseAnswer } from "../src/lib/contract.ts";
 import { findQuote } from "../src/lib/highlight.ts";
-import { PAGES, buildFixturePdf } from "./fixture-pdf.ts";
+import { OWN_CONTRACT_PAGES, PAGES, buildFixturePdf } from "./fixture-pdf.ts";
 import { planRun } from "./scenarios.ts";
+import type { UploadedFile } from "./scenarios.ts";
 
 const CONTEXT = { documentSha256: "b".repeat(64) };
 
@@ -258,6 +259,60 @@ describe("planRun", () => {
     });
     assert.match(finalAnswer(viaResume).text, /^I ramavtalet för Bemanningstjänster/);
     assert.match(finalAnswer(viaCommand).text, /^I ramavtalet för Programvaror och tjänster/);
+  });
+});
+
+describe("planRun with an uploaded file", () => {
+  const file = (kind: UploadedFile["kind"]): UploadedFile => ({
+    upload_id: "upl_1",
+    filename: kind === "pdf" ? "vårt-kontrakt.pdf" : "vårt-kontrakt.txt",
+    kind,
+    pages: kind === "pdf" ? 1 : null,
+    sections: 2,
+    sha256: "c".repeat(64),
+  });
+  const run = (uploaded: UploadedFile | null, question = "Jämför min fil med ramavtalet") =>
+    planRun(input(question), { ...CONTEXT, uploads: uploaded ? [uploaded] : [] }).map(
+      ({ event }) => event as BaseEvent & Record<string, unknown>,
+    );
+  const answerOf = (list: (BaseEvent & Record<string, unknown>)[]) =>
+    parseAnswer(list.filter((event) => event.type === EventType.STATE_SNAPSHOT).at(-1)?.snapshot);
+
+  it("reads the file with the upload tools and cites it next to the agreement", () => {
+    const list = run(file("pdf"));
+    const tools = list
+      .filter((event) => event.type === EventType.TOOL_CALL_START)
+      .map((event) => event.toolCallName);
+    assert.deepEqual(tools, [
+      "list_uploads",
+      "read_upload",
+      "search_documents",
+      "read_section",
+      "FinalAnswer",
+    ]);
+    const parsed = answerOf(list);
+    assert.equal(parsed.kind, "answer");
+    const [own, framework] = parsed.kind === "answer" ? parsed.answer.citations : [];
+    assert.equal(own.source, "upload");
+    assert.equal(own.upload_id, "upl_1");
+    assert.equal(own.file_title, "vårt-kontrakt.pdf");
+    assert.equal(own.page, 1);
+    assert.equal(framework.source, "framework");
+    // The quote is on the own contract's page, as it is in the agreement's.
+    const lines = OWN_CONTRACT_PAGES[0].map((str) => ({ str, hasEOL: true }));
+    assert.equal(findQuote(lines, own.quote).kind, "full");
+  });
+
+  it("cites a text file without a page", () => {
+    const parsed = answerOf(run(file("text")));
+    assert.equal(parsed.kind === "answer" && parsed.answer.citations[0].page, null);
+  });
+
+  it("answers as before without a file, or when the question is not about it", () => {
+    const withoutFile = answerOf(run(null));
+    assert.equal(withoutFile.kind === "answer" && withoutFile.answer.status, "no_answer");
+    const termination = run(file("pdf"), "Hur säger kunden upp ett kontrakt inom IT-drift?");
+    assert.ok(!termination.some((event) => event.toolCallName === "read_upload"));
   });
 });
 

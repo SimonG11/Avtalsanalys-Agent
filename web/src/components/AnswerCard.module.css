@@ -187,6 +187,19 @@
   min-width: 0;
 }
 
+.ownFile {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  width: fit-content;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 .sourceTitle {
   color: var(--text);
   font-size: 0.85rem;

@@ -21,8 +21,9 @@ sida med citatet markerat. När agenten behöver veta mer frågar den i chatten.
 > Efter Simons provkörning 2026-10-07 fick webbappen ett nytt gränssnitt: egna färger som går att
 > läsa i både ljust och mörkt läge, en chatt där agentens tankar och steg syns i en tidslinje
 > under frågan, ungefär som i Claude, och agentens frågor i chatten i stället för i en ruta ovanpå.
-> Tankarna visas när backend skickar dem (kontraktets punkt 29). Egna filer kommer i en senare PR,
-> när backend har dem.
+> Tankarna visas när backend skickar dem (kontraktets punkt 29). Man kan också bifoga egna filer
+> och be agenten jämföra dem med ramavtalen (punkterna 33-38). Det är byggt och testat mot mocken,
+> före backendens del.
 
 ## Vad du ser
 
@@ -35,6 +36,7 @@ sida med citatet markerat. När agenten behöver veta mer frågar den i chatten.
 | Källpanelen | Öppnas till höger när man klickar på en källa. PDF:en visas på sidan med citatet och citatet är markerat i gult. Källans sida är sidan där avsnittet börjar, så ett citat längre ner i ett avsnitt över flera sidor kan stå på en senare sida. Då visar panelen den sidan och säger det ("Citatet står på sida 4. Avsnittet börjar på sida 3."). Om citatet inte finns på någon av sidorna står det i panelen. En Word-fil har ingen PDF, och då visar panelen bara citatet. |
 | Agentens fråga | När agenten anropar `ask_user` kommer frågan i chatten, under stegen som ledde dit, med svarsalternativen som knappar. Ett eget svar skrivs i chattfältet, som då säger "Skriv ett eget svar…". Frågan är också ett steg, och den visar svaret ("Du svarade: IT-drift"). Agenten fortsätter med svaret. |
 | Fel | Om agenten inte kan svara, till exempel när API:t inte svarar, står det under frågan i stället för ett svarskort. |
+| Egna filer | Gemet i chattfältet bifogar en fil: PDF, Word (.docx) eller text, högst 10 MB. Man kan också släppa filen på fältet. Filen laddas upp direkt och syns som en bricka med namnet och antalet sidor, eller med skälet när den inte gick att ladda upp (till exempel en inskannad PDF). Krysset tar bort den. När frågan skickas följer filerna med och syns ovanför frågan. Agentens steg nämner filen vid namn ("Läste din fil"), och en källa ur filen är märkt "Din fil" och öppnar filen på rätt sida med citatet markerat. |
 | Tema | Appen följer datorns ljusa eller mörka läge. Knappen uppe till höger byter, till exempel till ljust läge för en projektor, och webbläsaren minns valet. All text har minst kontrasten 4,5:1 mot sin bakgrund i båda lägena (WCAG AA). |
 
 ## Flödet
@@ -101,6 +103,8 @@ svenska namn från planen:
 | `find_amendments` | `hitta_andringar` | Letar efter ändringar |
 | `calculate_date` | `berakna_datum` | Räknar ut datum |
 | `ask_user` | `fraga_anvandaren` | Frågar dig, och frågan i chatten |
+| `list_uploads` | – | Listar dina filer |
+| `read_upload` | – | Läser din fil |
 
 Argumenten `query`, `agreement_number`, `framework_area`, `sub_area`, `document_type`, `sha256`,
 `section_number`, `section_position`, `reference`, `supplier`, `org_number`, `valid_on`, `limit`,
@@ -140,6 +144,18 @@ medan den strömmar. `MESSAGES_SNAPSHOT` har den som ett meddelande med delarna 
 AG-UI-klienten de strömmade delarna mot det. Tomma tankar visas inte. I dag ber agenten inte
 OpenAI om sammanfattningen, så tidslinjen visar bara stegen. Webbappen behöver ingen ändring när
 backend börjar skicka tankarna.
+
+**Egna filer** (kontraktets punkter 33-38, backendens förslag som byggs nu). En fil hör till
+AG-UI-tråden, alltså konversationen, och webbappen använder samma `threadId` som agentens
+körningar. Webbappen skickar filen till `POST /api/uploads` med fälten `file` och `thread_id` och
+får `{upload_id, filename, kind, pages, sections, characters, warnings}`. Fel har en svensk
+`detail`, som brickan visar. `DELETE /api/uploads/{upload_id}?thread_id=…` tar bort en fil och
+`GET /api/uploads/{upload_id}/file?thread_id=…` ger filen till källpanelen. Agenten läser filerna
+med verktygen `list_uploads` och `read_upload`. En källa i `answer.citations` har fältet `source`:
+`"framework"` för ramavtalen och `"upload"` för en egen fil, som då har `upload_id` och filnamnet i
+`file_title`. Webbappen väljer länken efter `source`, eftersom en egen fils källa också kan ha en
+`sha256`. En källa utan `source` kommer från ett svar före uppladdningen och räknas som ramavtalens.
+En egen PDF har sidor; Word och text har `page: null`, och då visar källpanelen bara citatet.
 
 **Svaret** ligger i agentens delade tillstånd under nyckeln `answer`, och bara där. Backend
 strömmar inte svaret som ett chattmeddelande (metadata `emit-messages: False` på det modellanropet)
@@ -344,6 +360,18 @@ servern.
 Kontrollerar att `sha256` är 64 hexadecimala tecken, hämtar filen från API:t och strömmar den
 vidare. Om API:t inte svarar blir det `502`, och en fil som saknas blir `404`.
 
+### 7b. `src/app/api/uploads/` och `src/lib/uploads.ts` – egna filer
+
+Tre routes skickar uppladdningarna vidare till API:t, som PDF:erna: `route.ts` (`POST` och `GET`),
+`[uploadId]/route.ts` (`DELETE`) och `[uploadId]/file/route.ts` (filen). `src/lib/uploadProxy.ts`
+kontrollerar först att filens och trådens id bara har bokstäver, siffror, `_` och `-`, så att de
+inte kan peka på andra adresser i API:t. API:ts svar och felmeddelanden går vidare som de är. Om
+API:t inte svarar blir det `502`.
+
+`src/lib/uploads.ts` säger vilka filer som går att ladda upp (filtyp och storlek kontrolleras i
+webbläsaren först, så ett fel syns direkt), vilket felmeddelande som visas, raden på brickan
+("1 sida", "3 avsnitt") och var källpanelen hämtar en källas PDF.
+
 ### 8. `src/components/` – gränssnittet
 
 | Fil | Del |
@@ -359,6 +387,8 @@ vidare. Om API:t inte svarar blir det `502`, och en fil som saknas blir `404`.
 | `PdfViewer.tsx` | PDF:en med `react-pdf` (PDF.js). När dokumentet har laddats väljer `locateQuote` sidan med citatet. Sidan ritas med sitt textlager, citatet markeras och panelen rullar till markeringen. Svarar API:t `404` (en Word-fil) säger den att det inte finns någon PDF. |
 | `ThemeToggle.tsx` | Knappen som byter mellan ljust och mörkt läge. |
 | `icons.tsx` | Appens ikoner som små SVG:er i textens färg, så att de syns i båda lägena. |
+| `Uploads.tsx` | De egna filerna: laddar upp en fil så fort den bifogas, tar bort den, flyttar filerna till frågan när den skickas och känner filernas namn, så att stegen och källorna kan visa dem. |
+| `FileChip.tsx` | Brickan för en fil: namn, sidor eller felet, och krysset i chattfältet. |
 | `SourceContext.tsx` | Låter en hänvisning i ett svarskort öppna källpanelen. |
 
 ### 9. `mock/` – en låtsasagent
@@ -375,7 +405,13 @@ samma ordning som `ag-ui-langgraph` skickar händelserna:
 | bilaga | Svarar **Inget svar** med en källa i en Word-fil: utan sida, utan avsnittsnummer och utan PDF. Texten har stycken och en lista. |
 | avtalsnummer | Söker i registret och svarar **Verifierat** utan citat, med tre registerrader för två påhittade avtal. Det första har två delområden och sitt nummer skrivet på två sätt. |
 | `[fel]` | Gör ett steg och avslutar med `RUN_ERROR`, som när backend fallerar. |
+| jämför, fil eller bifoga, när konversationen har en uppladdad fil | Tänker, listar filerna, läser den senaste filen, söker och läser avsnittet i ramavtalet, och svarar **Verifierat** med en källa i filen och en i ramavtalet. Citatet ur filen står i `buildOwnContractPdf` i `mock/fixture-pdf.ts`, ett påhittat kontrakt med en månads uppsägningstid. |
 | allt annat | Svarar **Inget svar**. |
+
+Mocken tar emot filer som API:t (`mock/uploads.ts`) och håller dem i minnet per tråd. Den följer
+kontraktet: PDF, Word och text upp till 10 MB, högst fem filer per tråd, och samma fil två gånger
+ger den första. En fil med "inskannad" i namnet saknar text, så mocken avvisar den som API:t
+avvisar en inskannad PDF.
 
 Mocken lämnar in varje svar med `FinalAnswer` och sätter `answer` efter en paus för granskningen,
 utan händelser och utan svar på anropet, som den riktiga agenten gör. Pausen är 3 sekunder, och
@@ -434,9 +470,9 @@ Två nya jobb i `.github/workflows/ci.yml`:
 
 | Var | Vad | Antal |
 |---|---|---|
-| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null` och svar utan M8:s fält), verktygens etiketter och raden om vad de fann, hänvisningarna i texten, källornas namn, frågorna och deras tidslinjer (tankar, steg, argument som strömmar, godkända, underkända och felformaterade utkast, avvisade frågor), halva och dubblerade JSON-texter, tankarnas rubriker, raden under statusen, registerraderna per avtal, markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan, radslut i en tom bit) och sidan med citatet | 79 |
-| `mock/scenarios.test.ts` | Mockens händelser: ordningen, att svaren följer kontraktet, att bara det inlämnade `FinalAnswer` saknar svar, pausen för granskningen, det underkända utkastet, att varje verifierat citat finns i test-PDF:en från sin sida och framåt, de tre formerna av interrupt, det avvisade `ask_user`-anropet, att `ask_user` får svaret som resultat, båda sätten att svara, datumuträkningen och en körning som misslyckas | 13 |
-| `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, tankar och steg live, en datumuträkning, "Kontrollerar svaret …", tidslinjen som fälls ihop och öppnas, svarskort, källpanel med markerat citat över två rader, agentens fråga i chatten i alla tre formerna, eget svar i chattfältet, reservationer och ett underkänt utkast med skälet, flera frågor efter varandra, en fråga vars körning misslyckas, ett citat på sidan efter avsnittets första, en källa i en Word-fil utan sida och PDF, ett svar ur registret med en rad per avtal, och kontrasten på all text i mörkt och ljust läge | 14 |
+| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null` och svar utan M8:s fält), verktygens etiketter och raden om vad de fann, hänvisningarna i texten, källornas namn, frågorna och deras tidslinjer (tankar, steg, argument som strömmar, godkända, underkända och felformaterade utkast, avvisade frågor), halva och dubblerade JSON-texter, tankarnas rubriker, raden under statusen (också för en egen fil), de egna filerna (filtyp och storlek, felmeddelanden, raden på brickan, länken till filen, källor med `source`), registerraderna per avtal, markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan, radslut i en tom bit) och sidan med citatet | 91 |
+| `mock/scenarios.test.ts` | Mockens händelser: ordningen, att svaren följer kontraktet, att bara det inlämnade `FinalAnswer` saknar svar, pausen för granskningen, det underkända utkastet, att varje verifierat citat finns i test-PDF:en från sin sida och framåt, de tre formerna av interrupt, det avvisade `ask_user`-anropet, att `ask_user` får svaret som resultat, båda sätten att svara, datumuträkningen, en körning som misslyckas, och jämförelsen med en uppladdad PDF eller textfil | 16 |
+| `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, tankar och steg live, en datumuträkning, "Kontrollerar svaret …", tidslinjen som fälls ihop och öppnas, svarskort, källpanel med markerat citat över två rader, agentens fråga i chatten i alla tre formerna, eget svar i chattfältet, reservationer och ett underkänt utkast med skälet, flera frågor efter varandra, en fråga vars körning misslyckas, ett citat på sidan efter avsnittets första, en källa i en Word-fil utan sida och PDF, ett svar ur registret med en rad per avtal, en egen PDF som laddas upp och jämförs med citatet markerat i filen, filer som inte går att ladda upp och en fil som tas bort, en egen textfil utan PDF, och kontrasten på all text i mörkt och ljust läge | 17 |
 
 ## Så verifierar du M10 själv
 
@@ -464,6 +500,9 @@ docker compose -f web/compose.mock.yaml up --build
 6. Skriv *Kontraktet inom IT-drift ska upphöra 2027-02-17. När måste kunden säga upp det?* Ett
    tredje steg räknar ut datumet och visar uträkningen.
 7. Byt mellan ljust och mörkt läge med knappen uppe till höger. All text ska gå att läsa i båda.
+8. Bifoga en PDF med gemet och skriv *Jämför min fil med ramavtalet.* Svaret har en källa märkt
+   "Din fil" och en i ramavtalet. Med en annan PDF än mockens påhittade kontrakt hittas citatet inte
+   i filen, eftersom mocken alltid citerar samma rader.
 
 Med Node 22.18 eller senare:
 

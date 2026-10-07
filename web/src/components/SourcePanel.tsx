@@ -7,9 +7,11 @@
  * shows the exact place in the agreement.
  *
  * How: AgentApp renders the panel when a citation is opened, with a key per citation so each
- * one starts fresh. The PDF is fetched from the web app's own /api/documents/{sha256}/pdf
- * route, and PdfViewer is loaded only in the browser. The citation's page is where its section
- * starts; when PdfViewer finds the quote on a later page, the panel says so.
+ * one starts fresh. An agreement's PDF is fetched from the web app's own
+ * /api/documents/{sha256}/pdf route, and a PDF the person uploaded from
+ * /api/uploads/{upload_id}/file (lib/uploads.ts); PdfViewer is loaded only in the browser. An
+ * uploaded Word or text file has no pages, so only the quote is shown. The citation's page is
+ * where its section starts; when PdfViewer finds the quote on a later page, the panel says so.
  */
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -17,8 +19,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { documentTitle, locationLabel } from "@/lib/citation";
 import type { Citation } from "@/lib/contract";
 import type { QuoteMatch } from "@/lib/highlight";
+import { citationPdfUrl, isUploadCitation } from "@/lib/uploads";
 
 import { Icon } from "./icons";
+import { useUploads } from "./Uploads";
 import styles from "./SourcePanel.module.css";
 
 const PdfViewer = dynamic(() => import("./PdfViewer"), {
@@ -33,6 +37,7 @@ const MATCH_NOTES: Record<QuoteMatch["kind"], string | null> = {
 };
 
 export function SourcePanel({ citation, onClose }: { citation: Citation; onClose: () => void }) {
+  const { threadId } = useUploads();
   const [match, setMatch] = useState<{ kind: QuoteMatch["kind"]; page: number } | null>(null);
   const pageArea = useRef<HTMLDivElement>(null);
   const width = useWidth(pageArea);
@@ -45,12 +50,18 @@ export function SourcePanel({ citation, onClose }: { citation: Citation; onClose
   const laterPage =
     match !== null && citation.page !== null && match.page !== citation.page ? match.page : null;
   const location = locationLabel(citation);
+  const ownFile = isUploadCitation(citation);
+  const url = citationPdfUrl(citation, threadId);
+  const checkedAgainst = ownFile ? "filens text" : "avtalstexten";
 
   return (
     <aside className={styles.panel} aria-label="Källa" data-testid="source-panel">
       <header className={styles.header}>
         <div>
-          <p className={styles.eyebrow}>Källa {citation.id}</p>
+          <p className={styles.eyebrow}>
+            Källa {citation.id}
+            {ownFile && " · Din fil"}
+          </p>
           <h2 className={styles.title}>{documentTitle(citation)}</h2>
           {citation.page_title && <p className={styles.meta}>{citation.page_title}</p>}
           {location && <p className={styles.meta}>{location}</p>}
@@ -65,8 +76,8 @@ export function SourcePanel({ citation, onClose }: { citation: Citation; onClose
         <footer className={citation.verified ? styles.verified : styles.unverified}>
           <Icon name={citation.verified ? "shield" : "alert"} size={14} />
           {citation.verified
-            ? "Kontrollerat mot avtalstexten"
-            : "Kunde inte kontrolleras mot avtalstexten"}
+            ? `Kontrollerat mot ${checkedAgainst}`
+            : `Kunde inte kontrolleras mot ${checkedAgainst}`}
         </footer>
       </blockquote>
 
@@ -82,14 +93,20 @@ export function SourcePanel({ citation, onClose }: { citation: Citation; onClose
       )}
 
       <div className={styles.page} ref={pageArea}>
-        {width > 0 && (
-          <PdfViewer
-            url={`/api/documents/${citation.sha256}/pdf`}
-            page={citation.page}
-            quote={citation.quote}
-            width={width}
-            onMatch={onMatch}
-          />
+        {url === null ? (
+          <p className={styles.status} data-testid="no-pdf">
+            Filen är ingen PDF, så bara citatet visas. Det står ovan.
+          </p>
+        ) : (
+          width > 0 && (
+            <PdfViewer
+              url={url}
+              page={citation.page}
+              quote={citation.quote}
+              width={width}
+              onMatch={onMatch}
+            />
+          )
         )}
       </div>
     </aside>

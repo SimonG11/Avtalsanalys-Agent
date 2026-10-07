@@ -48,6 +48,48 @@ describe("parseAnswer", () => {
     assert.equal(parsed.kind, "answer");
   });
 
+  it("reads a citation from an uploaded file, and takes older citations as the agreements'", () => {
+    const upload = {
+      ...CITATION,
+      id: 2,
+      source: "upload",
+      upload_id: "upl_1",
+      file_title: "vårt-kontrakt.pdf",
+      page_title: null,
+      section_number: null,
+      page: 1,
+    };
+    const parsed = parseAnswer({
+      answer: {
+        text: "En månad [2], tre månader [1].",
+        status: "verified",
+        citations: [CITATION, upload],
+      },
+    });
+    assert.equal(parsed.kind, "answer");
+    const [framework, own] = parsed.kind === "answer" ? parsed.answer.citations : [];
+    assert.equal(framework.source, "framework");
+    assert.equal(own.source, "upload");
+    assert.equal(own.upload_id, "upl_1");
+    // An uploaded file's citation may have no hash, but then it needs its upload id.
+    const withoutHash = { ...upload, sha256: null };
+    assert.equal(
+      parseAnswer({ answer: { text: "x", status: "verified", citations: [withoutHash] } }).kind,
+      "answer",
+    );
+    const withoutId = { ...upload, upload_id: null };
+    assert.equal(
+      parseAnswer({ answer: { text: "x", status: "verified", citations: [withoutId] } }).kind,
+      "invalid",
+    );
+    const frameworkWithoutHash = { ...CITATION, sha256: null };
+    assert.equal(
+      parseAnswer({ answer: { text: "x", status: "verified", citations: [frameworkWithoutHash] } })
+        .kind,
+      "invalid",
+    );
+  });
+
   it("reads the reservations and register rows, and defaults them for older answers", () => {
     const fact = {
       agreement_number: "00.0-0000-2026-001",

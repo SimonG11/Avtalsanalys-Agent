@@ -32,7 +32,7 @@
 import { EventType } from "@ag-ui/core";
 import type { BaseEvent, Message, RunAgentInput } from "@ag-ui/core";
 
-import { DOCUMENT_TITLE, PAGE_TITLE } from "./fixture-pdf.ts";
+import { DOCUMENT_TITLE, OWN_CONTRACT_PAGES, PAGE_TITLE } from "./fixture-pdf.ts";
 
 /** An event and how long the mock waits before sending it, so the steps appear live. */
 export interface TimedEvent {
@@ -48,6 +48,18 @@ const REVIEW_MIN_MS = 800;
 
 export interface MockContext {
   documentSha256: string;
+  /** The files uploaded to the run's thread (mock/uploads.ts), oldest first. */
+  uploads?: readonly UploadedFile[];
+}
+
+/** What the scenarios need to know about an uploaded file. */
+export interface UploadedFile {
+  upload_id: string;
+  filename: string;
+  kind: "pdf" | "docx" | "text";
+  pages: number | null;
+  sections: number;
+  sha256: string;
 }
 
 /** Which interrupt events a run sends: both (the default), the older event only, or the outcome only. */
@@ -358,6 +370,7 @@ function citation(
   },
 ) {
   return {
+    source: "framework",
     sha256: context.documentSha256,
     file_title: DOCUMENT_TITLE,
     page_title: PAGE_TITLE,
@@ -488,6 +501,101 @@ function answerNoticePeriod(
   run.handIn(answer);
 }
 
+/** The lines of the own contract that the upload scenario quotes (fixture-pdf.ts). */
+const OWN_CONTRACT_QUOTE = OWN_CONTRACT_PAGES[0].slice(7, 9).join(" ");
+
+/**
+ * The person has uploaded a contract and asks how it compares with the agreement: the agent
+ * finds the file, reads what it says about termination, reads the agreement's rule and answers
+ * with a source in each. A quote from a PDF names its page; a Word or text file has none.
+ */
+function answerFromUpload(run: RunBuilder, context: MockContext, file: UploadedFile): void {
+  run.step("research_agent", () => {
+    run.reason(
+      "**Läser din fil**\n\n" +
+        `Du har bifogat ${file.filename}. Jag tar reda på vad filen säger om uppsägning och ` +
+        "jämför sedan med ramavtalets allmänna villkor.",
+    );
+    run.toolCall(
+      "list_uploads",
+      {},
+      {
+        uploads: (context.uploads ?? []).map(({ upload_id, filename, kind, pages, sections }) => ({
+          upload_id,
+          filename,
+          kind,
+          pages,
+          sections,
+        })),
+      },
+    );
+    run.toolCall(
+      "read_upload",
+      { upload_id: file.upload_id, query: "uppsägning" },
+      {
+        upload_id: file.upload_id,
+        sections: [
+          {
+            section_position: 2,
+            title: "5 Uppsägning",
+            page: file.kind === "pdf" ? 1 : null,
+            text: OWN_CONTRACT_QUOTE,
+          },
+        ],
+      },
+    );
+    run.reason(
+      "**Jämför med ramavtalet**\n\n" +
+        "Filen ger en månads uppsägningstid. Jag letar upp vad ramavtalets allmänna villkor " +
+        "säger om uppsägning.",
+    );
+    run.toolCall(
+      "search_documents",
+      { query: "uppsägningstid kontrakt" },
+      searchHits(context, [["6.21.9", "Uppsägning", 2]]),
+    );
+    run.toolCall(
+      "read_section",
+      { sha256: context.documentSha256, section_number: "6.21.9" },
+      { section_number: "6.21.9", page: 2, text: "Kunden har rätt att säga upp Kontraktet ..." },
+    );
+  });
+  run.handIn(
+    answerOf({
+      text:
+        "Uppsägningstiden skiljer sig. Enligt din fil får kunden säga upp kontraktet med en " +
+        "månads uppsägningstid, och uppsägningen får vara muntlig [1]. Ramavtalets allmänna " +
+        "villkor ger tre månaders uppsägningstid och kräver att uppsägningen är skriftlig [2].",
+      status: "verified",
+      citations: [
+        {
+          id: 1,
+          source: "upload",
+          upload_id: file.upload_id,
+          sha256: file.sha256,
+          file_title: file.filename,
+          page_title: null,
+          section_number: "5",
+          section_title: "Uppsägning",
+          page: file.kind === "pdf" ? 1 : null,
+          quote: OWN_CONTRACT_QUOTE,
+          verified: true,
+        },
+        citation(context, {
+          id: 2,
+          section_number: "6.21.9",
+          section_title: "Uppsägning",
+          page: 2,
+          quote:
+            "Kunden har rätt att säga upp Kontraktet med tre (3) månaders uppsägningstid. " +
+            "Uppsägningen ska vara skriftlig",
+          verified: true,
+        }),
+      ],
+    }),
+  );
+}
+
 /** No answer, but a source that says where the question is regulated: a Word file. */
 function answerAttachment(run: RunBuilder): void {
   run.step("research_agent", () => {
@@ -597,8 +705,11 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
     run.state({ answer: null });
     const area = AREAS.find((name) => lower.includes(name.split(" ")[0].toLowerCase()));
     const aboutTermination = /uppsäg|säg(a|er) [^.?!]*upp\b/.test(lower);
+    const ownFile = context.uploads?.at(-1);
 
-    if (aboutTermination && area) {
+    if (ownFile && /jämför|fil|bifoga/.test(lower)) {
+      answerFromUpload(run, context, ownFile);
+    } else if (aboutTermination && area) {
       answerNoticePeriod(run, context, area, /\d{4}-\d{2}-\d{2}/.exec(question)?.[0]);
     } else if (aboutTermination) {
       run.step("research_agent", () => {

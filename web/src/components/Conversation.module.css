@@ -26,6 +26,14 @@
   margin-bottom: 0;
 }
 
+.questionFiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
 .question {
   width: fit-content;
   max-width: 85%;

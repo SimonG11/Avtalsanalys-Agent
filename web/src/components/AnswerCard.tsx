@@ -17,6 +17,7 @@ import { sourceLabel } from "@/lib/citation";
 import { STATUS_LABELS, statusHelp } from "@/lib/answerStatus";
 import type { Answer, Citation, RegisterFact } from "@/lib/contract";
 import { describeAgreement, groupRegisterFacts } from "@/lib/registerFacts";
+import { isUploadCitation } from "@/lib/uploads";
 
 import { Icon } from "./icons";
 import type { IconName } from "./icons";
@@ -89,11 +90,19 @@ export function AnswerCard({ answer }: { answer: Answer }) {
               >
                 <span className={styles.sourceNumber}>{citation.id}</span>
                 <span className={styles.sourceBody}>
+                  {isUploadCitation(citation) && (
+                    <span className={styles.ownFile} data-testid="own-file">
+                      <Icon name="attach" size={12} />
+                      Din fil
+                    </span>
+                  )}
                   <span className={styles.sourceTitle}>{sourceLabel(citation)}</span>
                   <span className={styles.quote}>”{citation.quote}”</span>
                   {!citation.verified && (
                     <span className={styles.unverified}>
-                      Citatet kunde inte kontrolleras mot avtalet
+                      {isUploadCitation(citation)
+                        ? "Citatet kunde inte kontrolleras mot filen"
+                        : "Citatet kunde inte kontrolleras mot avtalet"}
                     </span>
                   )}
                 </span>
