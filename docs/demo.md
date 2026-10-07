@@ -1,8 +1,9 @@
 # Demoskript
 
-Fem frågor som var och en visar något agenten gör som ett fast workflow inte gör: den frågar
-när frågan är oklar, väljer registret i stället för dokumenten, följer hänvisningar i flera steg,
-hittar en rättelse som ersätter klausulen och säger "framgår inte" i stället för att gissa. Fyra
+Fem frågor som visar vad agenten gör: den frågar när frågan är oklar, väljer registret i stället
+för dokumenten, följer hänvisningar i flera steg, hittar en rättelse som ersätter klausulen och
+säger "framgår inte" i stället för att gissa. Fråga 3 och 4 visar det som ett fast workflow inte
+klarar, eftersom nästa steg beror på vad agenten just har läst. Fyra
 av frågorna kommer ur testsamlingen ([`evals/datasets/gold_sv.jsonl`](../evals/datasets/gold_sv.jsonl)),
 så de har ett facit och en mätning bakom sig. Den första är en öppnare variant av q04, gjord för
 att agenten ska behöva fråga.

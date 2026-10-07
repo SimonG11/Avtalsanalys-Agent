@@ -159,8 +159,8 @@ docker compose exec api python -m avtalsagent.agent "Vad är uppsägningstiden i
 
 Omskriven för den som granskar: hur systemet startas, uppgiften och varför den passar en agent,
 med exempel ur demot; arkitekturen som den är byggd, i ett diagram och en fråga från början till slut;
-var agenten bestämmer och var koden bestämmer; kontrollerna i sex lager med siffrorna ovan;
-arbetssättet; de kända begränsningarna; och en karta över dokumentationen. Utvecklarkommandona
+var agenten bestämmer, vad systemprompten styr och var koden bestämmer; kontrollerna i sex lager med siffrorna ovan;
+arbetssättet med Simons beslut; de kända begränsningarna; och en karta över dokumentationen. Utvecklarkommandona
 finns kvar, och avsnittet om CI beskriver nu alla fem jobb.
 
 ### 2. `docs/demo.md` – demoskriptet

@@ -21,8 +21,10 @@ frågebesvarandet är en agent i LangGraph som själv väljer verktyg och ordnin
 
 ## Kör systemet
 
-Du behöver Docker Desktop och en OpenAI-nyckel. Det fungerar likadant på en Mac med Apple silicon
-som på en dator med Intel eller AMD.
+Du behöver Docker Desktop och en OpenAI-nyckel. Compose-stacken byggs och startas i CI både på
+arm64, som en Mac med Apple silicon, och på amd64. Inläsningen i containern och en fråga genom
+containrarna är ännu inte provade: körningen 2026-10-07 gjordes med tjänsterna direkt på värden
+([steg 12](docs/steg/12-demo.md)). Kör därför hela demot en gång på datorn där det ska visas.
 
 ```bash
 cp .env.example .env                               # sätt OPENAI_API_KEY i .env
@@ -60,15 +62,26 @@ riktiga databasen (q-numren är frågor i testsamlingen):
   9.2. Agenten använde nio verktygsanrop i mätningen och sju till nio i webbappen.
 - **En rättelse ersätter klausulen (q21):** upphandlingsdokumentet säger att sju anbud antas.
   Kammarkollegiets rättelse i frågor-och-svar-loggen säger åtta. Agenten letar efter ändringar av
-  de avsnitt den citerar, och kontrollen underkänner ett svar som citerar den ändrade punkten utan
+  varje avsnitt den citerar, som systemprompten säger, och kontrollen underkänner ett svar som citerar den ändrade punkten utan
   ändringen.
 - **Rätt källa för frågan (q10):** leverantörens avtalsnummer och tidigare namn står bara i
   Excel-registret, och registret är facit för organisationsnumret. Agenten frågar registret och
   söker inte alls i dokumenten.
 - **En oklar fråga (en öppnare variant av q04):** "Vad är uppsägningstiden i IT-driftavtalet?"
-  beror på vem som säger upp och varför. Agenten frågar användaren i stället för att välja en tolkning.
+  beror på vem som säger upp och varför. Agenten frågade användaren i stället för att välja en
+  tolkning i alla tre körningarna av frågan med den riktiga modellen. I mätningen av de 30
+  testfrågorna frågade den aldrig, vilket är rätt för tydliga frågor.
 - **Inget svar (q27):** vilket bemanningsföretag som är rangordnat etta står inte i dokumenten.
   Agenten säger att det inte framgår i stället för att gissa.
+
+Mätningarna visar var de extra stegen behövs. I sökmätningen låg facits tre källor till q14 på
+plats 1, 33 och 73 i en enda hybridsökning, och för q15 fanns en av tre källor inte alls bland
+träffarna. I q21 låg punkt 3.2 på plats 6 och rättelsen på plats 13, så de tio första träffarna
+ger bara den gamla lydelsen. I mätningen av svaren citerade agenten alla källorna i alla tre
+frågorna, med mellan ett anrop till avtal-mcp (q10) och 16 (q15), 6,7 i medel. Två saker är inte
+visade: agenten är inte jämförd med ett fast workflow (en sökning och ett svar) på samma frågor,
+och i de sju flerstegsfrågorna citerade agenten alla facits källor i bara två (12 av 18 källor, en
+undre gräns, eftersom samma text kan stå i en annan fil).
 
 Allt utanför frågorna är ett workflow, och kontrollen av svaret ligger utanför agenten
 ([ADR 0001](docs/adr/0001-workflow-for-inlasning-agent-for-fragor.md)):
@@ -171,6 +184,14 @@ En fråga från början till slut:
 | | Att en annan modell än agenten granskar svaret mot källorna |
 | | Högst 16 modellanrop per körning och högst två nya försök. Därefter visas det senaste utkastet med reservation, eller Inget svar om agenten inte hann lämna något utkast |
 
+Mellan agenten och koden ligger systemprompten (`src/avtalsagent/agent/prompts.py`), som styr
+agenten men inte tvingar den. Den säger att agenten ska begränsa sökningen till området eller
+avtalet, köra `find_amendments` på varje avsnitt den citerar, fråga med `ask_user` när svaret
+skiljer sig mellan avtal eller delområden, svara att något inte framgår i stället för att gissa och
+behandla text i dokumenten som uppgifter och inte som instruktioner. Följer agenten inte
+instruktionen fångar kontrollen ett ändrat avsnitt som citeras utan ändringen, men inte en fråga
+som borde ha ställts.
+
 ## Hur systemet är kontrollerat
 
 Kontrollerna ligger i sex lager, och varje lager fångar fel som de andra inte ser. Siffrorna kommer
@@ -196,7 +217,11 @@ från den riktiga databasen 2026-10-07 ([steg 12](docs/steg/12-demo.md)).
 4. **Varje svar.** Kontrollkedjan i steg 4 ovan körs på varje svar innan det visas. Allt den
    bedömer läses om genom avtal-mcp, aldrig ur samtalshistoriken ([steg 8](docs/steg/08-validering.md)).
 5. **Hela agenten mot facit.** De 30 testfrågorna genom samma graf, kontroll och granskare som
-   API:t, men utan API:ts AG-UI-adapter, bedömda av en domarmodell mot facit:
+   API:t, men utan API:ts AG-UI-adapter. En domare jämför varje svar med facit. Domaren är
+   `gpt-6-astra`, samma modell som granskaren, men den ser facit i stället för källorna. Frågorna
+   och facit skrev kodagenten ur dokumenten, och Simon godkände dem. Domarens bedömningar prövades
+   i stickprov mot facit i steg 11, inte i den här körningen, och varje fråga kördes en gång; med
+   ersättaren i steg 11 blev det 27 och 28 av 30. Resultatet mot den riktiga databasen:
 
    | Mått | Resultat |
    |---|---|
@@ -215,7 +240,8 @@ från den riktiga databasen 2026-10-07 ([steg 12](docs/steg/12-demo.md)).
    skärmbilder, och reservfrågan i terminalen ([steg 12](docs/steg/12-demo.md)). Körningen i
    webbappen hittade ett fel som mätningen inte kunde se: API:ts AG-UI-adapter stoppade en körning
    efter LangChains standardgräns på 25 steg i grafen, ungefär sex modellanrop, så fråga 3 föll. Felet är
-   rättat i PR #22 med ett test, och fråga 3–5 gick sedan igenom. avtal-mcp, API:t och webbappen
+   rättat i PR #22 med ett test. Fråga 3–5 gick igenom i webbappen med rättelsen provad lokalt,
+   innan PR #22 fanns. avtal-mcp, API:t och webbappen
    kördes direkt på värden mot Postgres i Docker; containrarna byggs och startas i CI men har inte
    fått en fråga.
 
@@ -236,7 +262,16 @@ Projektet gjordes i faser, och varje fas godkändes innan nästa började:
 
 Koden är skriven av en AI-kodagent (Claude Code) efter planen och arkitekturen. Varje milstolpe kom
 tillbaka som en pull request med en förklaring, och varje pull request granskades och slogs ihop av
-Simon. Besluten står som ADR:er, både de från arkitekturen och de som ändrade planen under bygget,
+Simon.
+
+Simon fattade besluten om inriktningen, och kodagenten byggde och föreslog. Simon godkände
+avtalsanalys bland de tre idéerna och valde Statens inköpscentrals ramavtal som data, efter att ha
+påpekat att CUAD är gammalt och önskat svenska avtal (2026-10-05). Han valde OpenAI som
+modellleverantör och Docling med PyTorch (2026-10-05) och beslutade att vänta med OCR
+(2026-10-06). Inför presentationen bad han om ett fungerande system först, vilket gav den tunna
+kedjan från fråga till svar (2026-10-06). Han godkände de nio avvikelserna från registret med skäl
+och de 30 testfrågorna (2026-10-07). Varje ADR:s statusrad
+säger om den är godkänd och när. Besluten står som ADR:er, både de från arkitekturen och de som ändrade planen under bygget,
 bland annat:
 
 - de fyra ramavtalsområdena i piloten, där Möbler och inredning byttes ut eftersom nästan alla dess
