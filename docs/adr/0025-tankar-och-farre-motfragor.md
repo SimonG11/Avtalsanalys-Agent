@@ -92,15 +92,16 @@ kväll med beslut 7, agentens eget syfte i varje steg, efter att sammanfattninga
    `syfte` tas bort ur anropet innan det går till avtal-mcp, som får exakt de argument det får
    i dag (dess verktyg tar inte emot okända argument). Verktygens namn, beskrivningar, svar och
    felhantering är oförändrade. OpenAI håller inte modellen till schemat (verktygen är inte
-   strikta), så ett anrop utan `syfte`, med ett tomt eller med ett längre än 200 tecken nekas
-   innan verktyget körs: modellen läser "Anropet nekades: syfte saknas. Ange i syfte en kort
-   mening …" som anropets svar, med status error, och kan anropa igen; körningen fortsätter. Det
-   nekade anropet strömmas som ett steg utan `TOOL_CALL_RESULT`, som ett nekat `ask_user`.
-   `ask_user` och `FinalAnswer` får inget `syfte`: frågan visas som den är, och svaret är inget
-   steg. Prompten får ingen rad om syftet; beskrivningen i schemat räckte i provet (15 av 15
-   anrop). Webbappen läser `syfte` ur stegets argument (kontraktets punkt 39), och kommandoraden
-   skriver det på en egen rad under anropet ("  Syfte: …"). OpenAI:s sammanfattningar (beslut
-   1-4) finns kvar och visas när de kommer.
+   strikta), så ett anrop utan `syfte`, med ett tomt, med ett som inte är text eller med ett
+   längre än 200 tecken nekas innan verktyget körs: modellen läser till exempel "Anropet nekades:
+   syfte saknas. Ange i syfte en kort mening …" (eller "syfte är tomt", "syfte ska vara text",
+   "syfte har 230 tecken") som anropets svar, med status error, och kan anropa igen; körningen
+   fortsätter. Det nekade anropet strömmas som ett steg utan `TOOL_CALL_RESULT`, som ett nekat
+   `ask_user`. `ask_user` och `FinalAnswer` får inget `syfte`: frågan visas som den är, och svaret
+   är inget steg. Prompten får ingen rad om syftet; beskrivningen i schemat räckte i provet (15 av
+   15 anrop). Webbappen läser `syfte` ur stegets argument (kontraktets punkt 39), och
+   kommandoraden skriver det på en egen rad under anropet ("  Syfte: …"). OpenAI:s
+   sammanfattningar (beslut 1-4) finns kvar och visas när de kommer.
 
 ## Konsekvenser
 
@@ -173,15 +174,24 @@ kväll med beslut 7, agentens eget syfte i varje steg, efter att sammanfattninga
   | q10: modellanrop, tid | 2 anrop, 16 s | (inte körd) |
   | Utdatatokens per modellanrop (fråga 1, q14) | 187, 194 | 191, 202 |
 
-  En körning per fråga skiljer sig mer än syftet gör: fråga 1 tog 37-46 s i de tre körningarna
-  med `low` ovan, och körningen utan syfte gjorde 9 verktygsanrop mot 7 med.
-- **Vad syftet kostar:** ungefär 15-25 utdatatokens per verktygsanrop (62 tecken svensk text i
-  genomsnitt; uppskattat, ingen tokeniserare fanns att tillgå), alltså ungefär 0,0002 USD per
-  anrop och 0,002 USD för en fråga med 7-8 anrop till `gpt-6.1-sol`s pris för utdata. Syftet
-  skickas sedan med som indata i varje följande anrop, mest som cachad indata. Skillnaden syntes
-  inte i mätningen: utdatatokens per anrop varierade mer mellan körningarna än syftet väger.
+  En körning per fråga säger lite: fråga 1 tog 37-46 s i de tre körningarna med `low` ovan, och
+  körningen utan syfte gjorde 9 verktygsanrop mot 7 med.
+- **Mätningen med syftet** (2026-10-07 kväll, `low`, samma inställningar som förut, en körning
+  var): alla 192 steg mot avtal-mcp i de 30 testfrågorna och alla 47 i 7 demokörningar hade ett
+  svenskt syfte, först bland argumenten, och inget nekades. Svaren höll (rätt 29 av 30 mot 28,
+  alla Verifierat). Men agenten gjorde färre anrop samtidigt: 1,18 verktygsanrop per modellanrop
+  mot 1,43 (med `FinalAnswer`), 192 modellanrop mot 168, 2,13 miljoner tokens indata till agenten
+  mot 1,80, och 44 s i median per fråga mot 38 (längre i 27 av 30 frågor). Demots fråga 1 tog 8
+  modellanrop och 51 och 54 s, mot 5-6 och 37-46 s. Det är en körning var, så det är inte visat
+  att syftet är orsaken; en ny körning med och utan syfte, eller en mening i beskrivningen om att
+  flera anrop får göras samtidigt, är inte prövad.
+- **Vad syftet kostar:** syftet självt är ungefär 15-30 utdatatokens per steg (q21 i demot: 921
+  mot 797 för 7 steg), 0,0002-0,0003 USD. De extra modellanropen väger mer, eftersom varje anrop
+  skickar historiken igen: agent och granskare kostade 2,12-6,17 USD för de 30 frågorna mot
+  2,24-5,63 USD, ungefär lika med cachad indata till 10 % av priset (ett antagande; 2,52 mot 2,58
+  USD) och upp till 0,54 USD mer med cachad indata till fullt pris.
 - **Mätningen** ([ADR 0019](0019-matning-av-svaren.md)) kör `build_agent` och får alltså också
-  syften; ett nekat anrop räknas som ett verktygsfel. Rapporten visar inga argument.
+  syften; ett nekat anrop räknas som ett verktygsfel. Rapporten visar inte syftet.
 - **Kostnaden** för sammanfattningarna är liten: sammanfattningen syntes inte i utdatatokens i
   provet (utdata var resonemang plus svar). Den skickas tillbaka som indata i följande anrop,
   ungefär 100 ord per sammanfattning; det är inte mätt. Mätningen

@@ -21,7 +21,7 @@ och webbappen från PR #23. Hämta `main` före demot. Beslutet bakom urvalet st
 
 | # | Fråga | Visar | Status | Tid i webbappen | Tid i terminalen |
 |---|---|---|---|---|---|
-| 1 | Uppsägningstiden i IT-drift | Agenten frågar med alternativ när fallen är för många | Verifierat | 37–46 s genom API:t mot ersättaren, utan din tid att svara | – |
+| 1 | Uppsägningstiden i IT-drift | Agenten frågar med alternativ när fallen är för många | Verifierat | 51–54 s genom API:t mot ersättaren (37–46 s före syftet i stegen), utan din tid att svara | – |
 | 2 | q10 Nordlo Advance | Registret i stället för dokumenten | Verifierat | 12–14 s | 19 s |
 | 3 | q14 Lördagsarbete | Flera steg genom hänvisningar | Verifierat | 39–62 s | 50 s |
 | 4 | q21 Antal anbud | En rättelse ersätter klausulen | Verifierat | 32–45 s | 36 s |
@@ -31,12 +31,12 @@ och webbappen från PR #23. Hämta `main` före demot. Beslutet bakom urvalet st
 Tiderna för fråga 2–5 och reservfrågan kommer från körningarna mot den riktiga databasen, två i
 webbappen (q14 tre) och en i terminalen; terminalens tider räknar med att programmet startar.
 Fråga 1 besvaras annorlunda med den nya regel 4 i systemprompten
-([ADR 0025](adr/0025-tankar-och-farre-motfragor.md)). Dess tid kommer från tre körningar genom
-API:t (`POST /agui`) med `low` 2026-10-07 mot en tillfällig ersättare för avtal-mcp med pilotens
-data, inte mot databasen, och räknar inte med tiden du tar på dig att svara. Den är inte körd om i
-terminalen. Räkna med upp till en minut per fråga. En fråga kan ta längre tid om kontrollen
-skickar tillbaka ett utkast, och svaret kan formuleras olika mellan körningar. Fakta och källor
-ska vara desamma.
+([ADR 0025](adr/0025-tankar-och-farre-motfragor.md)). Dess tid kommer från två körningar genom
+API:t (`POST /agui`) med `low` 2026-10-07, med agentens syfte i stegen, mot en tillfällig
+ersättare för avtal-mcp med pilotens data, inte mot databasen, och räknar inte med tiden du tar på
+dig att svara. Den är inte körd om i terminalen. Räkna med upp till en minut per fråga. En fråga
+kan ta längre tid om kontrollen skickar tillbaka ett utkast, och svaret kan formuleras olika
+mellan körningar. Fakta och källor ska vara desamma.
 
 Ställ frågorna i en ny flik var för sig (uppdatera sidan mellan frågorna), så att agenten inte
 läser in en tidigare fråga i nästa.
@@ -92,9 +92,10 @@ och svar.
   de ihopfällda till raden "Arbetade i … s · N steg"; klicka på den. "Visa svaret från
   verktyget" visar vad den fick tillbaka.
 - Agentens tankar: varje steg visar agentens syfte med det, en mening på svenska som "Hitta
-  regler om uppsägningstid i IT-driftavtalen.". Det är agentens egen motivering, som den skriver
-  med anropet, inte modellens dolda resonemang, och det kontrolleras inte; svaret gör det. Ibland
-  kommer också OpenAI:s sammanfattning av resonemanget, på engelska och under en rubrik i
+  regler om uppsägningstid i IT-driftavtalen.". Som en rad under stegets etikett syns det först
+  när webbappen följer kontraktets punkt 39; fram till dess står det bland stegets argument, som
+  "syfte". Det är agentens egen motivering, som den skriver med anropet, inte modellens dolda
+  resonemang, och det kontrolleras inte; svaret gör det. Ibland kommer också OpenAI:s sammanfattning av resonemanget, på engelska och under en rubrik i
   fetstil: med `low` i 1 av 8 demokörningar mot ersättaren (1 av 47 modellanrop), så lova den
   inte. "Tänker …" överst i tidslinjen säger bara att modellen arbetar.
 - Statusen "Verifierat" och citatet i källkortet under svaret. Källpanelen med PDF-sidan visar du

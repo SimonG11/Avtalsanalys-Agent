@@ -217,7 +217,7 @@ async def test_syfte_is_removed_before_the_call_reaches_avtal_mcp() -> None:
 
 
 @pytest.mark.anyio
-async def test_the_stand_in_server_answers_a_call_that_carried_syfte() -> None:
+async def test_the_stand_in_server_refuses_syfte_and_answers_the_graphs_call_without_it() -> None:
     # avtal-mcp's tools are closed (additionalProperties false): syfte would be refused.
     async with create_connected_server_and_client_session(stand_in_server()) as session:
         mcp = await load_tools(session)
