@@ -52,9 +52,17 @@ How:
        viten"). "detta/dessa <Dok>" and "Med <Dok> avses detta dokument" are
        status SELF.
     8. RQ: "fråga N", only in a questions-and-answers log.
-    `replaces` is set on a mention in a sentence with a replacement verb
-    ("ersätter", "utgår", ...) in an AMENDMENT, or in a questions-and-answers
-    log after "Publikt svar", where Kammarkollegiet answers.
+    `replaces` is set on a mention in a sentence that changes its target, in an
+    AMENDMENT, or in a questions-and-answers log after "Publikt svar", where
+    Kammarkollegiet answers. The sentence has a word of change ("ersätter",
+    "utgår", "strykas", "gör följande tillägg", "texten som gäller") and no
+    negation ("ändrar inte", "gäller utan ändringar"); "ändras" after "om" is a
+    condition, and "tas bort" after "kan" a possibility. A full stop before a
+    small letter or a quote ends a number ("Punkt 2a. i Registreringen ersätts"),
+    not the sentence. In an answer the next sentence counts too, up to the next
+    mention: the answer names the section, then says what changes. Of the 2,977
+    mentions in the pilot's amendments and logs (laws left out) 39 are marked,
+    and each was read by hand.
 
     `key` is what the resolver looks up: a number in lower case ("6.21.9",
     "3a"), a title or annex name with its spaces normalised, or a document's
@@ -74,6 +82,7 @@ How:
 """
 
 import re
+from bisect import bisect_right
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
@@ -295,15 +304,49 @@ _QUESTION = re.compile(
 )
 
 # --- Replacement -----------------------------------------------------------------------
-# 39d8c1efe373 §pos3: "Kammarkollegiet ersätter avsnitt 7.19.1.3 till följande skrivning";
-# 386122e82b7b §pos1: 'underrubriken "Tillämplig lag" i Campus- och School-avtal ändras
-# härmed enligt följande'.
+# A word of change. 39d8c1efe373 §pos3: "Kammarkollegiet ersätter avsnitt 7.19.1.3 till
+# följande skrivning"; 386122e82b7b §pos1: 'underrubriken "Tillämplig lag" i Campus- och
+# School-avtal ändras härmed enligt följande', "Punkt 8.a skall i sin helhet strykas och
+# ersättas med följande ordalydelse"; 7a765d649e25 §9: "Rättelse. Texten som gäller är
+# följande för punkt 3.2:"; 20c753d88340 §15: "Kammarkollegiet gör följande tillägg till
+# andra stycket i 4.2.4:", §60: "Kammarkollegiet gör följande justering i avsnitt 4.1.2".
 _REPLACEMENT = re.compile(
     r"\b(?:ersätter|ersätts(?:\s+(?:av|med))?|upphör att gälla"
     r"|ändras(?:\s+(?:till|härmed|enligt följande))|får följande lydelse|ny lydelse|stryks"
-    r"|utgår(?=\s+(?:och|ur|i sin helhet|helt))|tas bort|läggs till|ska läggas till|ändrar"
-    r"|justeras till|korrigeras|rättas)\b",
+    r"|strykas|ersättas med|utgår(?=\s+(?:och|ur|i sin helhet|helt))|tas bort|läggs till"
+    r"|ska läggas till|skall läggas till|ändrar|justeras till|korrigeras|rättas"
+    r"|texten som gäller|gör följande (?:tillägg|ändring|justering)(?:ar)?)\b",
     re.IGNORECASE,
+)
+# A negation means nothing changes: 39d8c1efe373 §51: "Nej, Kammarkollegiet ändrar inte
+# avtalsvillkoret i 7.19.11 Avropsberättigads uppsägningsrätt."; d54ed0900be5 §pos1:
+# "Definitionen av Koncernbolag i punkt 1 i Microsoft Business and Services Agreement gäller
+# utan ändringar", §pos6: "Avseende Microsoft gäller punkt oförändrad."
+_NO_CHANGE = re.compile(
+    r"\b(?:ändrar inte|ändras inte|inte ändras|inte ändrar|kvarstår(?: därmed)? oförändrad"
+    r"|gäller(?: \w+)? oförändrad|ingen ändring|utan ändringar?)\b",
+    re.IGNORECASE,
+)
+# "ändrar" or "ändras" after "om", "när" or "oavsett om" is a condition: 3a316e27aadf §135:
+# "I avsnitt 6.21.1 andra stycket framgår att om pris ändras till följd av begärd ändring";
+# 50edddbad6c7 §433: "Om avropsberättigad använder egna mallar ... eller ändrar de förkryssade
+# alternativen i personuppgiftsbiträdesavtalet gäller inte angivna takpriser."
+_CONDITION = re.compile(r"\b(?:[Oo]m|[Nn]är|[Oo]avsett om)\b")
+# "tas bort" or "läggs till" at most three words after "kan", "får", "kunna" or "inte" is
+# what may be done, and before "genom" how it is done; neither is a change. 50edddbad6c7
+# §162: "Av avsnitt 10.14.1 framgår också att ett åberopat företag inte kan bytas ut eller
+# tas bort utan godkännande"; 20c753d88340 §63: "Underleverantör läggs till genom att
+# Underleverantör signerar berörd bilaga Konsultkompetens."
+_MAY_BEFORE = re.compile(r"\b(?:kan|får|kunna|inte)\b(?:\s+\S+){0,3}\s+$")
+_HOW_AFTER = re.compile(r" genom")
+_MAY_OR_HOW = ("tas bort", "läggs till")
+# For `replaces`, a sentence ends as by `_SENTENCE_END`, except that a full stop before a
+# small letter or a quote ends a number or a list letter, not the sentence: 5aab54c5a4b1
+# §pos0: "A. Punkt 2a. i Registreringen ersätts med följande", 'B. Punkten 3.b. "Exemplar för
+# utbildning/utvärdering och säkerhetskopiering" i Avtalet ändras härmed', §4: 'F. Punkten
+# "Prissättning" i Registrering 3b. ersätts i sin helhet med följande'.
+_CHANGE_SENTENCE_END = re.compile(
+    r"\.(?=\s+[^a-zåäö\s\"”“']|\s*$)|[!?;:](?=\s|$)|\s*[|·•]|\n(?=\s*[·•\-–A-ZÅÄÖ0-9(])"
 )
 # Where Kammarkollegiet's answer starts in a TendSign questions log.
 _ANSWER = "Publikt svar"
@@ -388,10 +431,14 @@ def _section_mentions(
     if questions_log:
         found.extend(_questions(text))
     answer = section.text.find(_ANSWER, text.start)
+    ordered = sorted(found, key=lambda item: (item.start, item.end))
+    starts = [item.start for item in ordered]
     mentions = []
-    for item in sorted(found, key=lambda item: (item.start, item.end)):
+    for item in ordered:
+        following = bisect_right(starts, item.start)
+        next_start = starts[following] if following < len(starts) else len(section.text)
         replaces = item.kind is not ReferenceKind.LAW and _replaces(
-            section.text, item.start, item.end, document_type, answer
+            section.text, item.start, item.end, document_type, answer, next_start
         )
         mentions.append(
             ReferenceMention(
@@ -733,19 +780,74 @@ def _questions(text: _Text) -> Iterator[_Found]:
 # --- Replacement -------------------------------------------------------------------------
 
 
-def _replaces(text: str, start: int, end: int, document_type: DocumentType, answer: int) -> bool:
-    """Whether the sentence of a mention replaces or removes its target."""
+def _replaces(
+    text: str,
+    start: int,
+    end: int,
+    document_type: DocumentType,
+    answer: int,
+    next_start: int,
+) -> bool:
+    """Whether the sentence of a mention replaces, removes or adds to its target.
+
+    Args:
+        text: The section's text.
+        start: Where the mention starts in it.
+        end: Where the mention ends.
+        document_type: Only an AMENDMENT or a questions-and-answers log changes anything.
+        answer: Where "Publikt svar" starts in a log's section, -1 when it has none.
+        next_start: Where the next mention of the section starts (`len(text)` after the
+            last); in an answer the sentence after the mention's is read up to there.
+    """
     if document_type is DocumentType.QUESTIONS_AND_ANSWERS:
         if answer < 0 or start < answer:
             return False  # in the supplier's question: a proposal, not a change
     elif document_type is not DocumentType.AMENDMENT:
         return False
     sentence_start = max(
-        (found.end() for found in _SENTENCE_END.finditer(text, 0, start)), default=0
+        (found.end() for found in _CHANGE_SENTENCE_END.finditer(text, 0, start)), default=0
     )
-    sentence_end = _SENTENCE_END.search(text, end)
-    return bool(
-        _REPLACEMENT.search(
-            text, sentence_start, sentence_end.start() if sentence_end else len(text)
-        )
+    in_answer = document_type is DocumentType.QUESTIONS_AND_ANSWERS
+    window = text[sentence_start : _window_end(text, end, next_start, in_answer=in_answer)]
+    if _NO_CHANGE.search(window):
+        return False
+    return any(_is_change(window, found) for found in _REPLACEMENT.finditer(window))
+
+
+def _window_end(text: str, end: int, next_start: int, *, in_answer: bool) -> int:
+    """Where the text read for `replaces` ends: the end of the mention's sentence.
+
+    In an answer, the end of the next sentence that is not empty, but not past the next
+    mention: Kammarkollegiet often names the section, then says what changes. 20c753d88340
+    §21: "Gällande avsnitt 4.2.4, bokstaven L: ⏎ Kammarkollegiet ersätter härmed tidigare
+    text"; bdf58b81d100 §127: "Avsnitt 6.18 Uppföljning ⏎ Följande mening läggs till i första
+    stycket". But not 39d8c1efe373 §32: "samtliga viten under avsnitt 7.19. ⏎ Avsnitt 7.19.7
+    Begränsning av vite justeras till följande", where the next sentence is about 7.19.7.
+    """
+    first = _CHANGE_SENTENCE_END.search(text, end)
+    if first is None:
+        return len(text)
+    if not in_answer:
+        return first.start()
+    stop = min(next_start, len(text))
+    for second in _CHANGE_SENTENCE_END.finditer(text, first.end()):
+        if text[first.end() : second.start()].strip():
+            stop = min(second.start(), stop)
+            break
+    return max(stop, first.start())
+
+
+def _is_change(window: str, found: re.Match[str]) -> bool:
+    """Whether a word of change in the text read for `replaces` changes something.
+
+    Not "ändrar" or "ändras" after a condition ("om pris ändras"), nor "tas bort" or "läggs
+    till" after "kan" or before "genom".
+    """
+    word = found.group().lower()
+    before = window[: found.start()]
+    if (word == "ändrar" or word.startswith("ändras")) and _CONDITION.search(before):
+        return False
+    return not (
+        word in _MAY_OR_HOW
+        and (_MAY_BEFORE.search(before) or _HOW_AFTER.match(window, found.end()))
     )

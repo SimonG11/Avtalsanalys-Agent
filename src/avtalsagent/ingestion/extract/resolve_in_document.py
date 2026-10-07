@@ -11,7 +11,7 @@ What:
     resolver rules return.
 
 Why:
-    Most references point into the file they are in: in the pilot, 306 of the 339
+    Most references point into the file they are in: in the pilot, 305 of the 339
     section numbers outside the questions logs with no document named (R1), and
     3,219 of the 3,788 section titles R4 looks up, resolve in the same file. A
     title reference names the heading and goes on with the sentence ("enligt

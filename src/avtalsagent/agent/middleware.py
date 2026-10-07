@@ -1,24 +1,26 @@
 """AnswerCheck: the step between the model's draft and the user's answer.
 
 What:
-    `AnswerCheck(reader, register, reviewer, retries, today)`, a `create_agent`
-    middleware. Once per question it clears the last answer; when the
-    agent's loop ends it checks the draft (`validation.chain`: the
-    citations, the register facts and the review) and sets `answer`:
-    `verified`, `with_reservation` or `no_answer`, or sends the draft back
-    to the model with what was wrong, at most `retries` times.
+    `AnswerCheck(reader, register, amendments, reviewer, retries, today)`, a
+    `create_agent` middleware. Once per question it clears the last answer;
+    when the agent's loop ends it checks the draft (`validation.chain`: the
+    citations, the register facts, the latest wording and the review) and
+    sets `answer`: `verified`, `with_reservation` or `no_answer`, or sends
+    the draft back to the model with what was wrong, at most `retries`
+    times.
 
 Why:
     The check runs after the loop, in code the model cannot get past (ADR
-    0013, 0015). It reads each cited section and each declared agreement
-    again through avtal-mcp rather than trusting the message history, which
-    a client sends and could forge. A failed draft gets a new attempt
-    (VALIDATION_RETRIES, two by default, so at most three drafts), since a
-    misquoted word, a wrong date or a missing part is usually easy to fix;
-    after that the user gets the answer with reservation, each failed
-    source marked and the reasons noted, rather than nothing. The feedback
-    replaces the draft's tool result instead of being a new message: a
-    human message would show in the web app as if the user had written it.
+    0013, 0015). It reads each cited section, its amendments and each
+    declared agreement again through avtal-mcp rather than trusting the
+    message history, which a client sends and could forge. A failed draft
+    gets a new attempt (VALIDATION_RETRIES, two by default, so at most
+    three drafts), since a misquoted word, a wrong date, an old wording or
+    a missing part is usually easy to fix; after that the user gets the
+    answer with reservation, each failed source marked and the reasons
+    noted, rather than nothing. The feedback replaces the draft's tool
+    result instead of being a new message: a human message would show in
+    the web app as if the user had written it.
 
 How:
     `abefore_agent` runs once per question (not when a run resumes after
@@ -41,9 +43,10 @@ How:
     question is none). A failing draft, while retries remain,
     becomes a tool result with status error under the id of ToolStrategy's
     "Svaret är lämnat" message (so `add_messages` replaces it), and the
-    hook jumps back to the model. A review that could not be made uses no
-    retry. The status follows from the draft and the report (`_status`):
-    `answered: false` is `no_answer`; problems left, a failed review or no
+    hook jumps back to the model. A review that could not be made, or
+    amendments that could not be read, use no retry. The status follows
+    from the draft and the report (`_status`): `answered: false` is
+    `no_answer`; problems left, a failed review, unread amendments or no
     source to check is `with_reservation`; anything else `verified`. The
     hooks are async only: a new question run synchronously (`invoke`,
     `stream`) stops at once with an error, before any model call; a
@@ -59,6 +62,7 @@ from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 
+from avtalsagent.agent.amendments import AmendmentReader
 from avtalsagent.agent.ask_user import NOT_ANSWERED, ask_user
 from avtalsagent.agent.register_reader import RegisterReader
 from avtalsagent.agent.schemas import Answer, AnswerStatus, AvtalState, FinalAnswer
@@ -96,6 +100,7 @@ class AnswerCheck(AgentMiddleware[AvtalState]):
         self,
         reader: SectionReader,
         register: RegisterReader,
+        amendments: AmendmentReader,
         reviewer: AnswerReviewer,
         retries: int,
         today: Callable[[], date],
@@ -105,6 +110,7 @@ class AnswerCheck(AgentMiddleware[AvtalState]):
             raise ValueError(f"retries must be 0 or more, not {retries}")
         self._reader = reader
         self._register = register
+        self._amendments = amendments
         self._reviewer = reviewer
         self._retries = retries
         self._today = today
@@ -134,6 +140,7 @@ class AnswerCheck(AgentMiddleware[AvtalState]):
             draft,
             sections=self._reader,
             register=self._register,
+            amendments=self._amendments,
             reviewer=self._reviewer,
             question=question,
             follow_ups=follow_ups,
@@ -172,7 +179,8 @@ def _status(draft: FinalAnswer, report: ChainReport) -> AnswerStatus:
     """The answer's status: whether it answers, and whether everything in it was checked."""
     if not draft.answered:
         return "no_answer"
-    if report.problems or report.review_failed or not report.has_source:
+    unchecked = report.review_failed or report.amendments_unread or not report.has_source
+    if report.problems or unchecked:
         return "with_reservation"
     return "verified"
 

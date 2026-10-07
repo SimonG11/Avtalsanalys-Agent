@@ -21,6 +21,7 @@ Ett beslut ändras aldrig i efterhand. Ändras beslutet skrivs en ny ADR som ers
 | [0014](0014-api-och-compose.md) | API:t som ett tunt FastAPI-lager över agenten, en MCP-session per körning och hela systemet i Docker Compose | Godkänt (PR #11) |
 | [0015](0015-valideringskedjan.md) | Valideringskedjan: registeruppgifter mot registret, en granskarmodell och två nya försök | Föreslaget (PR för M8) |
 | [0016](0016-datumrakning.md) | `calculate_date`: datumräkning med svenska helgdagar, och registerregeln räknar om steget | Föreslaget (PR efter M8) |
+| [0017](0017-andringar.md) | `find_amendments` och regeln om senaste lydelsen: ändringar ur steg 4:s hänvisningar | Föreslaget (PR efter `calculate_date`) |
 
 Mall: *Status*, *Kontext* (problemet), *Beslut*, *Konsekvenser* (vad vi vinner och vad det kostar),
 *Alternativ som valts bort*.

@@ -541,6 +541,173 @@ def test_a_replacement_in_a_questions_log_replaces_only_in_the_answer() -> None:
     ]
 
 
+# The start of Kammarkollegiet's answer in a TendSign log, as in 20c753d88340 §21.
+ANSWER = "Publikt svar\n\nFrån:\n\nStatens inköpscentral vid Kammarkollegiet\n\n"
+
+
+def replaced(text: str, document_type: DocumentType) -> list[tuple[str, bool]]:
+    log = document_type is DocumentType.QUESTIONS_AND_ANSWERS
+    return [(m.raw, m.replaces) for m in mentions(text, document_type, questions_log=log)]
+
+
+@pytest.mark.parametrize(
+    ("text", "document_type", "raw"),
+    [
+        # 386122e82b7b §pos1.
+        (
+            "A. Ikraftträdandedatum. Punkt 8.a skall i sin helhet strykas och ersättas med "
+            "följande ordalydelse: Dessa avtalstillägg träder ikraft den 1 maj 2024",
+            DocumentType.AMENDMENT,
+            "Punkt 8",
+        ),
+        # 7a765d649e25 §9.
+        (
+            ANSWER + "Rättelse. Texten som gäller är följande för punkt 3.2: "
+            '"De åtta (8) anbuden med de högsta jämförelsesummorna är de ekonomiskt mest '
+            'fördelaktiga anbuden".',
+            DocumentType.QUESTIONS_AND_ANSWERS,
+            "punkt 3.2",
+        ),
+        # 20c753d88340 §15.
+        (
+            ANSWER + "Kammarkollegiet gör följande tillägg till andra stycket i 4.2.4:",
+            DocumentType.QUESTIONS_AND_ANSWERS,
+            "i 4.2.4",
+        ),
+    ],
+)
+def test_more_words_of_change_replace(text: str, document_type: DocumentType, raw: str) -> None:
+    assert replaced(text, document_type) == [(raw, True)]
+
+
+def test_a_negation_in_the_sentence_changes_nothing() -> None:
+    # 39d8c1efe373 §51.
+    refused = (
+        ANSWER + "Nej, Kammarkollegiet ändrar inte avtalsvillkoret i 7.19.11 "
+        "Avropsberättigads uppsägningsrätt. Avtalsvillkoret kvarstår därmed oförändrat."
+    )
+    assert replaced(refused, DocumentType.QUESTIONS_AND_ANSWERS) == [("i 7.19.11", False)]
+    # d54ed0900be5 §pos1: "utgår och upphör att gälla" alone would replace.
+    kept = (
+        "Definitionen av Koncernbolag i punkt 1 i Microsoft Business and Services Agreement "
+        "gäller utan ändringar och Amendment 7-TB46LZJFQ-a avsnitt A. utgår och upphör att "
+        "gälla när de gäller föregående ändringen avseende Koncernbolag av Kunden."
+    )
+    assert replaced(kept, DocumentType.AMENDMENT) == [("punkt 1", False), ("avsnitt A", False)]
+
+
+def test_a_full_stop_before_a_small_letter_or_a_quote_does_not_end_the_sentence() -> None:
+    # 5aab54c5a4b1 §pos0 and §4: the number or list letter ends with a full stop.
+    for text, raw in (
+        (
+            "A. Punkt 2a. i Registreringen ersätts med följande: Minsta beställningskrav.",
+            "Punkt 2a",
+        ),
+        (
+            'B. Punkten 3.b. "Exemplar för utbildning/utvärdering och säkerhetskopiering" i '
+            "Avtalet ändras härmed och ersätts i sin helhet med följande:",
+            "Punkten 3",
+        ),
+        (
+            'F. Punkten "Prissättning" i Registrering 3b. ersätts i sin helhet med följande: '
+            "Upprätthållande av åtagande.",
+            'Punkten "Prissättning',
+        ),
+    ):
+        assert replaced(text, DocumentType.AMENDMENT) == [(raw, True)]
+
+
+def test_a_full_stop_before_a_capital_still_ends_the_sentence() -> None:
+    # d54ed0900be5 §pos6: the change in item B is not a change of the MBSA named before it.
+    text = (
+        "inom ramen för Microsoft Business and Services Agreement (MBSA). Avseende Microsoft "
+        'gäller punkt oförändrad. B. Punkten "Övrigt" under underrubriken "Tvistlösning" i '
+        "Microsoft Business and Services Avtal ändras härmed enligt följande: Tvister mellan"
+    )
+    assert replaced(text, DocumentType.AMENDMENT) == [
+        ("Microsoft Business and Services Agreement", False),
+        ("MBSA", False),
+        ('Punkten "Övrigt', True),
+        ('underrubriken "Tvistlösning', True),
+        ("Microsoft Business and Services Avtal", True),
+    ]
+
+
+def test_in_an_answer_the_next_sentence_counts_too() -> None:
+    # 20c753d88340 §21 and bdf58b81d100 §127: the section first, then what changes.
+    named_first = (
+        "Gällande avsnitt 4.2.4, bokstaven L:\n\n"
+        "Kammarkollegiet ersätter härmed tidigare text för 3 poäng med följande:"
+    )
+    log = DocumentType.QUESTIONS_AND_ANSWERS
+    assert replaced(ANSWER + named_first, log) == [("avsnitt 4.2.4", True)]
+    heading_first = (
+        "Avsnitt 6.18 Uppföljning\n\nFöljande mening läggs till i första stycket innan sista "
+        'meningen. "Den tredje parten ska inte vara en konkurrent till Ramavtalsleverantören."'
+    )
+    assert replaced(ANSWER + heading_first, log) == [("Avsnitt 6.18", True)]
+    # Only in an answer: in an amendment each sentence says what it changes.
+    assert replaced(named_first, DocumentType.AMENDMENT) == [("avsnitt 4.2.4", False)]
+
+
+def test_in_an_answer_the_next_sentence_counts_only_up_to_the_next_mention() -> None:
+    # 39d8c1efe373 §32: the next sentence changes 7.19.7, not 7.19.
+    text = (
+        ANSWER + "Begränsningen i avsnitt 7.19.7 tar sikte på samtliga viten under avsnitt "
+        "7.19.\n\nAvsnitt 7.19.7 Begränsning av vite justeras till följande och kommer att "
+        "justeras i samband med avtalstecknandet:"
+    )
+    assert replaced(text, DocumentType.QUESTIONS_AND_ANSWERS) == [
+        ("avsnitt 7.19.7", False),
+        ("avsnitt 7.19", False),
+        ("Avsnitt 7.19.7", True),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 3a316e27aadf §135: a condition.
+        (
+            "I avsnitt 6.21.1 andra stycket framgår att om pris ändras till följd av begärd "
+            "ändring enligt detta avsnitt ska vara till självkostnadspris",
+            [("avsnitt 6.21.1", False)],
+        ),
+        # 50edddbad6c7 §433: a condition.
+        (
+            "Om avropsberättigad använder egna mallar vars innehåll avviker väsentligt från "
+            "ramavtalets motsvarande eller ändrar de förkryssade alternativen i "
+            "personuppgiftsbiträdesavtalet gäller inte angivna takpriser.",
+            [("personuppgiftsbiträdesavtalet", False)],
+        ),
+        # 20c753d88340 §94: the same verb, no condition.
+        (
+            'Det andra stycket i 5.16.6 ändras till: "Skadeståndsansvaret är begränsat till '
+            "direkt skada",
+            [("i 5.16.6", True)],
+        ),
+        # 50edddbad6c7 §162: what may be done.
+        (
+            "Av avsnitt 10.14.1 framgår också att ett åberopat företag inte kan bytas ut eller "
+            "tas bort utan godkännande av Kammarkollegiet. En underleverantör nyttjas för "
+            "leveranser under ramavtalsperioden och kan läggas till och tas bort fritt så "
+            "länge kraven enligt ramavtalets huvuddokument uppfylls.",
+            [("avsnitt 10.14.1", False), ("ramavtalets huvuddokument", False)],
+        ),
+        # 20c753d88340 §63: how it is done.
+        (
+            "Tolkningen är korrekt. Underleverantör läggs till genom att Underleverantör "
+            "signerar berörd bilaga Konsultkompetens.",
+            [("bilaga Konsultkompetens", False)],
+        ),
+    ],
+)
+def test_a_condition_or_a_possibility_is_no_change(
+    text: str, expected: list[tuple[str, bool]]
+) -> None:
+    assert replaced(ANSWER + text, DocumentType.QUESTIONS_AND_ANSWERS) == expected
+
+
 # --- Everything together -------------------------------------------------------------------
 
 

@@ -31,6 +31,7 @@ from avtalsagent.api.app import create_app
 from avtalsagent.api.documents import DocumentFiles, StoredFile
 from avtalsagent.config import Settings
 from tests.unit.agent.scripted_model import (
+    DictAmendments,
     DictReader,
     ListRegister,
     ScriptedModel,
@@ -93,7 +94,12 @@ class Sessions:
         if self.opened in self.refuse:
             raise OSError(f"All connection attempts failed (postgresql://u:{PASSWORD}@db)")
         try:
-            yield McpTools(tools=self.tools, reader=DictReader([SECTION]), register=ListRegister())
+            yield McpTools(
+                tools=self.tools,
+                reader=DictReader([SECTION]),
+                register=ListRegister(),
+                amendments=DictAmendments(),
+            )
         finally:
             self.closed += 1
 
@@ -131,7 +137,12 @@ class BreakingSessions:
         async with anyio.create_task_group() as group:
             group.start_soon(send_calls)
             try:
-                yield McpTools(tools=tools, reader=DictReader([SECTION]), register=ListRegister())
+                yield McpTools(
+                    tools=tools,
+                    reader=DictReader([SECTION]),
+                    register=ListRegister(),
+                    amendments=DictAmendments(),
+                )
             finally:
                 group.cancel_scope.cancel()  # a session that did not fail closes quietly
 

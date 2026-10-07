@@ -6,6 +6,8 @@ What:
     kind, its status and its targets. A target is a section (`TargetRef` with
     the fields of `results.SectionRef`) or a whole file (the section fields
     None). Targets the tools may not show are counted, not listed.
+    `file_targets` gives the whole-file `TargetRef` of files, which
+    `find_amendments` also uses.
 
 Why:
     `read_section` returns a section with its references and
@@ -110,7 +112,7 @@ def section_references(
         )
     }
     sections = section_refs(session, {(sha, s) for sha, s in shown if s is not None})
-    files = _file_targets(session, {sha for sha, s in shown if s is None})
+    files = file_targets(session, {sha for sha, s in shown if s is None})
 
     references: list[SectionReference] = []
     for row in rows:
@@ -142,7 +144,7 @@ def section_references(
     )
 
 
-def _file_targets(session: Session, sha256s: Collection[str]) -> dict[str, TargetRef]:
+def file_targets(session: Session, sha256s: Collection[str]) -> dict[str, TargetRef]:
     """A whole-file `TargetRef` for each file that has metadata and a scope, by sha256."""
     if not sha256s:
         return {}

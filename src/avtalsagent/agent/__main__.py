@@ -328,9 +328,11 @@ def status_line(answer: Answer) -> str:
         checked = []
         if answer.citations:
             checked.append("varje citat står ordagrant i det avsnitt det anger")
+            checked.append("inget citerat avsnitt har en ändring som svaret missar")
         if answer.register_facts:
             checked.append("uppgifterna ur registret stämmer")
-        return f"{name}: {' och '.join(checked)}, och granskningen fann stöd för svaret."
+        listed = ", ".join(checked[:-1]) + f" och {checked[-1]}" if len(checked) > 1 else checked[0]
+        return f"{name}: {listed}, och granskningen fann stöd för svaret."
     if answer.status == "no_answer" and answer.text == NO_DRAFT_TEXT:
         return f"{name}: agenten kom inte fram till ett svar inom gränsen för modellanrop."
     if answer.status == "no_answer":

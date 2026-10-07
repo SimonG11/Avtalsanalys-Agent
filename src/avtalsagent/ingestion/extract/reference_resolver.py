@@ -12,8 +12,9 @@ Why:
     the text it points at, and a reviewer must be able to check each step. The
     rules are split by where they look: the file itself
     (`resolve_in_document`), the other files of the agreement page
-    (`resolve_on_page`), and the procurement documents a questions-and-answers
-    log is about (`resolve_questions`).
+    (`resolve_on_page`), the procurement documents a questions-and-answers log
+    is about (`resolve_questions`), and the annexes an amendment amends
+    (`resolve_amendments`).
 
 How:
     A mention whose text already decides it keeps its status, with rule None:
@@ -23,9 +24,9 @@ How:
     | kind           | rules, in order                                          |
     |----------------|----------------------------------------------------------|
     | SECTION_NUMBER | R1x when a document is named with it; R1q in a log;      |
-    |                | else R1 (same file)                                      |
-    | SECTION_TITLE  | R4q in a log; R4 in the same file, then in the other    |
-    |                | files of the page; else TITLE_MISSING                    |
+    |                | R1a in an amendment; else R1 (same file)                 |
+    | SECTION_TITLE  | R4q in a log; R4 in the same file; R4a in an amendment;  |
+    |                | R4 in the other files of the page; else TITLE_MISSING    |
     | ANNEX_NUMBER   | R3                                                       |
     | ANNEX_NAME     | R5                                                       |
     | DOCUMENT       | R2                                                       |
@@ -60,6 +61,10 @@ from avtalsagent.domain.extracted import (
     ReferenceKind,
     ReferenceMention,
     ReferenceStatus,
+)
+from avtalsagent.ingestion.extract.resolve_amendments import (
+    resolve_amended_number,
+    resolve_amended_title,
 )
 from avtalsagent.ingestion.extract.resolve_in_document import (
     CorpusDocument,
@@ -118,7 +123,7 @@ def _resolve(corpus: Corpus, index: DocumentIndex, mention: ReferenceMention) ->
                 return resolve_named_number(corpus, index, mention, mention.document_name)
             if is_questions_log(index):
                 return resolve_question_number(corpus, index, mention)
-            return resolve_number(index, mention)
+            return resolve_amended_number(corpus, index, mention) or resolve_number(index, mention)
         case ReferenceKind.SECTION_TITLE:
             return _resolve_title(corpus, index, mention)
         case ReferenceKind.ANNEX_NUMBER:
@@ -136,11 +141,15 @@ def _resolve(corpus: Corpus, index: DocumentIndex, mention: ReferenceMention) ->
 
 
 def _resolve_title(corpus: Corpus, index: DocumentIndex, mention: ReferenceMention) -> Reference:
-    """R4q in a log, then R4 in the file itself and in the other files of the page."""
+    """R4q in a log; R4 in the file itself, R4a in what an amendment amends, R4 on the page."""
     log = is_questions_log(index)
     if log and (reference := resolve_question_title(corpus, index, mention)):
         return reference
-    reference = resolve_title(index, mention) or resolve_title_on_page(corpus, index, mention)
+    reference = (
+        resolve_title(index, mention)
+        or resolve_amended_title(corpus, index, mention)
+        or resolve_title_on_page(corpus, index, mention)
+    )
     if reference:
         return reference
     searched = question_targets(corpus, index) if log else own_targets(index, None)

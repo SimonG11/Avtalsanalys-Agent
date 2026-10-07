@@ -38,6 +38,7 @@ from avtalsagent.agent.middleware import NO_DRAFT_TEXT
 from avtalsagent.agent.schemas import Answer, Citation, RegisterFact
 from avtalsagent.config import Settings
 from tests.unit.agent.scripted_model import (
+    DictAmendments,
     DictReader,
     ListRegister,
     ScriptedModel,
@@ -103,7 +104,10 @@ THREAD: RunnableConfig = {"configurable": {"thread_id": "cli"}}
 def mcp() -> McpTools:
     """The search tool, the section and the register row of the graph's tests."""
     return McpTools(
-        tools=[search_documents], reader=DictReader([SECTION]), register=ListRegister([NORDLO])
+        tools=[search_documents],
+        reader=DictReader([SECTION]),
+        register=ListRegister([NORDLO]),
+        amendments=DictAmendments(),
     )
 
 
@@ -320,8 +324,8 @@ def test_a_verified_answer_is_printed_with_its_sources() -> None:
         "",
         "Tre månader [1].",
         "",
-        "Kontrollerat: varje citat står ordagrant i det avsnitt det anger, och granskningen fann "
-        "stöd för svaret.",
+        "Kontrollerat: varje citat står ordagrant i det avsnitt det anger och inget citerat "
+        "avsnitt har en ändring som svaret missar, och granskningen fann stöd för svaret.",
         "",
         "Källor:",
         "[1] Allmänna villkor (IT-drift Större, fler än 200 anställda), 6.21.9 Uppsägning, s. 14 ✓",
@@ -422,8 +426,9 @@ def test_a_verified_answer_from_both_names_both_checks() -> None:
     )
 
     assert cli.status_line(answer) == (
-        "Kontrollerat: varje citat står ordagrant i det avsnitt det anger och uppgifterna ur "
-        "registret stämmer, och granskningen fann stöd för svaret."
+        "Kontrollerat: varje citat står ordagrant i det avsnitt det anger, inget citerat avsnitt "
+        "har en ändring som svaret missar och uppgifterna ur registret stämmer, och granskningen "
+        "fann stöd för svaret."
     )
 
 

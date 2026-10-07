@@ -126,8 +126,8 @@ avsnitt bland filerna på samma avtalssidor.
 
 | | Upplösta | I måttet | Andel |
 |---|---:|---:|---:|
-| Med språkmodellen | 7 515 | 10 079 | **74,6 %** |
-| Bara med regler | 7 406 | 10 079 | 73,5 % |
+| Med språkmodellen | 7 518 | 10 079 | **74,6 %** |
+| Bara med regler | 7 409 | 10 079 | 73,5 % |
 
 Måttet är upplösta delat med alla hänvisningar utom lagar och standarder (2 456), "fråga N" i en
 frågelogg (303), listpunkter (643) och självhänvisningar (1 275). En listpunkt är ett helt tal efter
@@ -136,14 +136,14 @@ ett avsnitt står bredvid ("punkterna 1-3 i avsnitt 7.17.3"). I en frågelogg ä
 alltid en listpunkt (218 av de 643). En självhänvisning är ett dokument som nämner sig självt
 ("dessa Allmänna villkor"). En hänvisning som leder till sitt eget avsnitt ("gäller detta avsnitt
 Leverans och leveranskontroll", 73 i urvalet) räknas som upplöst, eftersom den hittade avsnittet
-den nämner. Av de 2 564 som inte löses är 1 201 hänvisningar till filer som inte publiceras på
-avtalssidan (mest anbudsblanketter som "bilaga Kvalitet i utförande"), 1 154 flertydiga (mest
+den nämner. Av de 2 561 som inte löses är 1 201 hänvisningar till filer som inte publiceras på
+avtalssidan (mest anbudsblanketter som "bilaga Kvalitet i utförande"), 1 152 flertydiga (mest
 "Säkerhetsskyddsavtal" där sidan har tre nivåer, och hela anbudspaketet "upphandlingsdokumenten"),
-98 rubriker och 84 nummer som inte finns i måldokumentet, och 27 mallfält.
+98 rubriker och 83 nummer som inte finns i måldokumentet, och 27 mallfält.
 
 | Form | I måttet | Upplösta |
 |---|---:|---:|
-| Avsnittsrubrik ("enligt avsnitt Avtalsbrott och påföljder") | 3 870 | 91,4 % |
+| Avsnittsrubrik ("enligt avsnitt Avtalsbrott och påföljder") | 3 870 | 91,6 % |
 | Avsnittsnummer ("punkt 6.21.9", "enligt 10.4") | 1 890 | 85,1 % |
 | Dokumentnamn ("Allmänna villkor") | 2 933 | 70,0 % |
 | Bilaga med nummer ("bilaga 3") | 118 | 46,6 % |
@@ -168,6 +168,24 @@ hänvisningar). Svaren sparas i `data/llm_cache/title_matcher.jsonl`, och körni
 den, utan anrop. Mappen `data/` är inte med i repot: andelen med språkmodellen kräver
 `OPENAI_API_KEY` och den cachen (eller nya anrop, vars svar kan skilja sig). Utan nyckel ger
 rapporten bara andelen med regler.
+
+**Ändringar.** En hänvisning i ett tillägg, eller i Kammarkollegiets svar i en frågelogg, markeras
+(`replaces`) när meningen ändrar det den pekar på: den har ett ord för ändring ("ersätter",
+"utgår", "strykas", "gör följande tillägg", "texten som gäller") och ingen negation ("ändrar
+inte", "gäller utan ändringar"). "ändras" efter "om" är ett villkor och "tas bort" efter "kan" en
+möjlighet, inte en ändring. En punkt före liten bokstav eller citattecken avslutar ett nummer, inte
+meningen ("Punkt 2a. i Registreringen ersätts"). I ett svar räknas också nästa mening, fram till
+nästa hänvisning, eftersom svaret ofta först anger avsnittet och sedan ändringen. Av de 2 977
+hänvisningarna i urvalets tillägg och frågeloggar (utom lagar) markeras 39, 16 i tillägg och 23 i
+svar, och alla 39 lästes. Microsofts tillägg anger i titeln vilka bilagor de ändrar ("Bilaga 5
+Tillägg och förtydligande till bilagorna 5.1-5.4"), och bara filerna på samma avtalssida räknas.
+Ett avsnittsnummer i ett sådant tillägg slås upp i de bilagorna först, utan bokstaven i slutet
+("Punkt 2a" är punkt a i avsnitt 2; R1a), och en rubrik som tillägget inte har söks i dem före
+sidans andra filer (R4a). Det ändrade 7 hänvisningar i körningen 2026-10-07: 'Punkten "Övrigt"'
+leder till avsnittet Övrigt i bilaga 4.1 och 7.1 (4, tidigare flertydiga mellan fyra bilagor), och
+"Punkt 2a" och "Punkten 3" i bilaga 5 är flertydiga mellan bilagorna 5.1–5.4 i stället för att
+saknas eller leda till tilläggets egen listpunkt 3. Andelen bara med regler gick från 7 406 till
+7 409 upplösta.
 
 ## Flödet
 
@@ -229,8 +247,8 @@ att personnummer och telefonnummer (`850101-1236`, `0731234563`) inte tas för o
 | `parties.py` | Partsklausulen "mellan … organisationsnummer … nedan … och …" | E1 |
 | `dates.py` | Avtalsperiodens start, slut, längd och förlängning, planerad start, underskrifternas datum och tomma datumfält | P1–P11 |
 | `document_names.py` | De 39 dokumentnamnen som hänvisningar använder ("Allmänna villkor", "Kravkatalogen") och deras alias | |
-| `reference_patterns.py` | Hänvisningarna i avsnitten: lagar, mallfält, nummer, rubriker, bilagor, dokumentnamn, frågor | LAW, PH, R1, R1x, R2–R5, RQ |
-| `reference_resolver.py`, `resolve_in_document.py`, `resolve_on_page.py`, `resolve_questions.py` | Vart varje hänvisning leder: samma fil, de andra filerna på avtalssidan, eller upphandlingsdokumentet en fråga gäller | R1–R5, R1x, R1q, R4q, RQ |
+| `reference_patterns.py` | Hänvisningarna i avsnitten: lagar, mallfält, nummer, rubriker, bilagor, dokumentnamn, frågor; och om meningen ändrar det hänvisningen pekar på (`replaces`) | LAW, PH, R1, R1x, R2–R5, RQ |
+| `reference_resolver.py`, `resolve_in_document.py`, `resolve_on_page.py`, `resolve_questions.py`, `resolve_amendments.py` | Vart varje hänvisning leder: samma fil, de andra filerna på avtalssidan, upphandlingsdokumentet en fråga gäller, eller bilagorna ett tillägg ändrar | R1–R5, R1x, R1q, R1a, R4q, R4a, RQ |
 | `title_matcher.py` | Språkmodellens val av rubrik bland filens rubriker, för en rubrik som inte stämmer exakt och ett ämne efter ett dokumentnamn | R4-llm, R2-llm |
 
 `ingestion/llm_title_matcher.py` är den enda modulen som anropar OpenAI (`gpt-6-luna` med
@@ -362,9 +380,12 @@ en i taget, och för mönstren i steg 4 också alternativen i dem.
   frågeloggarna.
 - **Leverantörsnamn utan organisationsnummer** (i prislistor och vägledningar) kontrolleras inte.
   Varje organisationsnummer kontrolleras.
-- **Vad ett tillägg ersätter** ("ersätter avsnitt 7.19.1.3") markeras på 33 hänvisningar, men 7 av
-  dem är ingen ändring ("Kammarkollegiet ändrar inte avtalsvillkoret i 7.19.11"). Vilket dokument
-  ett tillägg gäller läses inte ut ur dess titel.
+- **Vad ett tillägg ändrar** hittas inte alltid. En underrubrik inne i ett avsnitt
+  ("Tvistlösning" och "Tillämplig lag" i Övrigt, 4 hänvisningar) är ingen rubrik i bilagan och
+  saknas. Campus-avtalet (bilaga 7.1) numrerar inte sina avsnitt, så "Punkt 8.a" saknas. "Punkt
+  2a. i Registreringen" förblir flertydig mellan bilagorna 5.1–5.4, eftersom ordet
+  "Registreringen" inte läses. Ett tillägg vars titel inte anger bilagor (IBM:s "Volymavtal")
+  kopplas inte till dem.
 - **IBM:s volymavtal** är en .doc-fil som steg 1 inte hämtar, så avtalet 6765/05 har inget
   huvuddokument.
 - **Språkmodellens svar** kan variera mellan körningar utan cache. Cachen gör dem fasta, och 2 av

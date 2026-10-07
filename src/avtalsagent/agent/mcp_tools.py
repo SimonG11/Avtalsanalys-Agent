@@ -3,16 +3,16 @@
 What:
     `open_mcp_tools(settings)` opens one MCP session to avtal-mcp and yields
     `McpTools`: the server's tools as LangChain tools, in the server's order
-    (`tools`), an `McpSectionReader` (`reader`) and an `McpRegisterReader`
-    (`register`) on the same session. `open_mcp_session` opens the session
-    MCP_TRANSPORT names, and `load_tools` makes `McpTools` of a session that
-    is already open.
+    (`tools`), an `McpSectionReader` (`reader`), an `McpRegisterReader`
+    (`register`) and an `McpAmendmentReader` (`amendments`) on the same
+    session. `open_mcp_session` opens the session MCP_TRANSPORT names, and
+    `load_tools` makes `McpTools` of a session that is already open.
 
 Why:
     The agent gets its data only through avtal-mcp (ADR 0003), and the
-    answer check reads each cited section and each declared agreement from
-    the server itself, never from the message history, which a client sends
-    and could change. One session lasts as long as the agent: the adapter's
+    answer check reads each cited section, its amendments and each declared
+    agreement from the server itself, never from the message history, which
+    a client sends and could change. One session lasts as long as the agent: the adapter's
     `get_tools()` would open a new session for every tool call, which over
     stdio is a new server process each time.
 
@@ -42,6 +42,13 @@ How:
     the server gives that procurement's agreements instead, and those are
     not the agreement asked for, so a page without a row of it ends the
     reading. No row of the agreement, or an error result, is None.
+    `McpAmendmentReader.read` calls `find_amendments` with the hash and the
+    position, and makes each entry of the result's `structuredContent`
+    (avtal-mcp's `AmendmentResult`) an `AmendmentInfo`. The tool lists every
+    amendment in one result, without pages. An error result is None, and so
+    is a result that does not fit (a server of another version): unlike a
+    section, whose check cannot do without it, the amendments not known
+    give the answer a reservation, and the run goes on.
 """
 
 import logging
@@ -50,6 +57,7 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import date
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -58,8 +66,9 @@ from langchain_mcp_adapters.tools import load_mcp_tools
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import TextContent
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
+from avtalsagent.agent.amendments import AmendmentInfo, AmendmentReader
 from avtalsagent.agent.register_reader import RegisterEntry, RegisterReader
 from avtalsagent.agent.sections import CitedSection, SectionReader
 from avtalsagent.config import Settings
@@ -71,6 +80,7 @@ _log = logging.getLogger(__name__)
 SERVER_NAME = "avtal"
 READ_SECTION = "read_section"
 SEARCH_REGISTER = "search_register"
+FIND_AMENDMENTS = "find_amendments"
 REGISTER_PAGE = 20  # search_register's largest limit
 
 
@@ -81,6 +91,7 @@ class McpTools:
     tools: list[BaseTool]
     reader: SectionReader
     register: RegisterReader
+    amendments: AmendmentReader
 
 
 class McpSectionReader:
@@ -157,6 +168,78 @@ class McpRegisterReader:
                 return entries or None
 
 
+class _Amending(BaseModel):
+    """Where a change is written: the fields of avtal-mcp's `SectionRef` the rule needs."""
+
+    sha256: str
+    section_position: int
+    file_title: str
+    section_number: str | None
+    section_title: str
+
+
+class _Amended(BaseModel):
+    """What a change changes: of avtal-mcp's `TargetRef`, only the section's place."""
+
+    section_position: int | None  # None for the whole file
+
+
+class _Amendment(BaseModel):
+    """An entry of `find_amendments`' result (avtal-mcp's `Amendment`)."""
+
+    amending: _Amending
+    amended: _Amended
+    status: str
+    dated: date | None
+
+
+class _Amendments(BaseModel):
+    """`find_amendments`' result (avtal-mcp's `AmendmentResult`), as far as the rule reads it."""
+
+    amendments: list[_Amendment]
+
+
+class McpAmendmentReader:
+    """An `AmendmentReader` that reads with avtal-mcp's `find_amendments`, on an open session."""
+
+    def __init__(self, session: ClientSession) -> None:
+        self._session = session
+
+    async def read(self, sha256: str, section_position: int) -> list[AmendmentInfo] | None:
+        """The amendments of the section and of its file, newest first; None if unreadable.
+
+        An error result (no such section, held back, the database not
+        answering) is logged as it is, like `McpSectionReader`'s; a result
+        that does not fit is logged without its content.
+        """
+        result = await self._session.call_tool(
+            FIND_AMENDMENTS, {"sha256": sha256, "section_position": section_position}
+        )
+        if result.isError:
+            message = " ".join(
+                block.text for block in result.content if isinstance(block, TextContent)
+            )
+            _log.info("find_amendments(%s…, %d): %s", sha256[:12], section_position, message)
+            return None
+        try:
+            found = _Amendments.model_validate(result.structuredContent)
+        except ValidationError:
+            # A server of another version: the amendments are not known, so not checked.
+            _log.warning(
+                "find_amendments(%s…, %d): unreadable result", sha256[:12], section_position
+            )
+            return None
+        return [
+            AmendmentInfo(
+                **entry.amending.model_dump(),
+                amended_position=entry.amended.section_position,
+                status=entry.status,
+                dated=entry.dated,
+            )
+            for entry in found.amendments
+        ]
+
+
 def _same_agreement(row: RegisterEntry, number: str, key: str | None) -> bool:
     """True when the row is the agreement `number`, in any spelling (as the server matches)."""
     return row.agreement_number == number or (
@@ -168,7 +251,10 @@ async def load_tools(session: ClientSession) -> McpTools:
     """The tools and the readers of an open, initialised session."""
     tools = await load_mcp_tools(session, server_name=SERVER_NAME)
     return McpTools(
-        tools=tools, reader=McpSectionReader(session), register=McpRegisterReader(session)
+        tools=tools,
+        reader=McpSectionReader(session),
+        register=McpRegisterReader(session),
+        amendments=McpAmendmentReader(session),
     )
 
 

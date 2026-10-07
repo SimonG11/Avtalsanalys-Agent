@@ -319,8 +319,9 @@ också integrationstesterna använder.
   hela historiken.
 - **Resten av valideringen (M8)** saknas: registerfakta, senaste lydelse, granskaren
   `gpt-6-astra` och två varv. `find_amendments` och `calculate_date` kommer senare, och API:t i M9.
-  M8 har sedan byggt allt utom senaste lydelsen ([steg 08](08-validering.md)), och
-  `calculate_date` kom efter M8 ([ADR 0016](../adr/0016-datumrakning.md)).
+  M8 har sedan byggt allt utom senaste lydelsen ([steg 08](08-validering.md)). Efter M8 kom
+  `calculate_date` ([ADR 0016](../adr/0016-datumrakning.md)) och `find_amendments` med regeln om
+  senaste lydelsen ([ADR 0017](../adr/0017-andringar.md)).
 - **Sidan** i ett citat är avsnittets första sida, också när citatet står på en senare.
 - **Svar ur registret** har inget att citera och blir `with_reservation` tills M8 kontrollerar
   registerfakta. Det gör M8 nu, och ett sådant svar kan bli `verified` ([steg 08](08-validering.md)).

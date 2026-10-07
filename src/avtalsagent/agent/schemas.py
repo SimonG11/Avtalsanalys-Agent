@@ -149,8 +149,9 @@ class RegisterFact(BaseModel):
 
 
 # verified: every source passed the check, and so did the review. with_reservation: a check
-# failed after the retries, the answer has no source to check, or it could not be reviewed;
-# `reservations` says what. no_answer: the agreements do not answer.
+# failed after the retries, the answer has no source to check, its sources' amendments could
+# not be read, or it could not be reviewed; `reservations` says what. no_answer: the agreements
+# do not answer.
 AnswerStatus = Literal["verified", "with_reservation", "no_answer"]
 
 

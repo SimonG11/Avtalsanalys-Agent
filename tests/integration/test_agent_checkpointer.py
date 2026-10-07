@@ -43,6 +43,7 @@ from avtalsagent.agent.schemas import Answer, Citation, DraftCitation, FinalAnsw
 from avtalsagent.agent.sections import CitedSection
 from avtalsagent.config import Settings
 from tests.unit.agent.scripted_model import (
+    DictAmendments,
     DictReader,
     ListRegister,
     ScriptedModel,
@@ -109,7 +110,9 @@ THREAD: RunnableConfig = {"configurable": {"thread_id": "conversation"}}
 
 
 def mcp() -> McpTools:
-    return McpTools(tools=[], reader=DictReader([SECTION]), register=ListRegister())
+    return McpTools(
+        tools=[], reader=DictReader([SECTION]), register=ListRegister(), amendments=DictAmendments()
+    )
 
 
 @pytest.fixture
