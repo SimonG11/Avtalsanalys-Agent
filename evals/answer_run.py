@@ -44,7 +44,6 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.outputs import LLMResult
 from langchain_core.runnables import RunnableConfig
-from langchain_core.runnables.config import merge_configs
 from langgraph.types import Command, Interrupt
 from pydantic import ValidationError
 
@@ -52,6 +51,7 @@ from avtalsagent.agent.ask_user import ask_user
 from avtalsagent.agent.graph import ANSWER_SUBMITTED, AvtalAgent
 from avtalsagent.agent.middleware import FINAL_ANSWER_TOOL
 from avtalsagent.agent.schemas import Answer, FinalAnswer
+from avtalsagent.observability.tracing import traced
 
 # What the measurement answers when the agent asks the user (ask_user).
 ASK_USER_REPLY = "Jag har inget att tillägga: svara utifrån frågan som den är ställd."
@@ -222,9 +222,7 @@ async def run_question(
     `trace` is merged into the run's config: the tracing's callbacks and metadata.
     """
     usage = UsageCounter()
-    config: RunnableConfig = merge_configs(
-        {"configurable": {"thread_id": thread_id}, "callbacks": [usage]}, trace or {}
-    )
+    config = traced({"configurable": {"thread_id": thread_id}, "callbacks": [usage]}, trace or {})
     run_input: InputAgentState | Command[Any] = {
         "messages": [{"role": "user", "content": question}]
     }

@@ -24,8 +24,9 @@ How:
     without OPENAI_API_KEY it stops before anything else), avtal-mcp (`open_mcp_tools`: over stdio a
     child process, over streamable HTTP the server at MCP_URL), the
     checkpointer (`open_checkpointer`) and the tracing (`open_tracing`: off
-    without Langfuse's keys; with them each question is a trace and the
-    conversation its session), and builds the graph (`build_agent`). Each
+    without Langfuse's keys; with them each question is a trace, the
+    user's answers to the agent's questions included, and the conversation
+    its session), and builds the graph (`build_agent`). Each
     question runs with `astream` in "updates" mode, so a tool call is
     printed when the model makes it. A run that stops at
     `ask_user` is resumed with `Command(resume=...)`: a number picks that
@@ -56,7 +57,6 @@ import openai
 from langchain.agents.middleware import InputAgentState
 from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_core.runnables.config import merge_configs
 from langgraph.types import Command, Interrupt
 from mcp.shared.exceptions import McpError
 
@@ -71,7 +71,7 @@ from avtalsagent.agent.schemas import Answer, Citation, RegisterFact
 from avtalsagent.config import Settings, get_settings
 from avtalsagent.domain.identifiers import agreement_key
 from avtalsagent.observability.tracing import OFF as TRACING_OFF
-from avtalsagent.observability.tracing import Tracing, open_tracing
+from avtalsagent.observability.tracing import Tracing, open_tracing, traced
 
 STATUS_NAMES = {
     "verified": "Kontrollerat",
@@ -189,17 +189,19 @@ async def converse(
 ) -> None:
     """Answer `question`, or else each question the user types, in one conversation."""
     thread_id = f"cli-{uuid.uuid4()}"
-    config: RunnableConfig = merge_configs(
-        {"configurable": {"thread_id": thread_id}},
-        tracing.run_config(name="fråga", session_id=thread_id, tags=["cli"]),
-    )
+    thread: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+
+    def config() -> RunnableConfig:  # each question its own trace, the conversation its session
+        trace = tracing.run_config(name="fråga", session_id=thread_id, tags=["cli"])
+        return traced(thread, trace)
+
     if question is not None:
-        _show(await ask(graph, question, config, terminal), terminal, as_json=as_json)
+        _show(await ask(graph, question, config(), terminal), terminal, as_json=as_json)
         return
     terminal.say(WELCOME)
     while (line := terminal.read_line(QUESTION_PROMPT)) is not None:
         if line.strip():
-            _show(await ask(graph, line.strip(), config, terminal), terminal, as_json=as_json)
+            _show(await ask(graph, line.strip(), config(), terminal), terminal, as_json=as_json)
     terminal.say("")  # after Ctrl-D, so the shell's prompt starts on a line of its own
 
 

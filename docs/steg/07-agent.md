@@ -311,9 +311,16 @@ också integrationstesterna använder.
 
 Byggd efter M11 ([ADR 0021](../adr/0021-sparning-med-langfuse.md)). Med Langfuses nycklar i `.env`
 blir varje fråga en spårning i Langfuse: agentens modellanrop med modell, tokens och tid, varje
-verktygsanrop till avtal-mcp med argument och svar, svarskontrollen, granskarens anrop och de nya
-försöken när kontrollen underkänner ett utkast. Samtalet är spårningens session, så en följdfråga
-hamnar bredvid frågan före. Utan nycklarna är spårningen avstängd och körningen densamma.
+verktygsanrop till avtal-mcp med argument och svar, svarskontrollen som ett steg, granskarens anrop
+och de nya försöken när kontrollen underkänner ett utkast. Kontrollens egna läsningar ur avtal-mcp
+(avsnitten och registerraderna den jämför med) syns inte som egna anrop. Samtalet är spårningens
+session, så en följdfråga hamnar bredvid frågan före. Utan nycklarna är spårningen avstängd och
+körningen densamma.
+
+Varje fråga får ett eget spårnings-id. En fråga där agenten frågar användaren (`ask_user`) körs i
+två omgångar, före och efter svaret, och på kommandoraden och i mätningen hamnar båda i frågans
+spårning. I API:t skickar webbappen svaret som en ny körning, och den blir en ny spårning i samma
+session.
 
 | Var frågan ställs | Spårningens namn | Session | Taggar |
 |---|---|---|---|
@@ -328,31 +335,49 @@ Så slås den på:
 2. Lägg nycklarna i `.env` som `LANGFUSE_PUBLIC_KEY` och `LANGFUSE_SECRET_KEY`. En egen Langfuse
    eller USA-regionen anges med `LANGFUSE_BASE_URL`.
 3. Kör en fråga (kommandoraden, webbappen eller mätningen) och öppna *Tracing* i projektet.
-   Docker Compose ger nycklarna till containrarna genom `.env`, så `docker compose up` räcker.
+   Docker Compose ger nycklarna till containrarna genom `.env`. Är containrarna byggda före den här
+   ändringen, bygg om dem med `docker compose up -d --build`.
 
-Det som skickas till Langfuse är frågan, avtalstexten som verktygen returnerar och svaret, aldrig
-OpenAI-nyckeln. Går Langfuse inte att nå kastas spårningen efter några försök, med en varning i
-loggen; körningen påverkas inte, men avslutet väntar några sekunder.
+Det som skickas till Langfuse är frågan, avtalstexten som verktygen returnerar och svaret. Innan
+något skickas tas hemligheterna bort ur varje text: OpenAI-nyckeln, Langfuses hemliga nyckel och
+databasens lösenord, och en nyckel som OpenAI visar maskerad i ett felmeddelande ("Incorrect API
+key provided: sk-proj-****…abcd"), vars början och sista tecken annars hade följt med. Går
+Langfuse inte att nå kastas spårningen efter några försök, med en varning i loggen; körningen
+påverkas inte, men avslutet väntar några sekunder.
 
 Filerna:
 
 - `observability/tracing.py`: `open_tracing(settings)` startar Langfuses klient när båda nycklarna
   finns och ger en `Tracing`; `Tracing.run_config(name=…, session_id=…, tags=…)` är den del av en
-  körnings config som spårar den (Langfuses callback-hanterare och spårningens namn, session och
-  taggar), tom när spårningen är avstängd. Klienten stängs sist och skickar då det som är kvar.
+  frågas config som spårar den (Langfuses callback-hanterare med frågans spårnings-id, och
+  spårningens namn, session och taggar), tom när spårningen är avstängd. `traced(config, trace)`
+  lägger in den i körningens config och lämnar configen orörd när spårningen är avstängd.
+  `masking` tar bort hemligheterna innan spårningen skickas. Klienten stängs sist och skickar då
+  det som är kvar.
 - `config.py`: `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` (en `SecretStr`, borttagen ur
   felmeddelanden som OpenAI-nyckeln) och `LANGFUSE_BASE_URL`.
 - `agent/__main__.py`, `api/app.py` och `api/agui.py`, `evals/run_answer_eval.py` och
-  `evals/answer_run.py`: öppnar spårningen en gång per process och lägger `run_config` i varje
-  körnings config.
+  `evals/answer_run.py`: öppnar spårningen en gång per process och ger varje fråga sin
+  `run_config`.
+- `tests/conftest.py`: tar bort `LANGFUSE_*` ur miljön i varje test, så att inget test spårar till
+  ett riktigt projekt när nycklarna finns i skalet eller molnmiljön.
 
-Testerna (`tests/unit/observability/test_tracing.py`, 6) skickar spårningen till
-OpenTelemetrys exportör i minnet i stället för till Langfuse: avstängd utan någon av nycklarna,
-den hemliga nyckeln borttagen ur text, configens innehåll, en körning av grafen med skriptad
-modell som blir en spårning med namn, session och taggar, två modellanrop med modellnamn och
-tokens, verktygsanropet och granskarens anrop, och ett anrop till OpenAI:s klient (som
-misslyckas utan nätverk) där frågan finns i spårningen men inte nyckeln. `tests/unit/evals/test_run_answer_eval.py` visar
-att mätningen namnger varje frågas spårning efter frågan och ger dem samma session.
+Testerna (`tests/unit/observability/test_tracing.py`, 10) skickar spårningen till
+OpenTelemetrys exportör i minnet i stället för till Langfuse:
+
+- avstängd utan någon av nycklarna, och då är körningens config orörd;
+- den hemliga nyckeln borttagen ur text, och configens innehåll;
+- en körning av grafen med skriptad modell blir en spårning med namn, session och taggar, två
+  modellanrop med modellnamn och tokens, verktygsanropet och granskarens anrop;
+- ett samtal på kommandoraden med två frågor blir två spårningar i samma session, och svaret på
+  agentens fråga stannar i den första; i mätningen stannar svaret också i frågans spårning;
+- ett anrop till OpenAI:s klient som misslyckas utan nätverk: frågan finns i spårningen men inte
+  nyckeln; ett svar 401 med en maskerad nyckel: den maskerade nyckeln tas bort innan spårningen
+  skickas, och hemligheterna tas bort ur all text;
+- klienten skickar det som är kvar även när blocket lämnas med ett fel.
+
+`tests/unit/evals/test_run_answer_eval.py` visar att mätningen namnger varje frågas spårning
+efter frågan och ger dem samma session.
 
 ## Kända begränsningar
 
