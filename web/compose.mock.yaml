@@ -1,0 +1,32 @@
+# The web app against the mock agent, without the backend. For trying out the interface:
+#
+#   docker compose -f web/compose.mock.yaml up --build
+#
+# then open http://localhost:3000. The answers are scripted (see web/mock/scenarios.ts) and
+# cite a made-up document, so this is not the real agent.
+services:
+  mock:
+    build:
+      context: .
+      target: mock
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:8000/agui/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      target: runner
+    environment:
+      API_URL: http://mock:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      mock:
+        condition: service_healthy

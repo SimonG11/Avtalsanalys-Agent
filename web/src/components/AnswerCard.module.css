@@ -1,0 +1,143 @@
+.card {
+  margin: 12px 0 4px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.badge {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.verified {
+  background: var(--ok-soft);
+  color: var(--ok-strong);
+}
+
+.with_reservation {
+  background: var(--warn-soft);
+  color: var(--warn-strong);
+}
+
+.no_answer {
+  background: var(--neutral-soft);
+  color: var(--text-muted);
+}
+
+.help {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.text {
+  margin: 0;
+  line-height: 1.6;
+  /* The answer is plain text: paragraphs are separated by a blank line, list items by "- ". */
+  white-space: pre-line;
+}
+
+.ref {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4em;
+  height: 1.4em;
+  margin: 0 2px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: 0.75em;
+  font-weight: 700;
+  vertical-align: super;
+  cursor: pointer;
+}
+
+.ref:hover,
+.ref:focus-visible {
+  background: var(--accent);
+  color: #fff;
+}
+
+.refUnverified {
+  background: var(--warn-soft);
+  color: var(--warn-strong);
+}
+
+.sources {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.source {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.source:hover,
+.source:focus-visible {
+  border-color: var(--accent);
+}
+
+.sourceNumber {
+  flex: none;
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+.sourceBody {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sourceTitle {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.quote {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.unverified {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--warn-strong);
+}
+
+.invalid {
+  margin: 12px 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: var(--warn-strong);
+}

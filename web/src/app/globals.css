@@ -1,0 +1,69 @@
+/* Colours and base styles for the whole app. Components use these variables, so a theme
+   change happens here only. Dark mode follows the operating system. */
+:root {
+  --text: #0f172a;
+  --text-muted: #55627a;
+  --surface: #ffffff;
+  --surface-muted: #f5f7fb;
+  --background: #eef1f6;
+  --border: #dbe1ea;
+  --accent: #1f5fd1;
+  --accent-soft: #e4edff;
+  --accent-strong: #1747a0;
+  --ok: #16834a;
+  --ok-soft: #dcf5e6;
+  --ok-strong: #11663a;
+  --warn-soft: #fff1d6;
+  --warn-strong: #8a5300;
+  --neutral-soft: #e9edf3;
+  --mark: rgb(255 200 0 / 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #e6eaf2;
+    --text-muted: #9aa6ba;
+    --surface: #161c27;
+    --surface-muted: #1d2533;
+    --background: #0f141c;
+    --border: #2c3647;
+    --accent: #5b8ff0;
+    --accent-soft: #1d2d4d;
+    --accent-strong: #9dbcf7;
+    --ok: #2fa866;
+    --ok-soft: #12321f;
+    --ok-strong: #7fd8a4;
+    --warn-soft: #3a2a0d;
+    --warn-strong: #f1c26b;
+    --neutral-soft: #242d3c;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--background);
+  color: var(--text);
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2 {
+  line-height: 1.25;
+}

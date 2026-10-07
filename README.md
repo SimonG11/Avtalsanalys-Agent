@@ -73,6 +73,14 @@ uv run pytest                # tester
 
 CI startar dessutom Postgres med Docker Compose och kontrollerar att pgvector finns.
 
+Webbappen har egna kommandon och kan provas mot en mock av agenten, utan backend:
+
+```bash
+docker compose -f web/compose.mock.yaml up --build   # sedan http://localhost:3000
+```
+
+Se [`web/README.md`](web/README.md).
+
 ## Struktur
 
 | Mapp | Innehåll |
@@ -85,5 +93,6 @@ CI startar dessutom Postgres med Docker Compose och kontrollerar att pgvector fi
 | `docs/adr/` | Arkitekturbeslut, ett per fil |
 | `docs/steg/` | Förklaring av varje milstolpe |
 | `docker/` | Konfiguration för containrarna |
+| `web/` | Webbappen (Next.js och CopilotKit), se [`web/README.md`](web/README.md) |
 
 Kod, identifierare och kommentarer är på engelska. Dokumentationen är på svenska.

@@ -1,5 +1,5 @@
-# Local services for avtalsagent. M0 has only the database; the MCP server, API,
-# web app and (if needed) OCR service are added in their milestones.
+# Local services for avtalsagent: the database and the web app so far. The MCP server, API and
+# (if needed) OCR service are added in their milestones.
 #
 # Start:  docker compose up -d postgres --wait
 # Values come from .env (see .env.example); the defaults below are for local use only.
@@ -23,6 +23,18 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  web:
+    # The web app (M10, see web/README.md). It reaches the agent through the API at API_URL. The
+    # api service is added with the API milestone; until then, try the app against the mock with
+    # docker compose -f web/compose.mock.yaml up --build
+    build:
+      context: ./web
+      target: runner
+    environment:
+      API_URL: ${API_URL:-http://api:8000}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
 
 volumes:
   postgres-data:

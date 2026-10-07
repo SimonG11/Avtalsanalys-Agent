@@ -1,0 +1,98 @@
+.step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 4px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  font-size: 0.875rem;
+}
+
+.running,
+.done {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  border-radius: 50%;
+}
+
+.running {
+  border: 2px solid var(--accent);
+  border-right-color: transparent;
+  animation: spin 0.8s linear infinite;
+}
+
+.done {
+  background: var(--ok);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.body {
+  min-width: 0;
+  flex: 1;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.subject {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.subject::before {
+  content: "”";
+}
+
+.subject::after {
+  content: "”";
+}
+
+.details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.details code {
+  font-size: 0.8rem;
+}
+
+.result {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+.result summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.result pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
