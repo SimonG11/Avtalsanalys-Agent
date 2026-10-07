@@ -61,8 +61,12 @@ räkna upp alla leverantörer eller avtal, hämta sidor med offset tills du har 
 svaret på den senaste lydelsen, säg vilken lydelse svaret bygger på och citera både avsnittet \
 och ändringen. Status ambiguous betyder att ändringen kanske gäller ett annat dokument: läs \
 den och avgör. Leta också efter Frågor och svar om samma sak.
-4. Passar frågan flera avtal eller delområden och svaret skiljer sig mellan dem: fråga \
-användaren med ask_user och ge alternativen i options.
+4. Passar frågan flera avtal, delområden eller fall med olika svar: svara för vart och ett \
+när det går kort (några få alternativ, en eller två meningar var) och säg vad som avgör. \
+Fråga med ask_user bara när alternativen är för många eller svaren för långa för ett svar, \
+eller när svaret beror på uppgifter om användarens eget fall som inte går att räkna upp, \
+till exempel vilken leverantör, roll eller vilket kontraktsvärde. Ge då 2-5 korta \
+alternativ i options.
 5. Svara på det som framgår av avtalen eller registret, också när det bara är en del av \
 frågan (answered = true), och säg vad som inte framgår. Framgår inget av det som frågas: \
 answered = false. Gissa aldrig och fyll inte i med allmän kunskap.

@@ -15,7 +15,7 @@ import pytest
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
 import avtalsagent.agent.prompts as prompts
-from avtalsagent.agent.ask_user import ask_user
+from avtalsagent.agent.ask_user import MAX_OPTIONS, MIN_OPTIONS, ask_user
 from avtalsagent.agent.prompts import SYSTEM_PROMPT, system_prompt, today_in_sweden
 from avtalsagent.agent.schemas import DraftCitation, FinalAnswer
 from avtalsagent.mcp_server.tools import TOOLS
@@ -77,8 +77,22 @@ def test_ask_user_is_described_to_the_model_in_swedish() -> None:
     assert ask_user.name == "ask_user"
     assert ask_user.description.startswith("Fråga användaren")
     assert list(schema["properties"]) == ["question", "options"]
-    assert schema["required"] == ["question"]
+    assert schema["required"] == ["question", "options"]
     assert schema["properties"]["question"]["description"].startswith("Frågan")
+    options = schema["properties"]["options"]
+    assert (options["minItems"], options["maxItems"]) == (MIN_OPTIONS, MAX_OPTIONS) == (2, 5)
+    assert options["items"] == {"type": "string", "minLength": 1}
+    assert options["description"].startswith("2-5 korta svarsalternativ")
+
+
+def test_the_prompt_asks_for_an_answer_per_case_before_a_question_with_options() -> None:
+    # Rule 4 (ADR 0025): answer for each of a few cases; ask only otherwise, with the options
+    # the schema requires.
+    [rule] = [line for line in SYSTEM_PROMPT.splitlines() if line.startswith("4. ")]
+
+    assert "svara för vart och ett" in rule and "säg vad som avgör" in rule
+    assert "Fråga med ask_user bara när" in rule
+    assert f"Ge då {MIN_OPTIONS}-{MAX_OPTIONS} korta alternativ i options." in rule
 
 
 def test_final_answer_is_described_to_the_model_in_swedish() -> None:
