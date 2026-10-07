@@ -7,7 +7,7 @@ tested in test_answer_run.py.
 """
 
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +17,7 @@ import anyio
 import httpx2
 import openai
 import pytest
+from langchain_core.runnables import RunnableConfig
 from pydantic import SecretStr
 
 from avtalsagent.agent.__main__ import CommandError
@@ -24,6 +25,7 @@ from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.agent.middleware import NO_DRAFT_TEXT
 from avtalsagent.agent.schemas import Answer
 from avtalsagent.config import Settings
+from avtalsagent.observability.tracing import Tracing
 from evals import run_answer_eval as runner
 from evals.answer_report import AnswerReport, RunInfo
 from evals.answer_run import QuestionRun, TokenUse
@@ -244,11 +246,19 @@ async def test_the_questions_run_at_once_and_the_results_keep_the_golds_order(
 ) -> None:
     running = 0
     most = 0
+    traces: list[Any] = []
 
     async def ask(
-        settings: Settings, model: Any, reviewer: Any, saver: Any, question: GoldQuestion, t: float
+        settings: Settings,
+        model: Any,
+        reviewer: Any,
+        saver: Any,
+        question: GoldQuestion,
+        t: float,
+        trace: Any = None,
     ) -> QuestionRun:
         nonlocal running, most
+        traces.append(trace)
         running += 1
         most = max(most, running)
         await anyio.sleep({"q01": 0.05, "q02": 0.01, "Q03": 0.0}[question.id])
@@ -279,8 +289,70 @@ async def test_the_questions_run_at_once_and_the_results_keep_the_golds_order(
     assert report.results[1].run.error == "tidsgräns"
     assert [r.register_found for r in report.results] == [0, 0, 0]
     assert most == 2
+    assert traces == [{}, {}, {}]  # tracing is off without Langfuse's keys
     assert sorted(judge.read) == ["Q03", "q01"]
     assert (report.gold_questions, report.gold_path) == (3, "evals/datasets/gold_sv.jsonl")
+
+
+class RecordingTracing(Tracing):
+    """Tracing that hands back what a run's trace would be named, instead of Langfuse's config."""
+
+    def run_config(
+        self,
+        *,
+        name: str,
+        session_id: str | None = None,
+        tags: Sequence[str] = (),
+        metadata: Mapping[str, Any] | None = None,
+    ) -> RunnableConfig:
+        return {"metadata": {"name": name, "session": session_id, "tags": list(tags)}}
+
+
+@pytest.mark.anyio
+async def test_with_tracing_each_question_is_a_trace_named_by_its_id_in_the_runs_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    traces: dict[str, Any] = {}
+
+    async def ask(
+        settings: Settings,
+        model: Any,
+        reviewer: Any,
+        saver: Any,
+        question: GoldQuestion,
+        t: float,
+        trace: Any = None,
+    ) -> QuestionRun:
+        traces[question.id] = trace["metadata"]
+        return ANSWERED
+
+    async def reachable(settings: Settings) -> None:
+        return None
+
+    monkeypatch.setattr(runner, "make_agent_model", lambda settings: object())
+    monkeypatch.setattr(runner, "make_reviewer", lambda settings: object())
+    monkeypatch.setattr(runner, "check_mcp", reachable)
+    monkeypatch.setattr(runner, "ask_question", ask)
+
+    await evaluate(
+        Settings(_env_file=None),
+        GOLD,
+        QUESTIONS,
+        concurrency=2,
+        timeout=10,
+        judge=None,
+        info=info(label="stub"),
+        tracing=RecordingTracing(),
+    )
+
+    assert {id: trace["name"] for id, trace in traces.items()} == {
+        "q01": "q01",
+        "q02": "q02",
+        "Q03": "Q03",
+    }
+    (session,) = {trace["session"] for trace in traces.values()}
+    assert session.startswith("eval-") and session.endswith("-stub")
+    assert traces["q01"]["tags"] == ["eval", QUESTIONS[0].category]
 
 
 # --- the command line -------------------------------------------------------------------------

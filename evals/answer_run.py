@@ -51,6 +51,7 @@ from avtalsagent.agent.ask_user import ask_user
 from avtalsagent.agent.graph import ANSWER_SUBMITTED, AvtalAgent
 from avtalsagent.agent.middleware import FINAL_ANSWER_TOOL
 from avtalsagent.agent.schemas import Answer, FinalAnswer
+from avtalsagent.observability.tracing import traced
 
 # What the measurement answers when the agent asks the user (ask_user).
 ASK_USER_REPLY = "Jag har inget att tillägga: svara utifrån frågan som den är ställd."
@@ -214,10 +215,14 @@ async def run_question(
     thread_id: str,
     timeout: float,
     redact: Callable[[str], str],
+    trace: RunnableConfig | None = None,
 ) -> QuestionRun:
-    """Ask `graph` the question and read what it did; an error or a timeout is recorded."""
+    """Ask `graph` the question and read what it did; an error or a timeout is recorded.
+
+    `trace` is merged into the run's config: the tracing's callbacks and metadata.
+    """
     usage = UsageCounter()
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}, "callbacks": [usage]}
+    config = traced({"configurable": {"thread_id": thread_id}, "callbacks": [usage]}, trace or {})
     run_input: InputAgentState | Command[Any] = {
         "messages": [{"role": "user", "content": question}]
     }

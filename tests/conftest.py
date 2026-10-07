@@ -2,6 +2,7 @@
 
 What:
     `sample_register_xlsx` builds an xlsx file from tests/fixtures/register_sample.tsv.
+    `no_langfuse_from_the_environment` keeps every test from tracing to Langfuse.
 
 Why:
     The sample rows are the first rows of "Alla giltiga ramavtal" (2026-10-05),
@@ -15,8 +16,15 @@ How:
     empty cell holds the empty string. openpyxl saves "" as a cell without text,
     which reads back as None, so an empty cell is written as empty rich text,
     which reads back as "".
+
+    Langfuse's keys in the environment (a developer's shell, a cloud
+    environment with them set) would turn tracing on in every test that
+    starts the API or the command line, and send its runs to that project;
+    the fixture removes LANGFUSE_* for each test, so the tests that trace
+    give their keys in the settings and read the spans in memory.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -24,6 +32,12 @@ from openpyxl import Workbook
 from openpyxl.cell.rich_text import CellRichText
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def no_langfuse_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in [name for name in os.environ if name.startswith("LANGFUSE_")]:
+        monkeypatch.delenv(name)
 
 
 def write_register_xlsx(rows: list[list[str]], target: Path) -> Path:

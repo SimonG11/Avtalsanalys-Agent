@@ -125,6 +125,12 @@ docker compose --profile eval run --rm eval python -m evals.run_answer_eval --on
 Rapporterna hamnar i `evals/reports/`, som git ignorerar. Utan `--only` ställs alla 30 frågor,
 vilket tar ungefär sex minuter och kostar några dollar.
 
+Med Langfuses nycklar i `.env` blir varje fråga också en spårning i Langfuse, med frågans id som
+namn och mätningens körning som session (`eval-<tid>[-<etikett>]`), taggad `eval` och med
+frågans kategori. En fråga i rapporten kan då öppnas steg för steg i Langfuse. Domarens anrop
+spåras inte; det hör till mätningen, inte till agenten
+([ADR 0021](../adr/0021-sparning-med-langfuse.md), [steg 07](07-agent.md#spårning-med-langfuse)).
+
 | Flagga | Standard | Betydelse |
 |---|---|---|
 | `--gold` | `evals/datasets/gold_sv.jsonl` | testsamlingen |

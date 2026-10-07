@@ -61,6 +61,43 @@ describe("findQuote", () => {
     assert.deepEqual(marked(PAGE, quote), ["6.21.9 Uppsägning", "Kunden har rätt"]);
   });
 
+  it("reads a line end from a separate empty item, as PDF.js gives it for split words", () => {
+    // Shaped like page 26 of IT-drift's Allmänna villkor: words split at "ä", line ends in empty
+    // items, then a footer.
+    const page = [
+      { str: "Vid upps", hasEOL: false },
+      { str: "ä", hasEOL: false },
+      { str: "gningen har Leverant", hasEOL: false },
+      { str: "ö", hasEOL: false },
+      { str: "ren r", hasEOL: false },
+      { str: "ä", hasEOL: false },
+      { str: "tt till ers", hasEOL: false },
+      { str: "ä", hasEOL: false },
+      { str: "ttning enligt", hasEOL: false },
+      { str: "", hasEOL: true },
+      { str: "IT-drift 2023, område Mindre", hasEOL: true },
+      { str: "Sida 26/30", hasEOL: false },
+    ];
+    const quote =
+      "Vid uppsägningen har Leverantören rätt till ersättning enligt Kontraktet fram till";
+    assert.equal(findQuote(page, quote).kind, "partial");
+    assert.equal(
+      marked(page, quote).join(""),
+      "Vid uppsägningen har Leverantören rätt till ersättning enligt",
+    );
+
+    const nextPage = [
+      { str: "IT-drift 2023", hasEOL: false },
+      { str: "", hasEOL: true },
+      { str: "Kontraktet fram till Kontraktets upph", hasEOL: false },
+      { str: "ö", hasEOL: false },
+      { str: "rande.", hasEOL: false },
+    ];
+    const end = "ersättning enligt Kontraktet fram till Kontraktets upphörande.";
+    assert.equal(findQuote(nextPage, end).kind, "partial");
+    assert.equal(marked(nextPage, end).join(""), "Kontraktet fram till Kontraktets upphörande.");
+  });
+
   it("does not mark the start of a misquote that is found in the middle of the page", () => {
     // The page says "tre (3) månaders"; the quote says six months.
     const quote = "Kunden har rätt att säga upp Kontraktet med sex (6) månaders uppsägningstid.";

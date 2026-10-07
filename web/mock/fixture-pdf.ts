@@ -50,6 +50,15 @@ export const PAGES: string[][] = [
     "med 0,5 procent av det avropade värdet för varje påbörjad",
     "vecka, dock högst tio (10) procent.",
   ],
+  // Section 7.2 goes on here, so a quote from it is on a later page than the section's start.
+  [
+    "Vitet ska betalas inom trettio (30) dagar från det att Kunden",
+    "har framställt krav på vite.",
+    "",
+    "7.3 Hävning vid dröjsmål",
+    "Kunden har rätt att häva avropet om förseningen överstiger",
+    "åtta (8) veckor.",
+  ],
 ];
 
 export interface FixturePdf {
