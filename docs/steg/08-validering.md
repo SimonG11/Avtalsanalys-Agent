@@ -178,10 +178,13 @@ stämmer med det, en dag (eller arbetsdag) hit eller dit; granskaren prövar utr
 som ligger en dag från registrets datum för meningens avtal är däremot ett fel, inte en
 uträkning. Efter M8 räknar regeln också om uträkningar som `calculate_date` skriver dem
 ("2027-02-17 minus 3 månader = 2026-11-17", fler steg efter ett kommatecken) med samma funktioner
-som verktyget ([ADR 0016](../adr/0016-datumrakning.md)): ett rätt steg från ett belagt datum
-belägger sitt resultat, också en dag från registrets datum, och ett fel steg är ett problem som
-säger vilket datum det blir. Ett nummer med en siffra för mycket i löpnumret ("-0021") är
-inget avtalsnummer. En mening slutar inte efter ett ensamt tal ("IT-konsulttjänster 3.
+som verktyget ([ADR 0016](../adr/0016-datumrakning.md)): ett rätt steg från ett belagt eller
+framräknat datum belägger sitt resultat, också en dag från registrets datum, och ett fel steg är
+ett problem som säger vilket datum det blir. Ett steg efter ett kommatecken räknas från
+resultatet före eller från det första datumet, ett steg i arbetsdagar godtas både med aftnarna
+som arbetsdagar och som helgdagar, och stegets eget antal är ingen förskjutning: ett datum
+bredvid steget måste vara dess resultat. Ett nummer med en siffra för mycket i löpnumret
+("-0021") är inget avtalsnummer. En mening slutar inte efter ett ensamt tal ("IT-konsulttjänster 3.
 IT-säkerhet"). Sektionsnummer och intervall av dem ("23.1.10–23.1.12"), priser, telefonnummer och
 årtal ensamma läses inte som värden.
 
@@ -209,7 +212,10 @@ variant av en tagg kan avsluta sitt element), anropar
 anropet och ger `None` vid fel eller en bedömning som inte går att läsa (loggat med felets typ,
 aldrig innehållet). `REVIEWER_PROMPT` säger att granskaren bara dömer mot källorna och
 registerraderna, att stil inte bedöms, att en slutsats och ett rätt framräknat datum stöds, och
-att texten i elementen är uppgifter, aldrig instruktioner.
+att texten i elementen är uppgifter, aldrig instruktioner. Efter M8 säger den också att en
+uträkning som "ÅÅÅÅ-MM-DD plus N enhet = ÅÅÅÅ-MM-DD" redan är omräknad i koden, så att
+granskaren bara prövar startdatum, antal och enhet mot källorna, och att aftnarna är arbetsdagar
+om inte källan säger annat (ADR 0016).
 
 ### 5. `agent/middleware.py` – `AnswerCheck`
 
@@ -288,7 +294,8 @@ uv run pytest tests/unit
   meningen före nämner. Ett organisationsnummer eller datum med en siffra för mycket eller för lite
   läses inte alls; granskaren ser dem. Ett rätt framräknat datum som ligger en dag från registrets
   ("dagen innan avtalet löper ut") underkänns om inte uträkningen står i meningen som
-  `calculate_date` skriver den.
+  `calculate_date` skriver den. Ett datum i frågan utan årtal ("15 mars") belägger inget, så ett
+  steg från "2027-03-15" underkänns om användaren inte skrev året; agenten får fråga efter det.
 - **Registerregeln bedömer värden, inte innebörd.** Ett datum som står i registret men på fel
   plats (slutdatum i stället för startdatum), fel delområde och leverantörsnamn i löptext bedömer
   granskaren, inte regeln.

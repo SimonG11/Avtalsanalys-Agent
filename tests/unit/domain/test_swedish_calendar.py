@@ -98,6 +98,7 @@ def test_a_working_day_is_a_weekday_that_is_no_holiday(day: date, working: bool)
         (date(2027, 3, 22), 10, date(2027, 4, 7)),  # past långfredagen and annandag påsk
         (date(2027, 2, 17), -10, date(2027, 2, 3)),  # "tio (10) Arbetsdagar innan"
         (date(2026, 12, 28), -10, date(2026, 12, 11)),  # past juldagen; julafton counts
+        (date(2027, 6, 28), -1, date(2027, 6, 25)),  # midsommarafton counts
         (date(2026, 10, 9), 1, date(2026, 10, 12)),  # Friday to Monday
         (date(2026, 10, 10), 1, date(2026, 10, 12)),  # from a Saturday: the start is not counted
     ],
@@ -106,8 +107,16 @@ def test_working_days_are_counted_without_the_start_day(start: date, count: int,
     assert dates.add_working_days(start, count) == end
 
 
-def test_with_the_eves_off_julafton_is_not_counted() -> None:
-    assert dates.add_working_days(date(2026, 12, 28), -10, eves_off=True) == date(2026, 12, 10)
+@pytest.mark.parametrize(
+    ("start", "count", "end"),
+    [
+        (date(2026, 12, 28), -10, date(2026, 12, 10)),  # julafton
+        (date(2027, 6, 28), -1, date(2027, 6, 24)),  # midsommarafton
+        (date(2026, 12, 23), 4, date(2027, 1, 4)),  # julafton and nyårsafton
+    ],
+)
+def test_with_the_eves_off_they_are_not_counted(start: date, count: int, end: date) -> None:
+    assert dates.add_working_days(start, count, eves_off=True) == end
 
 
 @pytest.mark.parametrize(

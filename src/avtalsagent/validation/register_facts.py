@@ -63,18 +63,22 @@ How:
     sentence (for all declared ones when it names none) is a near miss, not
     a calculation: "i fyra år, 2024-11-14–2028-11-14" where the register
     says 2028-11-13. A calculation as `calculate_date` writes it
-    ("2027-02-17 minus 3 månader = 2026-11-17", more steps after a comma)
-    is redone with `domain.dates`, the tool's own functions: a right one
-    from a backed date, or from a right one's result, backs its result,
-    near miss or not; a wrong one is a problem that gives the right date,
-    even when its date is backed. Each declared number must be an agreement number the
-    register has (`entries` not None) and be used: the text has its number
-    (in full, as a short form or within a range), its organisation number,
-    or its supplier name or a former name, with or without the legal form
-    and in the genitive ("Telia Cygate" and "Telia Cygates" for "Telia
-    Cygate AB"). Problems come in the order of `register_facts`, then of
-    the text, each once; `unbacked` holds each value once, as first written
-    (a short form as the number it stands for).
+    ("2027-02-17 minus 3 månader = 2026-11-17", more steps after a comma,
+    each from the result before it or from the first date) is redone with
+    `domain.dates`, the tool's own functions: a right one from a backed or
+    computed date, or from a right one's result, backs its result, near
+    miss or not; a wrong one is a problem that gives the right date, even
+    when its date is backed. Its amount is no offset for the dates around
+    it, which must be its result exactly. Working days are counted with the
+    eves (midsommarafton, julafton, nyårsafton) as working days and as
+    holidays, since the tool's note gives the second date too. Each declared
+    number must be an agreement number the register has (`entries` not None)
+    and be used: the text has its number (in full, as a short form or within
+    a range), its organisation number, or its supplier name or a former
+    name, with or without the legal form and in the genitive ("Telia Cygate"
+    and "Telia Cygates" for "Telia Cygate AB"). Problems come in the order
+    of `register_facts`, then of the text, each once; `unbacked` holds each
+    value once, as first written (a short form as the number it stands for).
 """
 
 import re
@@ -173,7 +177,8 @@ _OFFSET = re.compile(
 )
 
 # A calculation as `calculate_date` writes it, "2027-02-17 minus 3 månader = 2026-11-17", and
-# each further step after a comma: ", minus 1 dag = 2028-11-13". The rule redoes it.
+# each further step after a comma: ", minus 1 dag = 2028-11-13". The rule redoes it. An en
+# dash is read as a minus there too ("2027-02-17 – 3 månader = …").
 _ISO_DAY = r"\d{4}-\d{2}-\d{2}"
 _MOVE = (
     r"(?P<op>plus|minus|\+|-)\s*(?P<n>\d{1,4})\s+"
@@ -182,6 +187,10 @@ _MOVE = (
 )
 _STEP = re.compile(rf"(?<![\d-])(?P<base>{_ISO_DAY})\s+{_MOVE}", re.IGNORECASE)
 _NEXT_STEP = re.compile(rf"\s*,\s*{_MOVE}", re.IGNORECASE)
+_STEP_HYPHENS = str.maketrans(dict.fromkeys("\u2010\u2011\u2012\u2013\u2212", "-"))
+# A chain of calculations: the date it starts from (None when no day of the calendar) and
+# its steps.
+Chain = tuple[date | None, list[re.Match[str]]]
 
 # A sentence ends at . ! or ? before a capital letter, or at a line break. Not after a
 # number of one or two digits, which the register's sub-areas have ("IT-konsulttjänster 3.
@@ -526,6 +535,9 @@ def _unbacked(
     date they give.
     """
     registered = frozenset[Fact]().union(*(agreement.facts for agreement in agreements))
+    # The calculations written out, which are redone below; their own amounts are no offsets.
+    chains = _chains(text)
+    prose = _blanked(text, chains)
     # Each value with the agreements its sentence names, whether it is backed, whether it
     # may be computed, and the offsets its sentence writes.
     judged: list[tuple[_Value, list[_Agreement], bool, bool, list[tuple[int, dates.Unit]]]] = []
@@ -544,7 +556,7 @@ def _unbacked(
         # A day off one of the register's dates for the sentence is a near miss, not computed.
         scope = paired if named else registered
         days = [date.fromisoformat(key) for kind, key in scope if kind == "date"]
-        offsets = _offsets(sentence)
+        offsets = _offsets(prose[start:end])
         for value in inside:
             allowed = paired if named and value.kind in ("org", "date") else registered
             backed = (
@@ -557,14 +569,22 @@ def _unbacked(
     # A computed date starts from a date the text has and something backs, or from today.
     bases = {value.day for value, _, backed, _, _ in judged if backed and value.day is not None}
     bases.add(today)
-    # A calculation written out and right backs its result, also a day off a register date.
-    stepped, wrong = _steps(text, bases)
+    computed = [
+        not backed and computable and value.day is not None and _computed(value.day, bases, offsets)
+        for value, _, backed, computable, offsets in judged
+    ]
+    # A calculation written out and right backs its result, also a day off a register date. It
+    # may start from a computed date too, which is then that date wherever it stands.
+    computed_days = {
+        value.day
+        for (value, *_), flag in zip(judged, computed, strict=True)
+        if flag and value.day is not None
+    }
+    stepped, wrong = _steps(chains, bases | computed_days)
     unbacked = [
         (value, named)
-        for value, named, backed, computable, offsets in judged
-        if not backed
-        and value.day not in stepped
-        and not (computable and value.day is not None and _computed(value.day, bases, offsets))
+        for value, named, backed, _, _ in judged
+        if not backed and value.day not in stepped and value.day not in computed_days
     ]
     return unbacked, wrong
 
@@ -622,81 +642,129 @@ def _computed(day: date, bases: set[date], offsets: Sequence[tuple[int, dates.Un
     """True when `day` is a base date moved by one of the offsets, give or take a day.
 
     A working day off is one working day: the day after Friday's result is
-    Monday.
+    Monday. Working days are counted with the eves as working days and as
+    holidays, the two dates `calculate_date` gives.
     """
     for base in bases:
         for amount, unit in offsets:
             for sign in (1, -1):
-                if unit == "working_days":
-                    near = {
-                        _shifted(base, sign * n, unit) for n in (amount - 1, amount, amount + 1)
-                    }
-                    if day in near:
+                try:
+                    if unit == "working_days":
+                        near = {
+                            _shifted(base, sign * n, unit, eves_off=eves_off)
+                            for n in (amount - 1, amount, amount + 1)
+                            for eves_off in (False, True)
+                        }
+                        if day in near:
+                            return True
+                    elif abs((day - _shifted(base, sign * amount, unit)).days) <= 1:
                         return True
-                elif abs((day - _shifted(base, sign * amount, unit)).days) <= 1:
-                    return True
+                except (ValueError, OverflowError):
+                    continue  # beyond the calendar's years
     return False
 
 
 @lru_cache(maxsize=4096)
-def _shifted(day: date, amount: int, unit: dates.Unit) -> date:
-    """`dates.shift`, remembered: each value of a sentence tries the same moves."""
+def _shifted(day: date, amount: int, unit: dates.Unit, *, eves_off: bool = False) -> date:
+    """`dates.shift`, remembered: each value of a sentence tries the same moves.
+
+    With `eves_off`, working days skip midsommarafton, julafton and
+    nyårsafton too.
+    """
+    if eves_off and unit == "working_days":
+        return dates.add_working_days(day, amount, eves_off=True)
     return dates.shift(day, amount, unit)
 
 
-def _steps(text: str, bases: set[date]) -> tuple[set[date], dict[int, str]]:
+def _chains(text: str) -> list[Chain]:
+    """The calculations of `text` as `calculate_date` writes them, each with its further steps."""
+    text = text.translate(_STEP_HYPHENS)
+    chains: list[Chain] = []
+    for match in _STEP.finditer(text):
+        moves = [match]
+        while (more := _NEXT_STEP.match(text, moves[-1].end())) is not None:
+            moves.append(more)
+        chains.append((_day(match["base"]), moves))
+    return chains
+
+
+def _blanked(text: str, chains: Sequence[Chain]) -> str:
+    """`text` with each calculation blanked out, as long as before.
+
+    The amount a calculation writes ("3 månader") is then no offset, so a
+    date next to it must be its result, not a day off.
+    """
+    parts, end = [], 0
+    for _, moves in chains:
+        parts += [text[end : moves[0].start()], " " * (moves[-1].end() - moves[0].start())]
+        end = moves[-1].end()
+    return "".join([*parts, text[end:]])
+
+
+def _steps(chains: Sequence[Chain], bases: set[date]) -> tuple[set[date], dict[int, str]]:
     """The dates that right calculations from `bases` give, and the wrong calculations.
 
     A calculation from a date nothing backs is redone too, but backs
     nothing: its start date is then a problem of its own. One that starts
     from another's result is checked once that one is, wherever it stands.
     """
-    text = text.translate(_HYPHENS)
-    chains: list[tuple[str, date, list[re.Match[str]]]] = []
-    for match in _STEP.finditer(text):
-        moves = [match]
-        while (more := _NEXT_STEP.match(text, moves[-1].end())) is not None:
-            moves.append(more)
-        if (base := _day(match["base"])) is not None:
-            chains.append((match["base"], base, moves))
     results: set[date] = set()
     wrong: dict[int, str] = {}
-    pending = chains
+    pending = [(base, moves) for base, moves in chains if base is not None]
     while True:
-        ready = [chain for chain in pending if chain[1] in bases or chain[1] in results]
+        ready = [chain for chain in pending if chain[0] in bases or chain[0] in results]
         if not ready:
             break
         pending = [chain for chain in pending if chain not in ready]
-        for _, base, moves in ready:
+        for base, moves in ready:
             results |= _redo(base, moves, wrong)
-    for _, base, moves in pending:
+    for base, moves in pending:
         _redo(base, moves, wrong)
     return results, wrong
 
 
 def _redo(base: date, moves: Sequence[re.Match[str]], wrong: dict[int, str]) -> set[date]:
-    """The results of a chain of calculations from `base`, up to the first wrong one."""
+    """The dates a chain of calculations from `base` backs, up to the first wrong step.
+
+    A further step counts from the result before it, as `calculate_date`
+    writes it, or from `base`, when an answer lists several dates from one
+    ("2027-02-17 minus 3 månader = 2026-11-17, minus 6 månader =
+    2026-08-17"). A step in working days is right with the eves as working
+    days and as holidays, and backs both dates: the second is the one the
+    tool's note gives.
+    """
     results: set[date] = set()
     day = base
     for move in moves:
         written = _day(move["result"])
         if written is None:
             break  # no day of the calendar: the scan's problem
-        sign = 1 if move["op"].lower() in ("plus", "+") else -1
+        amount = (1 if move["op"].lower() in ("plus", "+") else -1) * int(move["n"])
+        unit = _unit(move["unit"])
         try:
-            right = dates.shift(day, sign * int(move["n"]), _unit(move["unit"]))
+            redone = {start: _redone(start, amount, unit) for start in dict.fromkeys([day, base])}
         except (ValueError, OverflowError):
             break  # beyond the calendar's years
-        if right != written:
+        matched = [found for found in redone.values() if written in found]
+        if not matched:
+            also = f", och {redone[base][0].isoformat()} från {base.isoformat()}"
             wrong[move.start("result")] = (
                 f"Uträkningen {day.isoformat()} {move['op']} {move['n']} {move['unit']} = "
-                f"{move['result']} stämmer inte: det blir {right.isoformat()}. Räkna med "
-                "calculate_date och skriv dess step i meningen."
+                f"{move['result']} stämmer inte: det blir {redone[day][0].isoformat()}"
+                f"{also if day != base else ''}. Räkna med calculate_date och skriv dess step i "
+                "meningen."
             )
             break
-        results.add(right)
-        day = right
+        results.update(matched[0])
+        day = written
     return results
+
+
+def _redone(day: date, amount: int, unit: dates.Unit) -> tuple[date, ...]:
+    """What a step gives: in working days, with the eves as working days and as holidays."""
+    if unit != "working_days":
+        return (_shifted(day, amount, unit),)
+    return (_shifted(day, amount, unit), _shifted(day, amount, unit, eves_off=True))
 
 
 def _day(text: str) -> date | None:

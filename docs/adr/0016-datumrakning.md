@@ -30,17 +30,19 @@ förlängning) – LLM:er räknar dåligt". M6 byggde de sex andra verktygen fö
    (ADR 0003: alla dataverktyg i avtal-mcp, bara `ask_user` i grafen). Det läser ingen databas.
    `server._with_session` tar därför emot ett verktyg utan `session`, och anropar det utan att
    öppna en session; `session` eller `embedder` någon annanstans i signaturen är ett fel.
-2. **Argument:** `start` (ett datum 1990–2100), `amount` (1–3650), `unit` (`days`,
+2. **Argument:** `start` (ett datum 2005–2100), `amount` (1–3650), `unit` (`days`,
    `working_days`, `weeks`, `months`, `years`), `direction` (`after` eller `before`) och
    `include_start`. **Svar:** `result`, `weekday`, `step` (uträkningen på en rad, till exempel
    "2027-02-17 minus 3 månader = 2026-11-17"), `skipped` (helgdagar på vardagar som inte räknades
-   som arbetsdagar) och `notes`.
+   som arbetsdagar) och `notes`. Före 2005 var annandag pingst en helgdag och nationaldagen inte
+   (SFS 2004:1072), så ett start- eller slutdatum utanför 2005–2100 är ett fel
+   (`ArgumentError`).
 3. **Arbetsdagar** är måndag–fredag utom de allmänna helgdagarna enligt lagen (1989:253). De räknas
    ut i koden: påsk med Meeus/Jones/Butchers algoritm, och de rörliga helgdagarna från den.
    Startdagen räknas inte, så en arbetsdag efter en fredag är måndagen. Aftnarna räknas som
    arbetsdagar, eftersom avtalens definition ("helgfri") läst ordagrant bara undantar helgdagar.
-   När det ändrar svaret säger en not vilket datum det blir om de räknas som helgdagar, så att
-   agenten och användaren ser skillnaden.
+   När det ändrar svaret säger en not vilket datum det blir om de räknas som helgdagar, och vilka
+   aftnar det beror på, så att agenten och användaren ser skillnaden.
 4. **Månader** behåller dagen i månaden, eller tar månadens sista dag när månaden är kortare
    (2026-01-31 plus en månad är 2026-02-28). Ett år är tolv månader. Med `include_start` hör
    startdagen till perioden, och resultatet flyttas en dag mot startdatumet: 48 månader från och
@@ -49,15 +51,24 @@ förlängning) – LLM:er räknar dåligt". M6 byggde de sex andra verktygen fö
 5. **En gemensam modul, `domain/dates.py`,** används av verktyget och av registerregeln. Regeln
    läser steget som verktyget skriver ("ÅÅÅÅ-MM-DD plus|minus N enhet = ÅÅÅÅ-MM-DD", och fler steg
    efter ett kommatecken) och räknar om det:
-   - Ett rätt steg från ett belagt datum, eller från ett tidigare rätt stegs resultat, belägger sitt
-     resultat. Det gäller också ett datum en dag från registrets, som annars är ett fel.
+   - Ett rätt steg från ett belagt datum, eller från ett tidigare rätt stegs resultat, belägger
+     sitt resultat. Det gäller också ett datum en dag från registrets, som annars är ett fel.
    - Ett fel steg är ett problem som säger vilket datum det blir, också när datumet i sig är
      belagt.
-   - Ett steg från ett datum som inget belägger räknas om, men belägger inget.
+   - Ett steg från ett datum som inget belägger räknas om, men belägger inget. Ett datum som
+     regeln godtar som framräknat i löptext räknas som belagt.
+   - Ett steg efter ett kommatecken räknas från resultatet före, som verktyget skriver det, eller
+     från kedjans första datum, när svaret räknar upp flera datum från ett.
+   - Ett steg i arbetsdagar är rätt både med aftnarna som arbetsdagar och som helgdagar, och
+     belägger båda datumen: det andra är det som noten ger.
+   - Stegets eget antal ("3 månader") är ingen förskjutning för datumen runt omkring: ett datum
+     bredvid steget måste vara dess resultat, inte en dag ifrån.
    - I löptext läser regeln nu också arbetsdagar, kalenderdagar och räkneord upp till 99. En
      arbetsdag fel godtas där, som en dag fel för kalenderdagar.
 6. **Prompten** säger åt agenten att aldrig räkna själv, att skriva `step` ordagrant i samma mening
-   som datumet, och att läsa avtalets definition av Arbetsdag först.
+   som datumet, och att läsa avtalets definition av Arbetsdag först. **Granskarens prompt** säger
+   att en skriven uträkning redan är omräknad i koden, så att granskaren bara prövar startdatum,
+   antal och enhet mot källorna, och att aftnarna är arbetsdagar om inte källan säger annat.
 
 ## Konsekvenser
 
@@ -66,7 +77,10 @@ förlängning) – LLM:er räknar dåligt". M6 byggde de sex andra verktygen fö
 - Ett framräknat datum kostar ett verktygsanrop till.
 - Ett rätt steg belägger sitt datum i hela svaret. Påstår en annan mening något annat om samma
   datum, är det granskarens sak.
-- Aftnarna är en tolkningsfråga som verktyget inte avgör. Noten gör den synlig.
+- Aftnarna är en tolkningsfråga som verktyget inte avgör. Noten gör den synlig, och regeln godtar
+  båda datumen.
+- Ett datum i frågan utan årtal ("15 mars") belägger inget, så ett steg från det underkänns.
+  Agenten får skriva datumet med årtal efter att ha frågat användaren.
 - Ett datum på en helgdag flyttas inte. Avtalen säger sällan vad som gäller då, och agenten ska
   säga det om avtalet gör det.
 - Timmar ("inom 36 timmar") stöds inte.
@@ -82,6 +96,7 @@ förlängning) – LLM:er räknar dåligt". M6 byggde de sex andra verktygen fö
 - **Verktyget i agentens graf.** ADR 0003 håller alla dataverktyg i avtal-mcp.
 - **En `session`-parameter som verktyget inte använder.** Det hade inte krävt någon ändring i
   servern, men hade sagt fel sak om verktyget.
-- **Arbetsdagar som en egen flagga.** "working_days med months" vore meningslöst; enheten säger det.
+- **Arbetsdagar som en egen flagga.** "working_days med months" vore meningslöst; enheten säger
+  det.
 - **Att räkna aftnarna som helgdagar.** Avtalens definition säger "helgfri", och lagen gör dem inte
   till helgdagar. Noten ger det andra datumet.

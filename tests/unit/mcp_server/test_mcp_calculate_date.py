@@ -3,11 +3,12 @@
 The tool reads no database, so it is called directly and through the MCP
 SDK's in-memory client, where the server must not open a session. The
 last tests feed each step the tool writes to the register rule
-(`validation/register_facts.py`), which must accept it: the rule redoes
-the step with the same functions instead of trusting the tool's result.
+(`validation/register_facts.py`), which must accept it, and reject it
+with its result a day off: the rule redoes the step with the same
+functions instead of trusting the tool's result.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
@@ -16,6 +17,7 @@ from mcp.types import TextContent
 from sqlalchemy.orm import Session
 
 from avtalsagent.agent.schemas import FinalAnswer
+from avtalsagent.domain import dates
 from avtalsagent.mcp_server.errors import ArgumentError
 from avtalsagent.mcp_server.server import build_server
 from avtalsagent.mcp_server.tools.calculate_date import DateResult, Holiday, calculate_date
@@ -109,6 +111,21 @@ def test_the_start_day_in_a_count_of_working_days_is_an_error() -> None:
         calculate_date(date(2026, 10, 7), 10, "working_days", "after", include_start=True)
 
 
+@pytest.mark.parametrize(
+    ("arguments"),
+    [
+        (date(2006, 1, 1), 2, "years", "before"),
+        (date(2005, 6, 1), 3650, "years", "before"),  # before year 1
+        (date(2100, 12, 1), 1, "months", "after"),
+        (date(2100, 1, 1), 3650, "years", "after"),
+    ],
+    ids=["before 2005", "before year 1", "after 2100", "far after"],
+)
+def test_a_result_outside_the_holidays_years_is_an_error(arguments: tuple[Any, ...]) -> None:
+    with pytest.raises(ArgumentError, match="utanför 2005-01-01 till 2100-12-31"):
+        calculate_date(*arguments)
+
+
 def test_the_holidays_a_count_of_working_days_passes_are_listed() -> None:
     answer = calculate_date(date(2026, 10, 7), 90, "working_days", "after")
 
@@ -123,7 +140,7 @@ def test_the_holidays_a_count_of_working_days_passes_are_listed() -> None:
         ],
         notes=[
             "Julafton 2026-12-24 och nyårsafton 2026-12-31 räknas som arbetsdagar, eftersom "
-            "aftnarna inte är allmänna helgdagar. Räknas de som helgdag blir datumet 2027-02-17."
+            "aftnarna inte är allmänna helgdagar. Räknas de som helgdagar blir datumet 2027-02-17."
         ],
     )
 
@@ -137,6 +154,47 @@ def test_an_eve_that_would_change_the_date_gets_a_note_with_the_other_date() -> 
         "Julafton 2026-12-24 räknas som arbetsdag, eftersom aftnarna inte är allmänna "
         "helgdagar. Räknas den som helgdag blir datumet 2026-12-10."
     ]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "result", "notes"),
+    [
+        (
+            (date(2026, 12, 23), 4, "after"),
+            date(2026, 12, 30),
+            [
+                "Julafton 2026-12-24 och nyårsafton 2026-12-31 räknas som arbetsdagar, eftersom "
+                "aftnarna inte är allmänna helgdagar. Räknas de som helgdagar blir datumet "
+                "2027-01-04."
+            ],
+        ),
+        (
+            (date(2027, 1, 4), 4, "before"),
+            date(2026, 12, 28),
+            [
+                "Julafton 2026-12-24 och nyårsafton 2026-12-31 räknas som arbetsdagar, eftersom "
+                "aftnarna inte är allmänna helgdagar. Räknas de som helgdagar blir datumet "
+                "2026-12-23."
+            ],
+        ),
+        (
+            (date(2027, 6, 28), 1, "before"),
+            date(2027, 6, 25),
+            [
+                "Midsommarafton 2027-06-25 räknas som arbetsdag, eftersom aftnarna inte är "
+                "allmänna helgdagar. Räknas den som helgdag blir datumet 2027-06-24."
+            ],
+        ),
+    ],
+    ids=["an eve after the result", "an eve before it", "midsommarafton"],
+)
+def test_the_note_names_every_eve_the_other_date_depends_on(
+    arguments: tuple[date, int, Any], result: date, notes: list[str]
+) -> None:
+    start, amount, direction = arguments
+    answer = calculate_date(start, amount, "working_days", direction)
+
+    assert (answer.result, answer.notes) == (result, notes)
 
 
 def test_a_count_of_working_days_without_an_eve_has_no_note() -> None:
@@ -208,6 +266,7 @@ async def test_through_mcp_the_tool_opens_no_session() -> None:
     ("arguments", "argument"),
     [
         ({"start": "1899-12-31", "amount": 3, "unit": "months", "direction": "after"}, "start"),
+        ({"start": "2004-12-31", "amount": 3, "unit": "months", "direction": "after"}, "start"),
         ({"start": "2027-02-31", "amount": 3, "unit": "months", "direction": "after"}, "start"),
         ({"start": "2027-02-17", "amount": 0, "unit": "months", "direction": "after"}, "amount"),
         ({"start": "2027-02-17", "amount": 3651, "unit": "days", "direction": "after"}, "amount"),
@@ -215,7 +274,16 @@ async def test_through_mcp_the_tool_opens_no_session() -> None:
         ({"start": "2027-02-17", "amount": 3, "unit": "days", "direction": "efter"}, "direction"),
         ({"start": "2027-02-17", "amount": 3, "unit": "days"}, "direction"),
     ],
-    ids=["too early", "no such day", "zero", "too many", "a unit", "a direction", "no direction"],
+    ids=[
+        "too early",
+        "before the holidays",
+        "no such day",
+        "zero",
+        "too many",
+        "a unit",
+        "a direction",
+        "no direction",
+    ],
 )
 async def test_an_argument_out_of_range_is_an_error_the_model_reads(
     arguments: dict[str, Any], argument: str
@@ -255,14 +323,48 @@ async def test_the_units_and_directions_are_listed_in_the_schema() -> None:
 @pytest.mark.parametrize("unit", ["days", "working_days", "weeks", "months", "years"])
 @pytest.mark.parametrize("direction", ["after", "before"])
 @pytest.mark.parametrize("amount", [1, 10, 30, 90])
-def test_the_register_rule_accepts_every_step_the_tool_writes(
+def test_the_register_rule_redoes_every_step_the_tool_writes(
     unit: Any, direction: Any, amount: int
 ) -> None:
+    sign = 1 if direction == "after" else -1
     periods = [False] if unit == "working_days" else [False, True]
     for include_start in periods:
-        step = calculate_date(TODAY, amount, unit, direction, include_start=include_start).step
-        draft = FinalAnswer(answered=True, text=f"Från i dag räknat: {step}.", register_facts=[])
+        try:
+            answer = calculate_date(TODAY, amount, unit, direction, include_start=include_start)
+        except ArgumentError:
+            assert not dates.FIRST_DAY <= dates.shift(TODAY, sign * amount, unit) <= dates.LAST_DAY
+            continue
+        result = answer.result.isoformat()
+        # Off by a day: towards the start in working days, since the eves' date is further away.
+        off = (
+            answer.result - timedelta(days=sign if unit == "working_days" else -sign)
+        ).isoformat()
+        stem, _ = answer.step.rsplit(f"= {result}", 1)
 
-        report = check_register_facts(draft, {}, [], [], TODAY)
+        right = check_register_facts(answer_text(f"{stem}= {result}"), {}, [], [], TODAY)
+        wrong = check_register_facts(answer_text(f"{stem}= {off}"), {}, [], [], TODAY)
 
-        assert report.problems == [], step
+        assert right.problems == [], answer.step
+        assert any(f"stämmer inte: det blir {result}" in problem for problem in wrong.problems), (
+            answer.step
+        )
+
+
+def test_the_register_rule_backs_the_date_the_eve_note_gives() -> None:
+    answer = calculate_date(date(2027, 1, 11), 10, "working_days", "before")
+    other = answer.notes[0].removesuffix(".").rsplit(" ", 1)[1]
+    text = (
+        f"Avbeställ senast {answer.step}. Räknas julafton och nyårsafton som helgdagar blir det "
+        f"{other}."
+    )
+
+    report = check_register_facts(
+        answer_text(text), {}, [], ["Uppdraget startar 2027-01-11."], TODAY
+    )
+
+    assert other == "2026-12-21"
+    assert report.problems == []
+
+
+def answer_text(text: str) -> FinalAnswer:
+    return FinalAnswer(answered=True, text=f"Från i dag räknat: {text}.", register_facts=[])

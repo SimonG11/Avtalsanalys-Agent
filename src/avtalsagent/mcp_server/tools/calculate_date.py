@@ -28,7 +28,9 @@ How:
     `include_start` the start day belongs to the period, so the result
     moves a day back towards the start: 48 months from 2024-11-14 ends
     2028-11-13, as the register's dates do. A calendar result on a weekend
-    or a holiday is not moved; a note says so.
+    or a holiday is not moved; a note says so. A result outside the years
+    the holidays hold for (`dates.FIRST_DAY` to `dates.LAST_DAY`) is an
+    `ArgumentError`, as a start outside them is refused by its type.
 """
 
 from datetime import date, timedelta
@@ -102,7 +104,7 @@ def calculate_date(
             "working_days: räkna arbetsdagarna från dagen före den första."
         )
     sign = 1 if direction == "after" else -1
-    moved = dates.shift(start, sign * amount, unit)
+    moved = _shifted(start, sign * amount, unit)
     result = moved - timedelta(days=sign) if include_start else moved
     singular, plural = _UNIT_WORDS[unit]
     step = (
@@ -132,6 +134,21 @@ def calculate_date(
     )
 
 
+def _shifted(start: date, amount: int, unit: dates.Unit) -> date:
+    """`dates.shift`, refused when the result falls outside the years the holidays hold for."""
+    try:
+        moved = dates.shift(start, amount, unit)
+    except (ValueError, OverflowError):
+        moved = None
+    if moved is None or not dates.FIRST_DAY <= moved <= dates.LAST_DAY:
+        raise ArgumentError(
+            f"Resultatet hamnar utanför {dates.FIRST_DAY.isoformat()} till "
+            f"{dates.LAST_DAY.isoformat()}, de år kalenderns helgdagar gäller för. Kontrollera "
+            "startdatumet och antalet."
+        )
+    return moved
+
+
 def _between(start: date, end: date) -> list[date]:
     """The days after `start` up to and including `end`, in either direction."""
     step = 1 if end >= start else -1
@@ -149,20 +166,25 @@ def _skipped(start: date, end: date) -> list[Holiday]:
 
 
 def _eve_notes(start: date, end: date, count: int) -> list[str]:
-    """A note when counting the eves as holidays would give another date."""
+    """A note when counting the eves as holidays would give another date.
+
+    It names every eve that count passes, also one after `end`: from
+    2026-12-23, four working days are 2026-12-30, and 2027-01-04 only with
+    both julafton and nyårsafton off.
+    """
     other = dates.add_working_days(start, count, eves_off=True)
     if other == end:
         return []
     counted = [
         f"{dates.eves(day.year)[day]} {day.isoformat()}"
-        for day in sorted(_between(start, end))
+        for day in sorted(_between(start, other))
         if day in dates.eves(day.year) and dates.is_working_day(day)
     ]
     one = len(counted) == 1
     return [
         f"{_capital(_joined(counted))} räknas som arbetsdag{'' if one else 'ar'}, eftersom "
-        f"aftnarna inte är allmänna helgdagar. Räknas {'den' if one else 'de'} som helgdag "
-        f"blir datumet {other.isoformat()}."
+        f"aftnarna inte är allmänna helgdagar. Räknas {'den' if one else 'de'} som "
+        f"helgdag{'' if one else 'ar'} blir datumet {other.isoformat()}."
     ]
 
 

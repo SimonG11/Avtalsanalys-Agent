@@ -42,6 +42,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, Field, StringConstraints, WithJsonSchema
 
+from avtalsagent.domain import dates
 from avtalsagent.domain.extracted import DocumentType
 
 
@@ -187,13 +188,13 @@ ValidOn = Annotated[
     Field(description="Bara avtal som gäller detta datum (ÅÅÅÅ-MM-DD)."),
 ]
 
-# calculate_date: dates the agreements can be about, so a typo such as 20270-01-01 or 0207-01-01
-# is refused before any arithmetic.
+# calculate_date: the years the calendar's holidays hold for, so a typo such as 20270-01-01 or
+# 0207-01-01 is refused before any arithmetic.
 StartDate = Annotated[
     date,
     Field(
-        ge=date(1990, 1, 1),
-        le=date(2100, 12, 31),
+        ge=dates.FIRST_DAY,
+        le=dates.LAST_DAY,
         description=(
             "Startdatumet (ÅÅÅÅ-MM-DD), ur registret, ett citerat avsnitt, användarens fråga "
             "eller dagens datum."

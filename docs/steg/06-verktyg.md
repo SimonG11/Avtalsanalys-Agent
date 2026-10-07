@@ -60,6 +60,7 @@ tom lista som modellen skulle tolka som att avtalen inte säger något.
 | `NotFoundError` | Filen, avsnittet eller värdet finns inte, hålls tillbaka eller är inte indexerat | "Det finns inget avsnitt med nummer 9.9 i dokumentet … Kontrollera numret med get_outline." |
 | `AmbiguousError` | Två avsnitt har samma nummer, eller numret och platsen gäller olika avsnitt | "Numret 6.21.4 finns på flera avsnitt i dokumentet …: plats 0 (…), plats 1 (…). Ange section_position för det avsnitt du menar." |
 | `MissingArgumentError` | Inget av de argument som verktyget behöver ett av | "Ange minst ett av framework_area, agreement_number och document_type. …" |
+| `ArgumentError` (efter M8) | Argumenten går inte ihop, eller resultatet hamnar utanför de år som helgdagarna gäller för (`calculate_date`) | "Resultatet hamnar utanför 2005-01-01 till 2100-12-31, de år kalenderns helgdagar gäller för. …" |
 | `UnavailableError` | Sökningen saknar embeddingmodell eller index, eller OpenAI svarar inte; `list_documents` utan index | "Sökindexet är inte byggt, eller byggt med en annan inbäddningsmodell, … Säg det till användaren i stället för att svara utan källor." |
 | Databasfel | Databasen svarar inte, eller en fråga misslyckas | "Databasen kunde inte svara just nu. Försök igen om en stund; …" (SQL och anslutning loggas, men når aldrig modellen) |
 
@@ -145,8 +146,8 @@ kan spara: annars skulle frågan misslyckas och modellen få höra att databasen
 
 ### 3. `mcp_server/errors.py` – felen
 
-`NotFoundError`, `AmbiguousError`, `MissingArgumentError` och `UnavailableError`, underklasser
-till SDK:ts `ToolError`, så att servern släpper igenom dem till modellen.
+`NotFoundError`, `AmbiguousError`, `MissingArgumentError`, `ArgumentError` och `UnavailableError`,
+underklasser till SDK:ts `ToolError`, så att servern släpper igenom dem till modellen.
 
 ### 4. `mcp_server/visibility.py` – vad verktygen får visa
 
@@ -239,16 +240,22 @@ svaret skriver i stället för att lita på verktygets svar i historiken.
   trettondedag jul, som står i `skipped`.
 - **Aftnarna** (midsommarafton, julafton, nyårsafton) räknas som arbetsdagar, som avtalens
   "helgfri" läst ordagrant. Ändrar det datumet säger en not vilket datum det blir om de räknas som
-  helgdagar: 2026-12-28 minus 10 arbetsdagar är 2026-12-11, eller 2026-12-10 utan julafton.
+  helgdagar, och vilka aftnar det beror på: 2026-12-28 minus 10 arbetsdagar är 2026-12-11, eller
+  2026-12-10 utan julafton, och 2026-12-23 plus 4 arbetsdagar är 2026-12-30, eller 2027-01-04
+  utan julafton och nyårsafton.
 - **Månader** behåller dagen, eller tar månadens sista dag: 2026-01-31 plus 1 månad är
   2026-02-28, med en not. Ett år är tolv månader.
 - **`include_start`** för en period där startdagen ingår: "2024-11-14 plus 48 månader =
   2028-11-14, minus 1 dag = 2028-11-13", som registrets slutdatum. Gäller inte arbetsdagar.
 - **Ett resultat på en helg eller helgdag** flyttas inte; en not säger vilken dag det är.
+- **Åren 2005–2100.** Före 2005 var annandag pingst en helgdag och nationaldagen inte, så ett
+  start- eller slutdatum utanför de åren är ett fel (`ArgumentError`), också ett som en
+  felskrivning ger (3650 år före).
 
 Arbetsdagarna och helgdagarna testas mot almanackan för 2026–2027 och påsk mot 2024–2032. Varje
 steg som verktyget skriver i 5 enheter, 2 riktningar och 4 antal, med och utan `include_start`,
-godtas av registerregeln.
+godtas av registerregeln, och underkänns med resultatet en dag fel. Datumet i noten om aftnarna
+godtas också.
 
 ### 9. Utanför paketet
 
@@ -270,14 +277,15 @@ godtas av registerregeln.
 | `tests/unit/mcp_server/test_mcp_document_checks.py` | Nummer, plats eller båda; felet när avsnittet inte anges; sökningen utan embeddingmodell |
 | `tests/unit/mcp_server/test_mcp_register_checks.py` | Att ett filter krävs (också att ett tomt `sub_area` inte räcker), organisationsnumrens former, `list_documents` utan index, gränserna, NUL, `offset` och standardvärdena i schemat, att varje dokumenttyp har en plats i ordningen |
 | `tests/unit/mcp_server/test_mcp_register_sql.py` | Med en påhittad session: ett avtal som registret skriver på två sätt hittas med båda stavningarna, dokumentfiltret tar den stavning som indexet sparade, och `search_register` frågar efter båda; `offset` och `limit` kommer efter sorteringen men inte i totalen; `sub_area` delas i delar som var och en blir ett villkor på vägen, med `%` och `_` som tecken, och ett delområde som inget delområde har är ett fel |
-| `tests/unit/mcp_server/test_mcp_calculate_date.py` (efter M8) | Resultatet och steget i varje enhet, `include_start` åt båda hållen och felet med arbetsdagar, helgdagarna i `skipped`, noterna om aftnar, kort månad, lördag och helgdag; genom MCP utan session, argument utanför gränserna, enheterna och riktningarna i schemat; att registerregeln godtar varje steg som verktyget skriver |
-| `tests/unit/domain/test_swedish_calendar.py` (efter M8) | Påsk 2024–2032, helgdagarna 2027 som almanackan har dem, midsommardagen och alla helgons dag, aftnarna, arbetsdagar framåt och bakåt förbi påsk, midsommar och jul, månadens sista dag och skottår |
+| `tests/unit/mcp_server/test_mcp_calculate_date.py` (efter M8) | Resultatet och steget i varje enhet, `include_start` åt båda hållen och felet med arbetsdagar, helgdagarna i `skipped`, noterna om aftnar (också en afton efter resultatet), kort månad, lördag och helgdag; resultat utanför 2005–2100; genom MCP utan session, argument utanför gränserna, enheterna och riktningarna i schemat; att registerregeln godtar varje steg som verktyget skriver, underkänner det med resultatet en dag fel och godtar notens datum |
+| `tests/unit/domain/test_swedish_calendar.py` (efter M8) | Påsk 2024–2032, helgdagarna 2027 som almanackan har dem, midsommardagen och alla helgons dag, aftnarna, arbetsdagar framåt och bakåt förbi påsk, midsommar och jul, med och utan aftnarna, månadens sista dag och skottår |
 | `tests/integration/test_mcp_documents.py` | De fyra dokumentverktygen på M5:s korpus med fyra påhittade hänvisningar: träffarna med kopior, filtren (också ett upphandlingsnummer), att läsa med nummer, plats eller båda, tvetydiga nummer, innehållsförteckningen, hänvisningarna i textordning, att det som hålls tillbaka inte visas och räknas (en gång, också via två avtalssidor), att inget visas mellan `process` och `index`, att serverns anslutning inte kan skriva, och ett anrop per verktyg genom SDK:ts klient i minnet |
 | `tests/integration/test_mcp_register.py` | `list_documents` och `search_register` på samma korpus plus en påhittad registerrad: varje filter för sig och tillsammans, tidigare namn på raderna, registrets stavning, ett avtal som registret skriver på två sätt, upphandlingsnummer, okända värden, gränsen, `offset` och totalen, `%` och `_`, filer som hålls tillbaka, `list_documents` utan index, och ett anrop per verktyg genom MCP; med påhittade rader i tre nivåer: `sub_area` med delarna i båda ordningarna och med gemener, en del på valfri nivå, tillsammans med de andra filtren, och felet som räknar upp områdets delområden, också i ett område där nivå 1 är ett län |
 
-164 enhetstester och 103 integrationstester (M6 hade 84 och 87). Integrationstesterna använder
-samma korpus och samma påhittade embedder (`TopicEmbedder`) som M5:s tester, och läser genom en
-skrivskyddad anslutning som servern gör.
+173 enhetstester i `tests/unit/mcp_server`, 42 i `tests/unit/domain/test_swedish_calendar.py` och
+103 integrationstester (M6 hade 84 och 87). Integrationstesterna använder samma korpus och samma
+påhittade embedder (`TopicEmbedder`) som M5:s tester, och läser genom en skrivskyddad anslutning
+som servern gör.
 
 ## Kända begränsningar
 

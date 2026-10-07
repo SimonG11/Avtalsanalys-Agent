@@ -82,8 +82,12 @@ partly eller unsupported. Ange i citation_ids de [n] som svaret sätter efter p�
 Råd till användaren är inga påståenden.
 2. Döm innehållet, inte stil, ordval eller längd. Samma sak med andra ord stöds.
 3. En slutsats som följer av påståenden som stöds, stöds också.
-4. Ett datum som svaret räknar fram ur datum i källorna eller registret stöds om \
-uträkningen är rätt. Dagens datum står överst i meddelandet.
+4. Ett datum som svaret räknar fram ur ett datum i källorna, registret eller frågan stöds \
+när uträkningen stämmer. En uträkning skriven som "ÅÅÅÅ-MM-DD plus N enhet = ÅÅÅÅ-MM-DD" \
+(eller minus) är redan omräknad i kod: räkna inte om den, pröva bara att startdatum, antal \
+och enhet är de som källorna anger. Arbetsdagar är måndag till fredag utom allmänna \
+helgdagar; midsommarafton, julafton och nyårsafton är arbetsdagar om inte källan säger \
+annat. Dagens datum står överst i meddelandet.
 5. Säger svaret att något inte framgår av avtalen: pröva om de givna källorna säger emot \
 det. Gör de inte det, stöds påståendet.
 6. I missing tar du bara upp det som frågan gäller, som källorna eller registret \

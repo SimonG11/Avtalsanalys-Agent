@@ -6,9 +6,9 @@ What:
     when the month is shorter (2026-01-31 plus one month is 2026-02-28).
     `add_working_days` counts working days: Monday to Friday except the
     public holidays of `public_holidays(year)`, the "allmänna helgdagar" of
-    Lag (1989:253). `eves(year)` are midsommarafton, julafton and
-    nyårsafton, which the law does not make holidays. `WEEKDAYS` are the
-    Swedish names of the days of the week.
+    Lag (1989:253), as they are since 2005 (`FIRST_DAY`). `eves(year)` are
+    midsommarafton, julafton and nyårsafton, which the law does not make
+    holidays. `WEEKDAYS` are the Swedish names of the days of the week.
 
 Why:
     A model counts dates badly: thirty working days across Christmas, or
@@ -36,6 +36,11 @@ from functools import cache
 from typing import Literal
 
 Unit = Literal["days", "working_days", "weeks", "months", "years"]
+
+# The years these holidays hold for: since 2005 Sveriges nationaldag is a holiday and annandag
+# pingst is not (SFS 2004:1072). The last is a bound for typing errors, not a law.
+FIRST_DAY = date(2005, 1, 1)
+LAST_DAY = date(2100, 12, 31)
 
 WEEKDAYS = ("måndag", "tisdag", "onsdag", "torsdag", "fredag", "lördag", "söndag")
 
