@@ -68,11 +68,14 @@ from ag_ui_langgraph.agent import ProcessedEvents
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from avtalsagent.agent.graph import AGENT_NAME, AvtalAgent, build_agent
 from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.config import Settings
+from avtalsagent.observability.tracing import OFF as TRACING_OFF
+from avtalsagent.observability.tracing import Tracing
 from avtalsagent.validation.review import AnswerReviewer
 
 _log = logging.getLogger(__name__)
@@ -110,11 +113,15 @@ def _without_client_state(input: RunAgentInput) -> RunAgentInput:
     return input.model_copy(update={"state": {}, "forwarded_props": props})
 
 
-def make_agui_agent(graph: AvtalAgent) -> AvtalAguiAgent:
-    """The agent for AG-UI, with the settings the module docstring explains."""
+def make_agui_agent(graph: AvtalAgent, config: RunnableConfig | None = None) -> AvtalAguiAgent:
+    """The agent for AG-UI, with the settings the module docstring explains.
+
+    `config` is merged into every run's config: the tracing's callbacks and metadata.
+    """
     return AvtalAguiAgent(
         name=AGENT_NAME,
         graph=graph,
+        config=config or {},
         enable_legacy_on_interrupt_event=False,
         emit_interrupt_outcome=True,
         emit_raw_events=False,
@@ -131,21 +138,27 @@ class AgentRuns:
         reviewer: AnswerReviewer,
         checkpointer: BaseCheckpointSaver[str],
         open_tools: OpenTools,
+        tracing: Tracing = TRACING_OFF,
     ) -> None:
         self._settings = settings
         self._model = model
         self._reviewer = reviewer
         self._checkpointer = checkpointer
         self._open_tools = open_tools
+        self._tracing = tracing
 
     @asynccontextmanager
-    async def open(self) -> AsyncIterator[AvtalAguiAgent]:
-        """The agent for one run, on a session to avtal-mcp that closes with the block."""
+    async def open(self, thread_id: str | None = None) -> AsyncIterator[AvtalAguiAgent]:
+        """The agent for one run, on a session to avtal-mcp that closes with the block.
+
+        With tracing on, the run is a trace in the conversation's session (`thread_id`).
+        """
         async with self._open_tools(self._settings) as mcp:
             graph = build_agent(
                 self._model, mcp, self._reviewer, self._checkpointer, self._settings
             )
-            yield make_agui_agent(graph)
+            trace = self._tracing.run_config(name="fråga", session_id=thread_id, tags=["api"])
+            yield make_agui_agent(graph, trace)
 
 
 @router.post("/agui")
@@ -157,7 +170,7 @@ async def run_agent(input_data: RunAgentInput, request: Request) -> StreamingRes
     async def events() -> AsyncGenerator[str, None]:
         started = ended = False
         try:
-            async with runs.open() as agent:
+            async with runs.open(input_data.thread_id) as agent:
                 async for event in agent.run(input_data):
                     started = started or event.type == EventType.RUN_STARTED
                     ended = ended or event.type in RUN_ENDS

@@ -44,6 +44,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.outputs import LLMResult
 from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables.config import merge_configs
 from langgraph.types import Command, Interrupt
 from pydantic import ValidationError
 
@@ -214,10 +215,16 @@ async def run_question(
     thread_id: str,
     timeout: float,
     redact: Callable[[str], str],
+    trace: RunnableConfig | None = None,
 ) -> QuestionRun:
-    """Ask `graph` the question and read what it did; an error or a timeout is recorded."""
+    """Ask `graph` the question and read what it did; an error or a timeout is recorded.
+
+    `trace` is merged into the run's config: the tracing's callbacks and metadata.
+    """
     usage = UsageCounter()
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}, "callbacks": [usage]}
+    config: RunnableConfig = merge_configs(
+        {"configurable": {"thread_id": thread_id}, "callbacks": [usage]}, trace or {}
+    )
     run_input: InputAgentState | Command[Any] = {
         "messages": [{"role": "user", "content": question}]
     }

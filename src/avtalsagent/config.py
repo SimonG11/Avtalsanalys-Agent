@@ -131,6 +131,12 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, gt=0, lt=65536)
 
+    # Tracing of the agent's runs in Langfuse (observability/; ADR 0021): off unless both keys
+    # are set. The address is Langfuse Cloud's EU region; a self-hosted Langfuse has its own.
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: SecretStr | None = None
+    langfuse_base_url: str = "https://cloud.langfuse.com"
+
     log_level: str = "INFO"
 
     @property
@@ -144,7 +150,7 @@ class Settings(BaseSettings):
         return self.data_dir / "reports"
 
     def redact(self, text: str) -> str:
-        """`text` without the OpenAI key or the database password, should an error quote them.
+        """`text` without the OpenAI key, Langfuse's secret key or the database password.
 
         The password is replaced where an error would show it: in a database
         address (":password@", as written or percent-encoded) and in quotes, as
@@ -152,8 +158,9 @@ class Settings(BaseSettings):
         ordinary word, as the default "avtalsagent" is, so it is not replaced
         everywhere.
         """
-        if self.openai_api_key is not None and (key := self.openai_api_key.get_secret_value()):
-            text = text.replace(key, "***")
+        for secret in (self.openai_api_key, self.langfuse_secret_key):
+            if secret is not None and (key := secret.get_secret_value()):
+                text = text.replace(key, "***")
         for host in self.database_url.hosts():
             if password := host.get("password"):
                 # As written, as the server reads it and percent-encoded as libpq gets it.

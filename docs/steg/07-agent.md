@@ -12,7 +12,8 @@ graf, stegen runt agentloopen är middleware.
 återupptar körningen, svaret har formen i kontraktet med webbappen (`answer`), och citatkontrollen
 underkänner ett citat som inte står ordagrant i sitt avsnitt, ger ett nytt försök och svarar annars
 med reservation. Allt detta har tester utan språkmodell. Checkpoints finns i minnet och i Postgres
-bakom en funktion. Kvar (se Kända begränsningar): spårning med Langfuse, delagenter med `Send` för
+bakom en funktion. Kvar (se Kända begränsningar): spårning med Langfuse (byggd efter M11, se
+[Spårning med Langfuse](#spårning-med-langfuse)), delagenter med `Send` för
 jämförelser, resten av valideringen (M8) och API:t (M9). Checkpoints i Postgres och agenten mot
 avtal-mcp på en riktig databas är bara testade i CI.
 
@@ -306,6 +307,53 @@ säger det, i stället för att avtalen inte besvarar frågan.
 nyckel: modellens del spelas av en skriptad modell (`tests/unit/agent/scripted_model.py`), som
 också integrationstesterna använder.
 
+## Spårning med Langfuse
+
+Byggd efter M11 ([ADR 0021](../adr/0021-sparning-med-langfuse.md)). Med Langfuses nycklar i `.env`
+blir varje fråga en spårning i Langfuse: agentens modellanrop med modell, tokens och tid, varje
+verktygsanrop till avtal-mcp med argument och svar, svarskontrollen, granskarens anrop och de nya
+försöken när kontrollen underkänner ett utkast. Samtalet är spårningens session, så en följdfråga
+hamnar bredvid frågan före. Utan nycklarna är spårningen avstängd och körningen densamma.
+
+| Var frågan ställs | Spårningens namn | Session | Taggar |
+|---|---|---|---|
+| Kommandoraden | `fråga` | `cli-<uuid>`, ett per samtal | `cli` |
+| API:t och webbappen (`POST /agui`) | `fråga` | AG-UI:s `threadId` | `api` |
+| Mätningen ([M11](11-utvardering.md)) | frågans id, till exempel `q14` | `eval-<tid>[-<etikett>]`, en per körning | `eval` och frågans kategori |
+
+Så slås den på:
+
+1. Skapa ett projekt på [cloud.langfuse.com](https://cloud.langfuse.com) (EU-regionen) och ett
+   nyckelpar under *Settings → API keys*.
+2. Lägg nycklarna i `.env` som `LANGFUSE_PUBLIC_KEY` och `LANGFUSE_SECRET_KEY`. En egen Langfuse
+   eller USA-regionen anges med `LANGFUSE_BASE_URL`.
+3. Kör en fråga (kommandoraden, webbappen eller mätningen) och öppna *Tracing* i projektet.
+   Docker Compose ger nycklarna till containrarna genom `.env`, så `docker compose up` räcker.
+
+Det som skickas till Langfuse är frågan, avtalstexten som verktygen returnerar och svaret, aldrig
+OpenAI-nyckeln. Går Langfuse inte att nå kastas spårningen efter några försök, med en varning i
+loggen; körningen påverkas inte, men avslutet väntar några sekunder.
+
+Filerna:
+
+- `observability/tracing.py`: `open_tracing(settings)` startar Langfuses klient när båda nycklarna
+  finns och ger en `Tracing`; `Tracing.run_config(name=…, session_id=…, tags=…)` är den del av en
+  körnings config som spårar den (Langfuses callback-hanterare och spårningens namn, session och
+  taggar), tom när spårningen är avstängd. Klienten stängs sist och skickar då det som är kvar.
+- `config.py`: `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` (en `SecretStr`, borttagen ur
+  felmeddelanden som OpenAI-nyckeln) och `LANGFUSE_BASE_URL`.
+- `agent/__main__.py`, `api/app.py` och `api/agui.py`, `evals/run_answer_eval.py` och
+  `evals/answer_run.py`: öppnar spårningen en gång per process och lägger `run_config` i varje
+  körnings config.
+
+Testerna (`tests/unit/observability/test_tracing.py`, 6) skickar spårningen till
+OpenTelemetrys exportör i minnet i stället för till Langfuse: avstängd utan någon av nycklarna,
+den hemliga nyckeln borttagen ur text, configens innehåll, en körning av grafen med skriptad
+modell som blir en spårning med namn, session och taggar, två modellanrop med modellnamn och
+tokens, verktygsanropet och granskarens anrop, och ett anrop till OpenAI:s klient (som
+misslyckas utan nätverk) där frågan finns i spårningen men inte nyckeln. `tests/unit/evals/test_run_answer_eval.py` visar
+att mätningen namnger varje frågas spårning efter frågan och ger dem samma session.
+
 ## Kända begränsningar
 
 - **Integrationstesterna** körs bara i CI, där Postgres startas med Docker. Checkpoints i Postgres
@@ -313,6 +361,8 @@ också integrationstesterna använder.
 - **Agenten är provkörd mot den riktiga modellen** bara med en tillfällig ersättare för avtal-mcp
   över pilotens data, inte mot Postgres.
 - **Ingen spårning med Langfuse ännu.** Kommandoraden visar stegen, men inte tokens eller tider.
+  Spårningen kom efter M11 ([ADR 0021](../adr/0021-sparning-med-langfuse.md), avsnittet
+  [Spårning med Langfuse](#spårning-med-langfuse) ovan).
 - **Inga delagenter.** En jämförelse mellan många avtal görs i samma loop, med en sökning per
   delområde, inte med parallella delagenter (`Send`).
 - **Ingen sammanfattning av långa samtal** (`SummarizationMiddleware`). Varje modellanrop skickar

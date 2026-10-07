@@ -221,7 +221,11 @@ gång fäller jobbet i stället för att låta det vänta i timmar.
 - **Imagen är stor.** PyTorch och Docling följer med också till API:t och avtal-mcp.
 - **Inläsningen skriver i `./data` som uid 1000.** På en Mac spelar det ingen roll; på Linux måste
   katalogen vara skrivbar för den användaren.
-- **Ingen spårning (Langfuse)** och inga mätvärden per körning ännu.
+- **Ingen spårning (Langfuse)** och inga mätvärden per körning ännu. Spårningen kom efter M11
+  ([ADR 0021](../adr/0021-sparning-med-langfuse.md), [steg 07](07-agent.md#spårning-med-langfuse)):
+  med Langfuses nycklar i `.env` blir varje körning av `POST /agui` en spårning med AG-UI:s
+  `threadId` som session. Svaret på agentens fråga är en ny körning och blir en ny spårning i
+  samma session.
 - **Inte provkört mot Postgres här.** Checkpoint-poolen och PDF-uppslaget mot databasen körs i CI.
 
 ## Så verifierar du M9 själv

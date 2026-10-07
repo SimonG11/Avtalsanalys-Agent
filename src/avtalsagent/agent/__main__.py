@@ -22,10 +22,12 @@ Why:
 How:
     Starts the model clients (`make_agent_model` and `make_reviewer`;
     without OPENAI_API_KEY it stops before anything else), avtal-mcp (`open_mcp_tools`: over stdio a
-    child process, over streamable HTTP the server at MCP_URL) and the
-    checkpointer (`open_checkpointer`), and builds the graph
-    (`build_agent`). Each question runs with `astream` in "updates" mode, so
-    a tool call is printed when the model makes it. A run that stops at
+    child process, over streamable HTTP the server at MCP_URL), the
+    checkpointer (`open_checkpointer`) and the tracing (`open_tracing`: off
+    without Langfuse's keys; with them each question is a trace and the
+    conversation its session), and builds the graph (`build_agent`). Each
+    question runs with `astream` in "updates" mode, so a tool call is
+    printed when the model makes it. A run that stops at
     `ask_user` is resumed with `Command(resume=...)`: a number picks that
     option, other text goes as written. Follow-up questions use the same
     thread, so the agent keeps the conversation. The exit code is 0 when
@@ -54,6 +56,7 @@ import openai
 from langchain.agents.middleware import InputAgentState
 from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables.config import merge_configs
 from langgraph.types import Command, Interrupt
 from mcp.shared.exceptions import McpError
 
@@ -67,6 +70,8 @@ from avtalsagent.agent.reviewer import make_reviewer
 from avtalsagent.agent.schemas import Answer, Citation, RegisterFact
 from avtalsagent.config import Settings, get_settings
 from avtalsagent.domain.identifiers import agreement_key
+from avtalsagent.observability.tracing import OFF as TRACING_OFF
+from avtalsagent.observability.tracing import Tracing, open_tracing
 
 STATUS_NAMES = {
     "verified": "Kontrollerat",
@@ -158,6 +163,7 @@ async def run(
     model = make_agent_model(settings)  # without a key, before a server is started
     reviewer = make_reviewer(settings)
     async with AsyncExitStack() as stack:
+        tracing = stack.enter_context(open_tracing(settings))  # closed last: sends what is left
         try:
             mcp = await stack.enter_async_context(open_mcp_tools(settings))
         except Exception as error:
@@ -170,14 +176,23 @@ async def run(
                 f"öppna: {_causes(error)}"
             ) from error
         graph = build_agent(model, mcp, reviewer, checkpointer, settings)
-        await converse(graph, question, terminal, as_json=as_json)
+        await converse(graph, question, terminal, as_json=as_json, tracing=tracing)
 
 
 async def converse(
-    graph: AvtalAgent, question: str | None, terminal: Terminal, *, as_json: bool
+    graph: AvtalAgent,
+    question: str | None,
+    terminal: Terminal,
+    *,
+    as_json: bool,
+    tracing: Tracing = TRACING_OFF,
 ) -> None:
     """Answer `question`, or else each question the user types, in one conversation."""
-    config: RunnableConfig = {"configurable": {"thread_id": f"cli-{uuid.uuid4()}"}}
+    thread_id = f"cli-{uuid.uuid4()}"
+    config: RunnableConfig = merge_configs(
+        {"configurable": {"thread_id": thread_id}},
+        tracing.run_config(name="fråga", session_id=thread_id, tags=["cli"]),
+    )
     if question is not None:
         _show(await ask(graph, question, config, terminal), terminal, as_json=as_json)
         return

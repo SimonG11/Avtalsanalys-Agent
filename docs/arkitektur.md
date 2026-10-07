@@ -58,6 +58,10 @@
 >   API:t (`evals/run_answer_eval.py`, tjänsten `eval` i Docker Compose). En domarmodell jämför
 >   varje svar med facit, källorna och registerraderna räknas på plats, och kostnaden anges som ett
 >   intervall eftersom priset för cachad indata saknas ([M11](steg/11-utvardering.md)).
+> - [ADR 0021](adr/0021-sparning-med-langfuse.md): spårningen i avsnitt 8 görs med Langfuses
+>   callback-hanterare för LangChain, i Langfuse Cloud (EU). Varje fråga blir en spårning med
+>   modellanrop, verktygsanrop, kontrollen och granskaren, och samtalet är dess session. Utan
+>   nycklar är spårningen avstängd ([steg 7](steg/07-agent.md#spårning-med-langfuse)).
 
 ---
 

@@ -10,6 +10,7 @@ database is used.
 
 import json
 import logging
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any
@@ -22,14 +23,17 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from pydantic import SecretStr
 
 from avtalsagent.agent.checkpointer import serializer
 from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.agent.sections import CitedSection
 from avtalsagent.api.agui import RUN_FAILED
-from avtalsagent.api.app import create_app
+from avtalsagent.api.app import OpenTracing, create_app
 from avtalsagent.api.documents import DocumentFiles, StoredFile
 from avtalsagent.config import Settings
+from avtalsagent.observability.tracing import open_tracing
 from tests.unit.agent.scripted_model import (
     DictAmendments,
     DictReader,
@@ -158,6 +162,7 @@ def app_with(
     *,
     tools: list[BaseTool] | None = None,
     sessions: Sessions | BreakingSessions | None = None,
+    open_trace: OpenTracing = open_tracing,
 ) -> tuple[FastAPI, ScriptedModel]:
     model = ScriptedModel(script=script)
     settings = Settings(
@@ -180,6 +185,7 @@ def app_with(
         open_tools=open_tools,
         open_saver=open_saver,
         open_documents=open_documents,
+        open_trace=open_trace,
     )
     return app, model
 
@@ -263,6 +269,39 @@ async def test_a_question_streams_the_steps_and_ends_with_the_checked_answer() -
         "reservations": [],
         "register_facts": [],
     }
+
+
+@pytest.mark.anyio
+async def test_with_tracing_a_run_is_a_trace_in_the_threads_session() -> None:
+    exporter = InMemorySpanExporter()
+    keys = Settings(
+        _env_file=None,
+        langfuse_public_key=f"pk-lf-{uuid.uuid4()}",
+        langfuse_secret_key=SecretStr("sk-lf-test-not-a-real-key"),
+        langfuse_base_url="http://127.0.0.1:9",  # never reached: the spans stay in memory
+    )
+    app, _ = app_with(
+        [
+            tool_call("search_documents", {"query": "uppsägningstid"}, "c1"),
+            final_answer("Uppsägningstiden är tre månader [1].", [GOOD], call_id="c2"),
+        ],
+        open_trace=lambda settings: open_tracing(keys, span_exporter=exporter),
+    )
+
+    async with client_of(app) as client:
+        events = await post(client, run_input("r1", QUESTION))
+    # The app's lifespan closed the tracing, which sent what was left.
+
+    assert events[-1]["type"] == "RUN_FINISHED"
+    spans = exporter.get_finished_spans()
+    assert len({span.context.trace_id for span in spans}) == 1
+    # The run's root is a child of FastAPI's span for the request, which Langfuse does not export.
+    (root,) = [span for span in spans if "langfuse.trace.name" in (span.attributes or {})]
+    attributes = root.attributes or {}
+    assert attributes["langfuse.trace.name"] == "fråga"
+    assert attributes["session.id"] == "t1"  # the AG-UI thread
+    assert attributes["langfuse.trace.tags"] == ("api",)
+    assert "search_documents" in {span.name for span in spans}
 
 
 @pytest.mark.anyio
