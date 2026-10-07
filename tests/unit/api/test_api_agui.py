@@ -272,6 +272,25 @@ async def test_a_question_streams_the_steps_and_ends_with_the_checked_answer() -
 
 
 @pytest.mark.anyio
+async def test_a_question_with_many_steps_is_not_stopped_by_langchains_default_limit() -> None:
+    # A model call is about four of LangGraph's steps with the middleware. With LangChain's
+    # default recursion limit (25) a run in the web app stopped after about six model calls.
+    searches = [tool_call("search_documents", {"query": f"sökning {n}"}, f"c{n}") for n in range(8)]
+    app, model = app_with(
+        [*searches, final_answer("Uppsägningstiden är tre månader [1].", [GOOD], call_id="c9")]
+    )
+
+    async with client_of(app) as client:
+        events = await post(client, run_input("r1", QUESTION))
+
+    assert of_type(events, "RUN_ERROR") == []
+    assert events[-1]["type"] == "RUN_FINISHED"
+    assert len(of_type(events, "TOOL_CALL_START")) >= 8
+    assert of_type(events, "STATE_SNAPSHOT")[-1]["snapshot"]["answer"]["status"] == "verified"
+    assert model.script == []  # every scripted call was made
+
+
+@pytest.mark.anyio
 async def test_with_tracing_a_run_is_a_trace_in_the_threads_session() -> None:
     exporter = InMemorySpanExporter()
     keys = Settings(
@@ -280,11 +299,10 @@ async def test_with_tracing_a_run_is_a_trace_in_the_threads_session() -> None:
         langfuse_secret_key=SecretStr("sk-lf-test-not-a-real-key"),
         langfuse_base_url="http://127.0.0.1:9",  # never reached: the spans stay in memory
     )
+    # Eight searches: the tracing's config keeps the graph's own recursion limit.
+    searches = [tool_call("search_documents", {"query": f"sökning {n}"}, f"c{n}") for n in range(8)]
     app, _ = app_with(
-        [
-            tool_call("search_documents", {"query": "uppsägningstid"}, "c1"),
-            final_answer("Uppsägningstiden är tre månader [1].", [GOOD], call_id="c2"),
-        ],
+        [*searches, final_answer("Uppsägningstiden är tre månader [1].", [GOOD], call_id="c9")],
         open_trace=lambda settings: open_tracing(keys, span_exporter=exporter),
     )
 
@@ -292,10 +310,11 @@ async def test_with_tracing_a_run_is_a_trace_in_the_threads_session() -> None:
         events = await post(client, run_input("r1", QUESTION))
     # The app's lifespan closed the tracing, which sent what was left.
 
+    assert of_type(events, "RUN_ERROR") == []
     assert events[-1]["type"] == "RUN_FINISHED"
     spans = exporter.get_finished_spans()
     assert len({span.context.trace_id for span in spans}) == 1
-    # The run's root is a child of FastAPI's span for the request, which Langfuse does not export.
+    # The run's root carries the trace's name; FastAPI's span for the request is not exported.
     (root,) = [span for span in spans if "langfuse.trace.name" in (span.attributes or {})]
     attributes = root.attributes or {}
     assert attributes["langfuse.trace.name"] == "fråga"
