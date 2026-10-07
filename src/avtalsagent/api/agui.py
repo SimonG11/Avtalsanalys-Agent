@@ -32,7 +32,16 @@ Why:
       on the command line (`agent/__main__.py`); a cancelled one as
       `ask_user`'s cancel mark. An answer to a question that is not waiting
       is dropped, and a question left without an answer ends the run
-      again. One waiting question goes the library's way.
+      again. Once one of them is answered, one question waits, and there
+      the library reads no ids: the first answer sent again would go to
+      the other question, and both sent again would give `ask_user` the
+      library's map as text. So with one question waiting, of several
+      answers only its own goes on, alone, the library's way, and a lone
+      answer with another id in LangGraph's form (32 hex digits) is
+      dropped; with no answer left, LangGraph resumes nothing, and the run
+      ends with the question again. A lone answer with the waiting
+      question's id, or with an id not in that form, goes the library's
+      way, as for an ordinary single question.
     - A RAW copy of every LangGraph event is off: nothing reads it.
     - Each run's config is filled in with LangChain's defaults, and their
       recursion limit (25 of LangGraph's steps) replaced the graph's own
@@ -94,6 +103,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.pregel._utils import is_xxh3_128_hexdigest  # LangGraph's test of an interrupt id
 from langgraph.types import Command
 
 from avtalsagent.agent.ask_user import CANCELLED_MARK
@@ -117,7 +127,11 @@ OpenTools = Callable[[Settings], AbstractAsyncContextManager[McpTools]]
 
 
 class AvtalAguiAgent(LangGraphAgent):
-    """`LangGraphAgent` whose snapshots hold only the answer and whose errors name no internals."""
+    """`LangGraphAgent` with its snapshots, errors, client state and resumes fitted to the API.
+
+    A snapshot holds only the answer, an error names no internals, the client's state is
+    dropped, and the answers to waiting `ask_user` questions are matched to them by id.
+    """
 
     def get_state_snapshot(self, state: dict[str, Any]) -> dict[str, Any]:
         return {"answer": state.get("answer")}
@@ -125,20 +139,44 @@ class AvtalAguiAgent(LangGraphAgent):
     def _build_command_from_agui_resume(
         self, entries: list[ResumeEntry], *, open_interrupts: list[Interrupt] | None = None
     ) -> Command[Any]:
-        """The answers to the waiting questions as LangGraph takes them, by id when several wait."""
+        """The answers to the waiting questions as LangGraph takes them.
+
+        Several questions waiting: a map from interrupt id to answer, without
+        the answers to questions that do not wait. One question waiting:
+        - one answer, with its id or an id not in LangGraph's form (32 hex
+          digits): the library's command, unchanged;
+        - one answer with another id in LangGraph's form (an earlier
+          question's, sent again): an empty map;
+        - several answers: its own alone, as the library sends one answer,
+          or an empty map when none is its own.
+        An empty map resumes nothing, and the run ends with the question
+        again.
+        """
         open_ids = {interrupt.id for interrupt in open_interrupts or []}
-        if len(open_ids) <= 1:
-            return super()._build_command_from_agui_resume(entries, open_interrupts=open_interrupts)
-        # An answer to a question that is not waiting is dropped: LangGraph refuses the whole map
-        # over a key that is not an interrupt id. When none is left, the map is empty: LangGraph
-        # resumes no question, and the run ends with the same ones again.
-        return Command(
-            resume={
-                entry.interrupt_id: _resume_value(entry)
-                for entry in entries
-                if entry.interrupt_id in open_ids
-            }
-        )
+        answers = {entry.interrupt_id: entry for entry in entries}  # the last answer per id
+        if len(open_ids) > 1:
+            # An answer to a question that is not waiting is dropped: LangGraph refuses the whole
+            # map over a key not in an interrupt id's form. When none is left, the map is empty:
+            # LangGraph resumes no question, and the run ends with the same ones again.
+            return Command(
+                resume={
+                    id_: _resume_value(entry) for id_, entry in answers.items() if id_ in open_ids
+                }
+            )
+        if len(open_ids) == 1:
+            # The library reads no ids here: it would send several answers as its own map, which
+            # ask_user would read as text, and a lone answer to the waiting question, whatever
+            # its id. An empty map resumes nothing: the run ends with the question again.
+            (waiting,) = open_ids
+            if len(entries) > 1:
+                if waiting not in answers:
+                    return Command(resume={})
+                return super()._build_command_from_agui_resume(
+                    [answers[waiting]], open_interrupts=open_interrupts
+                )
+            if len(entries) == 1 and _another_questions_answer(entries[0], waiting):
+                return Command(resume={})
+        return super()._build_command_from_agui_resume(entries, open_interrupts=open_interrupts)
 
     async def run(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
         async for event in super().run(_without_client_state(input)):
@@ -151,6 +189,11 @@ class AvtalAguiAgent(LangGraphAgent):
 def _resume_value(entry: ResumeEntry) -> Any:
     """What `ask_user` gets back for one answer: the answer, or the cancel mark it reads."""
     return entry.payload if entry.status == "resolved" else {CANCELLED_MARK: True}
+
+
+def _another_questions_answer(entry: ResumeEntry, waiting: str) -> bool:
+    """Whether `entry` names a question other than `waiting` by an id in LangGraph's form."""
+    return entry.interrupt_id != waiting and is_xxh3_128_hexdigest(entry.interrupt_id)
 
 
 def _without_client_state(input: RunAgentInput) -> RunAgentInput:

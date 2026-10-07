@@ -60,10 +60,17 @@ SECTION = CitedSection(
 GOOD = {"id": 1, "sha256": SHA, "section_position": 41, "quote": QUOTE}
 PASSWORD = "hemligt-lösen-42"
 OPTIONS = ["IT-drift Större", "IT-drift Mindre"]
-# The settings every test's app runs with.
-SETTINGS = Settings(
-    _env_file=None, database_url=f"postgresql+psycopg://avtalsagent:{PASSWORD}@db:5432/x"
-)
+
+
+def app_settings() -> Settings:
+    """The settings every test's app runs with, read in the test.
+
+    Built at import, they would read the environment before conftest.py removes Langfuse's
+    keys from it, and the tests would trace to that project.
+    """
+    return Settings(
+        _env_file=None, database_url=f"postgresql+psycopg://avtalsagent:{PASSWORD}@db:5432/x"
+    )
 
 
 @pytest.fixture
@@ -181,7 +188,7 @@ def app_with(
         yield NoDocuments()
 
     app = create_app(
-        SETTINGS,
+        app_settings(),
         make_model=lambda settings: model,
         make_answer_reviewer=lambda settings: ScriptedReviewer(),
         open_tools=open_tools,
@@ -296,7 +303,7 @@ async def test_a_question_with_many_steps_is_not_stopped_by_langchains_default_l
 async def test_a_model_that_never_answers_is_stopped_by_the_model_call_limit() -> None:
     # The run's recursion limit is the graph's own 9 999 (above). What ends a loop that never
     # hands in an answer is ModelCallLimitMiddleware: a finished run without an answer.
-    limit = SETTINGS.agent_model_call_limit
+    limit = app_settings().agent_model_call_limit
     searches = [
         tool_call("search_documents", {"query": f"sökning {n}"}, f"c{n}") for n in range(2 * limit)
     ]
@@ -505,6 +512,87 @@ async def test_two_questions_answered_one_at_a_time_end_with_the_other_still_ope
     assert tool_results(model.calls[1]) == [("c1", OPTIONS[0]), ("c2", PARTIES[0])]
 
 
+# An id in the form of LangGraph's interrupt ids (32 hex digits) that no question has.
+UNKNOWN_ID = "0123456789abcdef" * 2
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "more",
+    [[], [{"interruptId": UNKNOWN_ID, "status": "resolved", "payload": PARTIES[1]}]],
+    ids=["alone", "with an answer to no question"],
+)
+async def test_the_first_answer_sent_again_leaves_the_other_question_waiting(
+    more: list[dict[str, Any]],
+) -> None:
+    app, model = app_with([two_questions(), final_answer("Tre månader [1].", [GOOD], call_id="c3")])
+
+    async with client_of(app) as client:
+        first = await post(client, run_input("r1", QUESTION))
+        asked = open_questions(first)
+        history = of_type(first, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        which = [{"interruptId": asked[WHICH], "status": "resolved", "payload": OPTIONS[0]}]
+        second = await post(client, run_input("r2", history, resume=which))
+        history = of_type(second, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        again = await post(client, run_input("r3", history, resume=[*which, *more]))
+        calls_after_again = len(model.calls)
+        who = [{"interruptId": asked[WHO], "status": "resolved", "payload": PARTIES[0]}]
+        third = await post(client, run_input("r4", history, resume=who))
+
+    # One question waits, and the library would give it the first answer (alone) or its own
+    # map (with more). No answer is the waiting question's, so it comes back, as it was.
+    assert of_type(again, "RUN_ERROR") == []
+    assert again[-1]["type"] == "RUN_FINISHED"
+    assert open_questions(again) == {WHO: asked[WHO]}
+    assert calls_after_again == 1
+    assert of_type(third, "RUN_ERROR") == []
+    assert of_type(third, "STATE_SNAPSHOT")[-1]["snapshot"]["answer"]["status"] == "verified"
+    assert tool_results(model.calls[1]) == [("c1", OPTIONS[0]), ("c2", PARTIES[0])]
+
+
+@pytest.mark.anyio
+async def test_both_answers_sent_after_the_first_resume_the_other_question_with_its_own() -> None:
+    app, model = app_with([two_questions(), final_answer("Tre månader [1].", [GOOD], call_id="c3")])
+
+    async with client_of(app) as client:
+        first = await post(client, run_input("r1", QUESTION))
+        asked = open_questions(first)
+        history = of_type(first, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        which = [{"interruptId": asked[WHICH], "status": "resolved", "payload": OPTIONS[0]}]
+        second = await post(client, run_input("r2", history, resume=which))
+        history = of_type(second, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        who = [{"interruptId": asked[WHO], "status": "resolved", "payload": PARTIES[0]}]
+        third = await post(client, run_input("r3", history, resume=[*which, *who]))
+
+    # The library would send both as its own map, and ask_user would read that map as text.
+    assert of_type(third, "RUN_ERROR") == []
+    assert "outcome" not in third[-1]
+    assert of_type(third, "STATE_SNAPSHOT")[-1]["snapshot"]["answer"]["status"] == "verified"
+    assert tool_results(model.calls[1]) == [("c1", OPTIONS[0]), ("c2", PARTIES[0])]
+
+
+@pytest.mark.anyio
+async def test_one_answer_with_an_id_not_in_langgraphs_form_answers_the_waiting_question() -> None:
+    # The library's way for one waiting question and one answer, which a client that does not
+    # send LangGraph's ids relies on; only an id in that form can name another question.
+    app, model = app_with(
+        [
+            tool_call("ask_user", {"question": WHICH, "options": OPTIONS}, "c1"),
+            final_answer("Tre månader [1].", [GOOD], call_id="c2"),
+        ]
+    )
+
+    async with client_of(app) as client:
+        first = await post(client, run_input("r1", QUESTION))
+        history = of_type(first, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        resume = [{"interruptId": "fråga-1", "status": "resolved", "payload": OPTIONS[0]}]
+        second = await post(client, run_input("r2", history, resume=resume))
+
+    assert of_type(second, "RUN_ERROR") == []
+    assert of_type(second, "STATE_SNAPSHOT")[-1]["snapshot"]["answer"]["status"] == "verified"
+    assert tool_results(model.calls[1]) == [("c1", OPTIONS[0])]
+
+
 @pytest.mark.anyio
 async def test_one_of_two_questions_cancelled_reaches_the_model_as_not_answered() -> None:
     app, model = app_with([two_questions(), final_answer("Tre månader [1].", [GOOD], call_id="c3")])
@@ -528,7 +616,7 @@ async def test_one_of_two_questions_cancelled_reaches_the_model_as_not_answered(
 @pytest.mark.parametrize(
     "stale",
     [
-        "0123456789abcdef" * 2,  # an interrupt id's form: LangGraph would pass it over itself
+        UNKNOWN_ID,  # an interrupt id's form: LangGraph would pass it over itself
         "fråga-1",  # any other: LangGraph would refuse the whole map
     ],
     ids=["an id no question has", "not an interrupt id"],

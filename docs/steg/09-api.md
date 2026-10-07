@@ -158,7 +158,21 @@ blev körningen `RUN_ERROR`, och ett nytt meddelande gav samma frågor igen, så
 vidare. När fler än ett avbrott väntar skickar `AvtalAguiAgent` därför svaren per avbrotts-id, som
 terminalen gör. Svarar klienten bara på den ena frågan kommer den andra tillbaka som körningens
 enda avbrott, en avbruten fråga når modellen som "Användaren svarade inte på frågan", och ett svar
-på en fråga som inte väntar tas bort. Med ett avbrott går allt som förut.
+på en fråga som inte väntar tas bort.
+
+När ett avbrott väntar läser adaptern inga id: ett ensamt svar går till frågan som väntar, och
+flera svar skickas i adapterns egen form, som `ask_user` läser som text. Skickade klienten svaret
+på den första frågan igen skulle det alltså besvara den andra, och skickade den båda svaren igen
+skulle den andra frågan få adapterns ordbok som svar. Med ett avbrott som väntar gäller därför:
+
+- flera svar: bara svaret med avbrottets id går vidare, ensamt och på adapterns sätt; finns inget
+  sådant svar återupptas ingenting;
+- ett svar med ett annat id i LangGraphs form (32 hexadecimala tecken), till exempel svaret på den
+  första frågan igen: det tas bort, och ingenting återupptas;
+- ett svar med avbrottets id, eller med ett id som inte har LangGraphs form: adapterns sätt, som
+  för en vanlig fråga.
+
+När ingenting återupptas slutar körningen med samma fråga igen, utan `RUN_ERROR`.
 
 ### 2. `api/documents.py` – PDF-routen
 
@@ -217,7 +231,7 @@ gång fäller jobbet i stället för att låta det vänta i timmar.
 
 | Fil | Antal | Vad den visar |
 |---|---|---|
-| `tests/unit/api/test_api_agui.py` | 23 | Hela appen genom httpx: en fråga strömmar stegen och slutar med det kontrollerade svaret, med `null` i fälten som saknas; en fråga med nio modellanrop (fler än 25 steg) går till svar; en modell som aldrig lämnar svar stoppas efter `AGENT_MODEL_CALL_LIMIT` modellanrop med `RUN_FINISHED` och `no_answer`; med spårning blir den en spårning i trådens session och går fortfarande till svar; varje ögonblicksbild är bara `answer`, först `null`; inga `RAW`-händelser; `ask_user` slutar med utfallet och utan `CUSTOM`; svaret återupptar körningen till ett kontrollerat svar, och historiken från klienten ger varje verktygsanrop exakt ett svar; två `ask_user`-frågor samtidigt: båda svaren på en gång går till ett kontrollerat svar, ett svar i taget ger den andra frågan tillbaka som körningens avbrott, en avbruten fråga når modellen som "svarade inte", och ett svar på en fråga som inte väntar tas bort; en ny fråga medan `ask_user` väntar skickar samma fråga igen utan att köra grafen; ett fel ger den fasta texten utan lösenordet och loggas; efter ett verktygsanrop som misslyckades besvaras nästa fråga i tråden; en session som bryts mitt i körningen avslutar strömmen med `RUN_ERROR`; varje körning har en egen session som stängs; en session som inte går att öppna fäller bara sin körning; en felaktig kropp ger 422; hälsokontrollerna; en klient kan inte skriva `answer` eller kontrollens tillstånd |
+| `tests/unit/api/test_api_agui.py` | 27 | Hela appen genom httpx: en fråga strömmar stegen och slutar med det kontrollerade svaret, med `null` i fälten som saknas; en fråga med nio modellanrop (fler än 25 steg) går till svar; en modell som aldrig lämnar svar stoppas efter `AGENT_MODEL_CALL_LIMIT` modellanrop med `RUN_FINISHED` och `no_answer`; med spårning blir den en spårning i trådens session och går fortfarande till svar; varje ögonblicksbild är bara `answer`, först `null`; inga `RAW`-händelser; `ask_user` slutar med utfallet och utan `CUSTOM`; svaret återupptar körningen till ett kontrollerat svar, och historiken från klienten ger varje verktygsanrop exakt ett svar; två `ask_user`-frågor samtidigt: båda svaren på en gång går till ett kontrollerat svar, ett svar i taget ger den andra frågan tillbaka som körningens avbrott, en avbruten fråga når modellen som "svarade inte", och ett svar på en fråga som inte väntar tas bort; när den ena av två frågor är besvarad ger det första svaret igen (ensamt eller med ett svar på ingen fråga) den andra frågan tillbaka utan `RUN_ERROR`, och båda svaren igen ger den andra frågan sitt eget svar; ett ensamt svar med ett id utan LangGraphs form går till frågan som väntar; en ny fråga medan `ask_user` väntar skickar samma fråga igen utan att köra grafen; ett fel ger den fasta texten utan lösenordet och loggas; efter ett verktygsanrop som misslyckades besvaras nästa fråga i tråden; en session som bryts mitt i körningen avslutar strömmen med `RUN_ERROR`; varje körning har en egen session som stängs; en session som inte går att öppna fäller bara sin körning; en felaktig kropp ger 422; hälsokontrollerna; en klient kan inte skriva `answer` eller kontrollens tillstånd |
 | `tests/unit/api/test_api_documents.py` | 9 | PDF:en inline med rätt typ; 404 för ett dokument som inte visas, för en Word-fil och för en fil som saknas på disken (loggad); 503 med fast text när databasen inte svarar; en felaktig hash stoppas innan något slås upp |
 | `tests/unit/api/test_api_app.py` | 10 | Livscykeln frågar avtal-mcp, öppnar checkpointern och PDF-routens motor och stänger dem i omvänd ordning; utan nyckel öppnas inget; en avtal-mcp som inte svarar stoppar starten; en del som inte går att öppna stänger dem som redan är öppna; en checkpointer som inte går att öppna stoppar starten; routerna finns före starten; motorn är läsande och stängs; `main` med adress och loggning; loggen visar aldrig nyckeln eller lösenordet, inte heller i en traceback |
 | `tests/unit/test_config.py` | 5 nya | `API_HOST` och `API_PORT`, porten inom gränserna, `redact` för nyckeln och lösenordet i adress, kodat och inom citattecken |
@@ -226,7 +240,7 @@ gång fäller jobbet i stället för att låta det vänta i timmar.
 | `tests/unit/agent/test_checkpointer.py` | 1 ändrat | Postgres-grenen med en ersättare för poolen: adressen, poolens inställningar, en `setup()` och att poolen stängs |
 | `tests/integration/test_api_document_lookup.py` | 5 | Uppslaget mot Postgres på M5:s testkorpus: en indexerad fil hittas med sin sökväg, också med ett avsnitt i karantän; en okänd hash och en fil i karantän hittas inte; en Word-fil kommer tillbaka som Word |
 
-43 nya enhetstester och 5 integrationstester. Inget test anropar språkmodellen.
+57 nya enhetstester och 5 integrationstester. Inget test anropar språkmodellen.
 
 ## Kända begränsningar
 
