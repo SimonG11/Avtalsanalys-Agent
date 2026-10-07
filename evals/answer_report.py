@@ -586,13 +586,14 @@ def _md_method(report: AnswerReport) -> list[str]:
     if summarize_asks(report.results) is not None:
         lines.append(
             "- **Motfrågor:** för en fråga där testsamlingen säger att agenten ska fråga "
-            "användaren (för att frågan passar flera avtal eller delområden med olika svar) "
-            "räknas en motfråga som rätt bara när en domare (samma modell och nivå som för "
-            "svaren) finner att den låter användaren välja mellan de väntade alternativen. För "
-            "en fråga där svaret är detsamma i alla alternativ är det rätt att inte fråga, och "
-            "en motfråga räknas som onödig. Svaret bedöms mot facit som förut, med "
-            "förtydligandet när agenten frågade, och mot frågan som den ställdes när agenten "
-            "inte frågade."
+            "användaren (för att fallen är för många för ett svar, eller för att svaret beror "
+            "på uppgifter om användarens eget fall) räknas en motfråga som rätt bara när en "
+            "domare (samma modell och nivå som för svaren) finner att den låter användaren "
+            "välja mellan de väntade alternativen. För en fråga där svaret är detsamma i alla "
+            "alternativ, eller där fallen är få och korta och svaret ska ta upp vart och ett, "
+            "är det rätt att inte fråga, och en motfråga räknas som onödig. Svaret bedöms mot "
+            "facit som förut, med förtydligandet när agenten frågade, och mot frågan som den "
+            "ställdes när agenten inte frågade."
         )
     return [*lines, ""]
 

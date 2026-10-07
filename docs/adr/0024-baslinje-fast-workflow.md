@@ -103,8 +103,9 @@ påstående, inte ett mätt resultat.
    fel svar mot ett facit som bygger på ett förtydligande svaret aldrig fick. En andra domare (samma
    modell och nivå) avgör om motfrågan låter användaren välja mellan de väntade alternativen, och en
    motfråga räknas som rätt bara då. För en kontrollfråga är det rätt att inte fråga, och en
-   motfråga räknas som onödig. Rapporten får avsnittet Motfrågor. Baslinjen kan inte fråga och får 0
-   av de frågor där den borde.
+   motfråga räknas som onödig. Detsamma gäller en fråga med få fall och korta svar, där agenten
+   enligt den nya regel 4 (PR #34) ska svara för vart och ett och facit täcker alla fall.
+   Rapporten får avsnittet Motfrågor. Baslinjen kan inte fråga och får 0 av de frågor där den borde.
 7. **Jämförelsen körs mot ersättaren för avtal-mcp** tills den riktiga databasen finns där
    mätningen körs. Rapporten säger vilken avtal-mcp den mätte, som förut.
 

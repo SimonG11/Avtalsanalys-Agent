@@ -41,8 +41,9 @@ _log = logging.getLogger(__name__)
 
 ASK_JUDGE_PROMPT = """\
 Du bedömer en motfråga från avtalsagenten, som svarar avropare på frågor om Statens \
-inköpscentrals ramavtal. Frågan passar flera avtal eller delområden med olika svar, så \
-agenten ska fråga användaren vilket som gäller innan den svarar.
+inköpscentrals ramavtal. Frågan passar flera avtal, delområden eller fall med olika svar, \
+eller svaret beror på uppgifter om användarens eget fall. Agenten ska därför fråga användaren \
+vilket som gäller innan den svarar.
 
 Du får användarens fråga, de alternativ som en bra motfråga ska låta användaren välja \
 mellan, och agentens motfråga med de alternativ den gav (en eller flera motfrågor).
@@ -52,7 +53,9 @@ Så bedömer du
 alternativen som gäller: varje väntat alternativ går att välja, eller att ange med ett \
 svar på frågan, och inget av agentens alternativ blandar ihop två väntade alternativ som \
 har olika svar. Andra ord, en annan ordning, fler eller finare alternativ och ett \
-alternativ för "annat" går bra.
+alternativ för "annat" går bra. Är de väntade alternativen fler än fem räcker det att \
+motfrågan frågar efter det som avgör svaret och låter användaren ange sitt fall, till exempel \
+med ett alternativ för "annat", eftersom agenten kan ge högst fem alternativ.
 2. separates = false när motfrågan saknar ett väntat alternativ som användaren kan behöva, \
 slår ihop väntade alternativ, frågar om något annat än det som skiljer alternativen åt, \
 eller inte ger användaren något att välja mellan och inte heller frågar efter det som \

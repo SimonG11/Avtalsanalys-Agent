@@ -745,6 +745,17 @@ def test_the_asks_section_shows_each_question_that_says_whether_to_ask() -> None
     assert "- **a05** (ska svara utan att fråga" in markdown
     assert "med frågans förtydligande när testsamlingen har ett" in markdown
     assert "- **Motfrågor:** för en fråga där testsamlingen säger" in markdown
+    # The method follows the prompt's rule 4: ask when the cases are too many or depend on the
+    # user's own case; answer each case when they are few and short.
+    assert (
+        "(för att fallen är för många för ett svar, eller för att svaret beror på uppgifter om "
+        "användarens eget fall)"
+    ) in markdown
+    assert (
+        "För en fråga där svaret är detsamma i alla alternativ, eller där fallen är få och "
+        "korta och svaret ska ta upp vart och ett, är det rätt att inte fråga, och en motfråga "
+        "räknas som onödig."
+    ) in markdown
 
 
 def test_a_report_without_ask_questions_has_no_asks_section() -> None:

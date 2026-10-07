@@ -373,7 +373,19 @@ En provkörning 2026-10-07 mot ersättaren för avtal-mcp: baslinjen på q01 ble
 kontrollerad på 30 sekunder med två modellanrop; agenten på den oklara frågan a01 frågade om
 uppdraget är högst eller över 1 000 timmar (domaren: skiljer alternativen åt), fick
 förtydligandet och svarade rätt; baslinjen på a01 svarade fel. Utkastet med de oklara frågorna
-är inte godkänt och ligger inte i repot.
+(v1) är inte godkänt och ligger inte i repot.
+
+**Oklara frågor v2 (2026-10-07).** Den omskrivna testsamlingen ligger i
+`evals/datasets/ambiguous_sv.jsonl`, med tre grupper: två frågor där agenten ska fråga (a08 och
+a09), tre där den ska svara för varje fall (a01, a02 och a04) och tre kontroller där svaret är
+detsamma överallt (a05, a06 och a07). Frågan a03 är struken, eftersom den ligger på gränsen mellan
+få fall och för många. Frågorna är skrivna för den nya regel 4, så mätningen av den kräver både
+den här grenen och PR #34 (regel 4 och `ask_user` med 2–5 alternativ); den här grenen ensam mäter
+den gamla regeln. Frågedomarens prompt och rapportens metodtext följer den nya regeln. Filen är
+ett utkast som väntar på Simons godkännande. Kör
+`uv run python -m evals.run_answer_eval --gold evals/datasets/ambiguous_sv.jsonl`, med
+`--mode workflow` för baslinjen, och gärna med `--label oklara`, eftersom rapportens namn inte
+säger vilken testsamling den mätte.
 
 ### Resultat: agenten mot baslinjen
 
@@ -494,9 +506,9 @@ Rapporterna (fyra körningar och tre jämförelser) ligger utanför repot, efter
 | Fil | Tester | Vad |
 |---|---:|---|
 | `tests/unit/evals/test_workflow_baseline.py` | 23 | De fasta stegen i ordning med sina argument, sparade som steg (en ändring märkt som ändring); läsningen av frågan räknas som modellanrop, mot gränsen, och dess tokens når körningens räknare; modellen erbjuds bara `FinalAnswer`; kontrollen skickar tillbaka ett dåligt utkast; ett verktygsfel (också ett verktyg som saknas) stoppar inte flödet; en plan som inte går att läsa ger en sökning på frågan utan filter; registrets enda upphandling eller avtal begränsar sökningen (också när avtalsnumret är tomt, och två upphandlingar gör det inte); registret läst sida för sida upp till taket; ett vägrat delområde och avtalsnummer tas bort och stegen går vidare; sökfrågor kortas och en för kort blir frågan; en krasch i ett senare steg behåller stegen före och läsningens modellanrop; prompten delar agentens regler ordagrant och går inte att bygga om agentens prompt ändras (också en ny regel 7); planens områden täcker testsamlingens |
-| `tests/unit/evals/test_ask_judge.py` | 6 | Motfrågans domare: frågan, de väntade alternativen och agentens motfrågor med alternativ, att ingen text kan avsluta sitt element, det strikta schemat, ett lyckat och två misslyckade anrop |
+| `tests/unit/evals/test_ask_judge.py` | 7 | Motfrågans domare: prompten följer regel 4 och högst fem alternativ, frågan, de väntade alternativen och agentens motfrågor med alternativ, att ingen text kan avsluta sitt element, det strikta schemat, ett lyckat och två misslyckade anrop |
 | `tests/unit/evals/test_compare_answer_runs.py` | 9 | Två rapporter sida vid sida (domaren, samma inställningar, för få frågor för ett intervall), den parade skillnaden över frågor som bedömts i båda, en fråga utan svar som räknas som fel (och ett intervall över tolv frågor) men inte i två rapporter utan domare, olika testsamlingar, frågor, domare (också domarnas prompter) och avtal-mcp vägras, inställningar som skiljer sig listas, kommandoraden, motfrågornas tal (också ej bedömda, och baslinjens rad bara när en körning är baslinjen) och en rapport från före läget |
-| `tests/unit/evals/test_gold.py` | 13 nya (63) | Fälten för motfrågor: utan dem som förut, giltiga, och tio sätt att ange dem fel |
+| `tests/unit/evals/test_gold.py` | 14 nya (64) | Fälten för motfrågor: utan dem som förut, giltiga, och tio sätt att ange dem fel; `ambiguous_sv.jsonl` med två frågor där agenten ska fråga och sex där den inte ska |
 
 Ändrade filer har fått tester i tabellen ovan (talen där gäller nu).
 
@@ -508,7 +520,7 @@ Rapporterna (fyra körningar och tre jämförelser) ligger utanför repot, efter
   just det jämförelsen ska visa värdet av.
 - **Ersättaren.** Jämförelsen är körd mot ersättaren för avtal-mcp; den bör köras om mot den
   riktiga databasen innan den visas.
-- **Motfrågornas domare är en modell**, och med fyra frågor där agenten ska fråga är talet grovt.
+- **Motfrågornas domare är en modell**, och med två frågor där agenten ska fråga är talet grovt.
 - **En körning per fråga och läge.** Intervallet tar hänsyn till antalet frågor, inte till att
   svaren varierar mellan körningar. Enskilda frågor skiftade mellan `low` och `medium`: q01, q18,
   q26 och q29 för baslinjen, och q06 för agenten (fel i alla fyra körningarna på `low`, tre i M11
