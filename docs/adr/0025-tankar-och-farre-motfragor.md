@@ -94,7 +94,8 @@ thought". Webbappens del står i `webbapp-kontrakt.md`, punkterna 29-32.
   fråga och tre gånger för fråga 1, med `low` och med `medium`: 16 körningar. Alla gav rätt fakta
   mot facit och statusen Verifierat, utom q27 med `medium`, som blev Inget svar med "framgår inte"
   (godtaget i demot). Tiderna räknar inte med tiden för att svara på en fråga. Körningarna med
-  `low` och `medium` gick samtidigt, så en tid kan vara några sekunder för lång.
+  `low` och `medium` gick samtidigt, med varandra och med mätningen av de 30 testfrågorna mot
+  samma ersättare, så en tid kan vara några sekunder för lång.
 
   | | `low` | `medium` |
   |---|---|---|
@@ -130,18 +131,19 @@ thought". Webbappens del står i `webbapp-kontrakt.md`, punkterna 29-32.
 - **Demots fråga 1 frågar fortfarande oftast.** Ett prov av bara steget efter den första
   sökningen, med låtsade sökträffar, frågade med den nya prompten 1 av 3 gånger. Hela körningarna
   ovan frågade i 3 av 3 med `low` och i 2 av 3 med `medium`, efter den första sökningen eller
-  sökningarna och innan agenten läst något avsnitt. Med `low` var frågan densamma varje gång
-  ("Menar du uppsägning av ert avropade kontrakt eller av själva ramavtalet, och vem ska säga upp
-  det?"), och det första alternativet, att säga upp det egna kontraktet utan särskilt skäl, är
-  demots val. En tanke säger varför: "too many options, possibly five variants". Modellen räknar
-  ramavtalet som ett eget fall, i två delområden, och då är fallen för många enligt regel 4. Den
-  körning med `medium` som inte frågade svarade för alla tre fallen (6.21.7, 6.21.8 och 6.21.9),
-  rätt och med sex kontrollerade citat, men slutade svaret med en fråga i texten ("Menar du ert
-  avropade kontrakt eller själva ramavtalet …?") i stället för `ask_user`, så webbappen visar inga
-  knappar för den. Ska fråga 1 besvaras direkt behöver prompten eller frågan ändras, till exempel
-  så att agenten utgår från det avropade kontraktet när frågan inte nämner ramavtalet; det är inte
-  beslutat här. `docs/demo.md` och README:n beskriver nu fråga 1 som en fråga där agenten frågar
-  med alternativ. De 30 testfrågorna är inte körda om med den nya regeln.
+  sökningarna och innan agenten läst något avsnitt. Med `low` var frågan nästan ordagrant
+  densamma varje gång ("Menar du uppsägning av ert avropade kontrakt eller av själva ramavtalet,
+  och vem ska säga upp det?"), och det första alternativet, att säga upp det egna kontraktet utan
+  särskilt skäl, är demots val. En tanke säger varför: "too many options, possibly five variants".
+  Modellen räknar ramavtalet som ett eget fall, i två delområden, och då är fallen för många
+  enligt regel 4. Den körning med `medium` som inte frågade svarade för alla tre fallen (6.21.7,
+  6.21.8 och 6.21.9), rätt och med sex kontrollerade citat, men slutade svaret med en fråga i
+  texten ("Menar du ert avropade kontrakt eller själva ramavtalet …?") i stället för `ask_user`,
+  så webbappen visar inga knappar för den. Ska fråga 1 besvaras direkt behöver prompten eller
+  frågan ändras, till exempel så att agenten utgår från det avropade kontraktet när frågan inte
+  nämner ramavtalet; det är inte beslutat här. `docs/demo.md` och README:n beskriver nu fråga 1
+  som en fråga där agenten frågar med alternativ. De 30 testfrågorna kördes om samma dag med den
+  nya regeln mot ersättaren, och agenten frågade i 0 av 30 med både `low` och `medium`.
 - **Ett återupptaget `ask_user` strömmas två gånger.** När frågan är besvarad skickar den
   återupptagna körningen `TOOL_CALL_START` och `TOOL_CALL_ARGS` för samma `ask_user`-anrop igen,
   med samma `toolCallId`, före `TOOL_CALL_RESULT`. Webbappen behöver slå ihop stegen på id för att

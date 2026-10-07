@@ -1,6 +1,6 @@
 # Demoskript
 
-Fem frågor som visar vad agenten gör: den frågar med alternativ när frågan passar för många fall,
+Fem frågor som visar vad agenten gör: den frågar med alternativ när fallen är för många,
 väljer registret i stället för dokumenten, följer hänvisningar i flera steg, hittar en rättelse
 som ersätter klausulen och säger "framgår inte" i stället för att gissa. Fråga 3 och 4 visar det
 som ett fast workflow inte klarar, eftersom nästa steg beror på vad agenten just har läst. Fyra
@@ -21,7 +21,7 @@ och webbappen från PR #23. Hämta `main` före demot. Beslutet bakom urvalet st
 
 | # | Fråga | Visar | Status | Tid i webbappen | Tid i terminalen |
 |---|---|---|---|---|---|
-| 1 | Uppsägningstiden i IT-drift | Agenten frågar med alternativ när fallen är för många | Verifierat | 37–46 s utan din tid att svara, mot ersättaren | – |
+| 1 | Uppsägningstiden i IT-drift | Agenten frågar med alternativ när fallen är för många | Verifierat | 37–46 s genom API:t mot ersättaren, utan din tid att svara | – |
 | 2 | q10 Nordlo Advance | Registret i stället för dokumenten | Verifierat | 12–14 s | 19 s |
 | 3 | q14 Lördagsarbete | Flera steg genom hänvisningar | Verifierat | 39–62 s | 50 s |
 | 4 | q21 Antal anbud | En rättelse ersätter klausulen | Verifierat | 32–45 s | 36 s |
@@ -30,14 +30,13 @@ och webbappen från PR #23. Hämta `main` före demot. Beslutet bakom urvalet st
 
 Tiderna för fråga 2–5 och reservfrågan kommer från körningarna mot den riktiga databasen, två i
 webbappen (q14 tre) och en i terminalen; terminalens tider räknar med att programmet startar.
-Fråga 1 ändrades med den nya regel 4 i systemprompten
+Fråga 1 besvaras annorlunda med den nya regel 4 i systemprompten
 ([ADR 0025](adr/0025-tankar-och-farre-motfragor.md)). Dess tid kommer från tre körningar genom
 API:t (`POST /agui`) med `low` 2026-10-07 mot en tillfällig ersättare för avtal-mcp med pilotens
 data, inte mot databasen, och räknar inte med tiden du tar på dig att svara. Den är inte körd om i
-terminalen. Räkna med upp till en minut per
-fråga. En fråga kan ta längre tid om
-kontrollen skickar tillbaka ett utkast, och svaret kan formuleras olika mellan körningar.
-Fakta och källor ska vara desamma.
+terminalen. Räkna med upp till en minut per fråga. En fråga kan ta längre tid om kontrollen
+skickar tillbaka ett utkast, och svaret kan formuleras olika mellan körningar. Fakta och källor
+ska vara desamma.
 
 Ställ frågorna i en ny flik var för sig (uppdatera sidan mellan frågorna), så att agenten inte
 läser in en tidigare fråga i nästa.
@@ -72,13 +71,13 @@ En halvtimme före:
 som säger upp och vad som sägs upp: ert avropade kontrakt eller själva ramavtalet, i två
 delområden. Regel 4 i systemprompten säger att den ska svara för varje fall när fallen är få och
 svaren korta, och annars fråga med 2–5 alternativ. Här räknar den fallen som för många och frågar
-(`ask_user`) efter den första sökningen, 8–13 sekunder in och innan den har läst något avsnitt.
+(`ask_user`) efter de första sökningarna, 8–13 sekunder in och innan den har läst något avsnitt.
 Webbappen visar frågan i chatten med en knapp per alternativ och ett fält för eget svar. Mot
 ersättaren 2026-10-07 frågade den i alla tre körningarna med `low`, som demot kör med, och varje
-gång likadant: "Menar du uppsägning av ert avropade kontrakt eller av själva ramavtalet, och vem
-ska säga upp det?" Alternativen var fyra: "Vi vill säga upp vårt kontrakt utan särskilt skäl",
-samma uppsägning på grund av leverantörens avtalsbrott, "Leverantören vill säga upp vårt
-kontrakt" och "Uppsägning av själva ramavtalet".
+gång nästan ordagrant likadant: "Menar du uppsägning av ert avropade kontrakt eller av själva
+ramavtalet, och vem ska säga upp det?" Alternativen var fyra: "Vi vill säga upp vårt kontrakt
+utan särskilt skäl", samma uppsägning på grund av leverantörens avtalsbrott, "Leverantören vill
+säga upp vårt kontrakt" och "Uppsägning av själva ramavtalet".
 
 **Välj:** "Vi vill säga upp vårt kontrakt utan särskilt skäl", det första alternativet. Är
 alternativen formulerade annorlunda, välj det om er egen uppsägning av det avropade kontraktet
@@ -92,10 +91,11 @@ och svar.
 - Stegen ovanför svaret: varje verktyg agenten valde, med argumenten. När svaret har kommit är
   de ihopfällda till raden "Arbetade i … s · N steg"; klicka på den. "Visa svaret från
   verktyget" visar vad den fick tillbaka.
-- Agentens tankar, om de kommer: raden "Tänker …" och sedan "Tänkte efter" i tidslinjen, med
-  OpenAI:s sammanfattning av modellens resonemang. Etiketten är svensk och texten engelsk. Med
-  `low` kom en tanke i 1 av 8 demokörningar mot ersättaren (1 av 47 modellanrop), i fråga 1, så
-  lova den inte.
+- Agentens tankar, om de kommer: en egen rad i tidslinjen med OpenAI:s sammanfattning av
+  modellens resonemang, under sammanfattningens rubrik i fetstil. Rubriken och texten är på
+  engelska. "Tänker …" överst i tidslinjen säger bara att modellen arbetar, inte att en tanke
+  kommer. Med `low` kom en tanke i 1 av 8 demokörningar mot ersättaren (1 av 47 modellanrop), i
+  fråga 1, så lova den inte.
 - Statusen "Verifierat" och citatet i källkortet under svaret. Källpanelen med PDF-sidan visar du
   hellre i fråga 3 (se "Om det går fel" nedan).
 

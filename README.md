@@ -66,7 +66,8 @@ ofta läsa flera dokument i en ordning som beror på vad det första dokumentet 
 
 Ett workflow passar när stegen är kända i förväg. Frågorna här behöver en agent, eftersom antalet
 steg och deras ordning beror på vad som står i dokumenten. Exempel ur demot, alla körda mot den
-riktiga databasen (q-numren är frågor i testsamlingen):
+riktiga databasen och fråga 1 med den nya regel 4 också mot en ersättare för avtal-mcp (q-numren
+är frågor i testsamlingen):
 
 - **Hänvisningar i flera steg (q14):** "Vår inhyrda IT-tekniker, avropad genom rangordning, behöver
   jobba en lördag. Vad får bemanningsföretaget ta betalt för de timmarna?" Svaret finns i punkt
@@ -84,8 +85,9 @@ riktiga databasen (q-numren är frågor i testsamlingen):
   fallen är få och svaren korta, och frågar annars med två till fem alternativ. Här räknar den
   fallen som för många: mot ersättaren för avtal-mcp frågade den i alla tre körningarna med
   resonemangsnivån `low` och i två av tre med `medium`
-  ([ADR 0025](docs/adr/0025-tankar-och-farre-motfragor.md)). I mätningen av de 30 testfrågorna,
-  med den tidigare regeln, frågade den aldrig, vilket är rätt för tydliga frågor.
+  ([ADR 0025](docs/adr/0025-tankar-och-farre-motfragor.md)). I mätningen av de 30 testfrågorna
+  frågade den aldrig, varken med den tidigare regeln mot databasen eller med den nya mot
+  ersättaren, vilket är rätt för tydliga frågor.
 - **Inget svar (q27):** vilket bemanningsföretag som är rangordnat etta står inte i dokumenten.
   Agenten säger att det inte framgår i stället för att gissa.
 
