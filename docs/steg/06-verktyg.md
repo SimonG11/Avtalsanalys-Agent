@@ -16,7 +16,8 @@ stdio och listar verktygen. En egen container i Docker Compose och ett prov med 
 Verktygen heter som i kontraktet med webbappen (`webbapp-kontrakt.md`), inte som i
 arkitekturplanen: `sok_dokument` heter `search_documents`, `las_avsnitt` `read_section`,
 `visa_innehall` `get_outline`, `folj_hanvisning` `resolve_reference`, `lista_dokument`
-`list_documents` och `sok_register` `search_register`. `find_amendments` och `calculate_date`
+`list_documents` och `sok_register` `search_register`. `berakna_datum` heter `calculate_date`
+och kom efter M8 ([ADR 0016](../adr/0016-datumrakning.md), avsnitt 8b nedan); `find_amendments`
 kommer senare, och `ask_user` ligger i agentens graf (M7).
 
 | Verktyg | Argument (? = valfritt) | Svar |
@@ -27,6 +28,7 @@ kommer senare, och `ask_user` ligger i agentens graf (M7).
 | `resolve_reference` | `sha256`, `section_number?`, `section_position?`, `reference?` | Avsnittets citatfält och dess hänvisningar, eller bara de vars text innehåller `reference`: text, slag, status och de mål som får visas (avsnitt eller hel fil), och hur många mål som hålls tillbaka |
 | `list_documents` | `framework_area?`, `agreement_number?`, `document_type?` (minst ett), `limit` (50, högst 200) | `documents`: filerna i filtret med sha256, titel, typ, avtalssidor, ramavtalsområden, avtalsnummer, versionsdatum och antalet avsnitt som `get_outline` visar; avtalets dokument först, sedan upphandlingens och sist stöd för avrop; `total` räknar alla träffar |
 | `search_register` | `supplier?`, `agreement_number?`, `framework_area?`, `sub_area?`, `org_number?` (minst ett), `valid_on?`, `limit` (20, högst 20), `offset` (0) | `rows`: ett avtal i ett delområde per rad, med avtals- och upphandlingsnummer, leverantör, organisationsnummer, leverantörens tidigare namn (`former_names`), ramavtalsområde, delområde och datumen från, till och längsta förlängning; `total` räknar alla rader, och med `offset` bläddrar modellen vidare |
+| `calculate_date` (efter M8) | `start`, `amount` (1–3650), `unit` (`days`, `working_days`, `weeks`, `months`, `years`), `direction` (`after`, `before`), `include_start` (false) | `result` och dess veckodag, `step` (uträkningen att skriva i svaret, t.ex. "2027-02-17 minus 3 månader = 2026-11-17"), `skipped` (helgdagar på vardagar som inte räknades som arbetsdagar) och `notes` (en månad utan startdagens dag, ett resultat på en helg, en afton som skulle ändra datumet) |
 
 **Citatfälten** finns på varje avsnitt som ett verktyg ger: `sha256`, `file_title`,
 `document_type`, `page_titles` (avtalssidorna som länkar till filen), `section_position`,
@@ -221,6 +223,33 @@ Filtret ersätter inte bläddrandet: "IT-tjänster / Övre Norrland" ryms på en
 men regionen i hela Bemanningstjänster är 28 rader och ett län i Konferenser och möten flera
 hundra. Prompten säger därför åt agenten att hämta sidor tills den har läst `total` rader.
 
+### 8b. `tools/calculate_date.py` och `domain/dates.py` (efter M8)
+
+`calculate_date` flyttar ett startdatum ett antal dagar, arbetsdagar, veckor, månader eller år
+framåt eller bakåt och skriver uträkningen som en rad (`step`). Verktyget läser ingen databas,
+så det tar ingen `session`, och `_with_session` anropar det utan att öppna någon. Räknandet ligger
+i `domain/dates.py`, som registerregeln också använder (steg 8): regeln räknar om steget som
+svaret skriver i stället för att lita på verktygets svar i historiken.
+
+- **Arbetsdagar** är måndag–fredag utom de allmänna helgdagarna enligt lagen (1989:253):
+  nyårsdagen, trettondedag jul, långfredagen, påskdagen, annandag påsk, första maj, Kristi
+  himmelsfärdsdag, pingstdagen, nationaldagen, midsommardagen, alla helgons dag, juldagen och
+  annandag jul. Påsk räknas ut med Meeus/Jones/Butchers algoritm. Startdagen räknas inte.
+  Exempel: 2026-10-07 plus 90 arbetsdagar är 2027-02-15, förbi juldagen, nyårsdagen och
+  trettondedag jul, som står i `skipped`.
+- **Aftnarna** (midsommarafton, julafton, nyårsafton) räknas som arbetsdagar, som avtalens
+  "helgfri" läst ordagrant. Ändrar det datumet säger en not vilket datum det blir om de räknas som
+  helgdagar: 2026-12-28 minus 10 arbetsdagar är 2026-12-11, eller 2026-12-10 utan julafton.
+- **Månader** behåller dagen, eller tar månadens sista dag: 2026-01-31 plus 1 månad är
+  2026-02-28, med en not. Ett år är tolv månader.
+- **`include_start`** för en period där startdagen ingår: "2024-11-14 plus 48 månader =
+  2028-11-14, minus 1 dag = 2028-11-13", som registrets slutdatum. Gäller inte arbetsdagar.
+- **Ett resultat på en helg eller helgdag** flyttas inte; en not säger vilken dag det är.
+
+Arbetsdagarna och helgdagarna testas mot almanackan för 2026–2027 och påsk mot 2024–2032. Varje
+steg som verktyget skriver i 5 enheter, 2 riktningar och 4 antal, med och utan `include_start`,
+godtas av registerregeln.
+
 ### 9. Utanför paketet
 
 - `db/session.py`: `create_db_engine(read_only=True)` sätter `default_transaction_read_only=on`
@@ -241,11 +270,13 @@ hundra. Prompten säger därför åt agenten att hämta sidor tills den har läs
 | `tests/unit/mcp_server/test_mcp_document_checks.py` | Nummer, plats eller båda; felet när avsnittet inte anges; sökningen utan embeddingmodell |
 | `tests/unit/mcp_server/test_mcp_register_checks.py` | Att ett filter krävs (också att ett tomt `sub_area` inte räcker), organisationsnumrens former, `list_documents` utan index, gränserna, NUL, `offset` och standardvärdena i schemat, att varje dokumenttyp har en plats i ordningen |
 | `tests/unit/mcp_server/test_mcp_register_sql.py` | Med en påhittad session: ett avtal som registret skriver på två sätt hittas med båda stavningarna, dokumentfiltret tar den stavning som indexet sparade, och `search_register` frågar efter båda; `offset` och `limit` kommer efter sorteringen men inte i totalen; `sub_area` delas i delar som var och en blir ett villkor på vägen, med `%` och `_` som tecken, och ett delområde som inget delområde har är ett fel |
+| `tests/unit/mcp_server/test_mcp_calculate_date.py` (efter M8) | Resultatet och steget i varje enhet, `include_start` åt båda hållen och felet med arbetsdagar, helgdagarna i `skipped`, noterna om aftnar, kort månad, lördag och helgdag; genom MCP utan session, argument utanför gränserna, enheterna och riktningarna i schemat; att registerregeln godtar varje steg som verktyget skriver |
+| `tests/unit/domain/test_swedish_calendar.py` (efter M8) | Påsk 2024–2032, helgdagarna 2027 som almanackan har dem, midsommardagen och alla helgons dag, aftnarna, arbetsdagar framåt och bakåt förbi påsk, midsommar och jul, månadens sista dag och skottår |
 | `tests/integration/test_mcp_documents.py` | De fyra dokumentverktygen på M5:s korpus med fyra påhittade hänvisningar: träffarna med kopior, filtren (också ett upphandlingsnummer), att läsa med nummer, plats eller båda, tvetydiga nummer, innehållsförteckningen, hänvisningarna i textordning, att det som hålls tillbaka inte visas och räknas (en gång, också via två avtalssidor), att inget visas mellan `process` och `index`, att serverns anslutning inte kan skriva, och ett anrop per verktyg genom SDK:ts klient i minnet |
 | `tests/integration/test_mcp_register.py` | `list_documents` och `search_register` på samma korpus plus en påhittad registerrad: varje filter för sig och tillsammans, tidigare namn på raderna, registrets stavning, ett avtal som registret skriver på två sätt, upphandlingsnummer, okända värden, gränsen, `offset` och totalen, `%` och `_`, filer som hålls tillbaka, `list_documents` utan index, och ett anrop per verktyg genom MCP; med påhittade rader i tre nivåer: `sub_area` med delarna i båda ordningarna och med gemener, en del på valfri nivå, tillsammans med de andra filtren, och felet som räknar upp områdets delområden, också i ett område där nivå 1 är ett län |
 
-98 enhetstester och 103 integrationstester (M6 hade 84 och 87). Integrationstesterna använder samma
-korpus och samma påhittade embedder (`TopicEmbedder`) som M5:s tester, och läser genom en
+164 enhetstester och 103 integrationstester (M6 hade 84 och 87). Integrationstesterna använder
+samma korpus och samma påhittade embedder (`TopicEmbedder`) som M5:s tester, och läser genom en
 skrivskyddad anslutning som servern gör.
 
 ## Kända begränsningar
@@ -270,7 +301,10 @@ skrivskyddad anslutning som servern gör.
 - **Kopiorna i en sökträff** har bara fil, plats och avsnittsnummer. Modellen läser kopian med
   `read_section` för att få dess sidor.
 - **Nya argumentnamn** (`document_type`, `section_position`, `supplier`, `sub_area`,
-  `org_number`, `valid_on`, `offset`) ska skickas till webbappstråden enligt kontraktets punkt 5.
+  `org_number`, `valid_on`, `offset`, och för `calculate_date` `start`, `amount`, `unit`,
+  `direction` och `include_start`) ska skickas till webbappstråden enligt kontraktets punkt 5.
+- **`calculate_date` räknar inte timmar** ("inom 36 timmar") och flyttar inte ett datum som hamnar
+  på en helg. Om aftnarna ska räknas som helgdagar avgör verktyget inte; noten visar skillnaden.
 - **`sub_area` viker inte accenter.** "ovre norrland" hittar inte "Övre Norrland" (databasen har
   inte tillägget `unaccent`); felet räknar då upp områdets delområden, om `framework_area` är
   angivet. Tre vägar utanför piloten har dubbla mellanslag i en nivå och hittas bara med en del

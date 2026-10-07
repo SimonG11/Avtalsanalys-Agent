@@ -13,6 +13,7 @@ How:
     `identifiers.py` normalises raw identifiers; `register.py` defines one
     normalised row of the master list; `documents.py` defines the agreement
     pages on avropa.se and their document links; `parsed.py` defines a
-    document's content after parsing (blocks, sections, chunks). Other layers
+    document's content after parsing (blocks, sections, chunks); `dates.py`
+    counts days, Swedish working days and months. Other layers
     import from here, never the other way round.
 """

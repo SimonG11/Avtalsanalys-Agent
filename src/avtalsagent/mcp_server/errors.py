@@ -5,7 +5,8 @@ What:
     back. `AmbiguousError`: they point to more than one thing.
     `MissingArgumentError`: none of the arguments a tool needs one of is set.
     `UnavailableError`: the tool cannot answer now (no embedding model, no
-    search index, or the model did not answer).
+    search index, or the model did not answer). `ArgumentError`: arguments
+    that are each valid but cannot be combined.
 
 Why:
     The MCP SDK turns a `ToolError` into an error result the model reads, and
@@ -37,3 +38,7 @@ class MissingArgumentError(ToolError):
 
 class UnavailableError(ToolError):
     """The tool cannot answer now: what it needs is missing or did not answer."""
+
+
+class ArgumentError(ToolError):
+    """The arguments are each valid but cannot be combined; the message says why."""

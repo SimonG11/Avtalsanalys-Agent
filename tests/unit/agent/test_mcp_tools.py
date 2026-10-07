@@ -1,6 +1,6 @@
 """Tests for avtalsagent.agent.mcp_tools: the agent's tools and readers from avtal-mcp.
 
-The real M6 server object is built with stand-ins for the six tools: each
+The real M6 server object is built with stand-ins for the seven tools: each
 has the real tool's name, signature and docstring (so the same schemas and
 Swedish descriptions), and only `read_section` and `search_register` (over
 a few register rows, paged and matched as the real tool does) answer. The
@@ -30,7 +30,7 @@ from langchain_core.tools import BaseTool
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import BaseModel
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from avtalsagent.agent.mcp_tools import (
     REGISTER_PAGE,
@@ -59,6 +59,7 @@ CONTRACT_ORDER = [
     "resolve_reference",
     "list_documents",
     "search_register",
+    "calculate_date",
 ]
 HOSTS = ["localhost:*", "127.0.0.1:*", "mcp:8001"]
 SHA = "ab" * 32
@@ -234,7 +235,7 @@ def stand_in(real: ToolFunction, answer: Callable[..., BaseModel] | None) -> Too
     """The real tool's name, docstring and signature (`__wrapped__`), with `answer` as its body."""
 
     @functools.wraps(real)
-    def tool(session: Session, *embedder: Any, **arguments: Any) -> BaseModel:
+    def tool(*session_and_embedder: Any, **arguments: Any) -> BaseModel:
         if answer is None:
             raise AssertionError(f"the test called {real.__name__}")
         return answer(**arguments)
@@ -279,7 +280,7 @@ def text_of(message: ToolMessage) -> str:
 
 
 @pytest.mark.anyio
-async def test_the_tools_are_avtal_mcps_six_in_the_contracts_order(mcp_tools: McpTools) -> None:
+async def test_the_tools_are_avtal_mcps_seven_in_the_contracts_order(mcp_tools: McpTools) -> None:
     assert [tool.name for tool in mcp_tools.tools] == CONTRACT_ORDER
 
 
