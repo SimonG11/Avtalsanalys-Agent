@@ -51,6 +51,10 @@
 >   och svar som ändrar ett avsnitt, ur hänvisningarna som steg 4 märker som ändringar. En regel i
 >   valideringskedjan kräver att ett ändrat avsnitt citeras tillsammans med sin ändring
 >   ([steg 6](steg/06-verktyg.md), avsnitt 8c, och [steg 8](steg/08-validering.md)).
+> - [ADR 0019](adr/0019-matning-av-svaren.md): de 30 testfrågorna mäts genom samma körning som
+>   API:t (`evals/run_answer_eval.py`, tjänsten `eval` i Docker Compose). En domarmodell jämför
+>   varje svar med facit, källorna och registerraderna räknas på plats, och kostnaden anges som ett
+>   intervall eftersom priset för cachad indata saknas ([M11](steg/11-utvardering.md)).
 
 ---
 

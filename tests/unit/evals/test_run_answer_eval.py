@@ -1,0 +1,377 @@
+"""Tests for evals.run_answer_eval: the run over the questions and the command line.
+
+The agent's runs, avtal-mcp and the judge are replaced, so the order of the
+results, the verdicts, the errors and the command line's output are tested
+without a model, a key or a server. One question through the real graph is
+tested in test_answer_run.py.
+"""
+
+import logging
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import anyio
+import pytest
+from pydantic import SecretStr
+
+from avtalsagent.agent.__main__ import CommandError
+from avtalsagent.agent.mcp_tools import McpTools
+from avtalsagent.agent.middleware import NO_DRAFT_TEXT
+from avtalsagent.agent.schemas import Answer
+from avtalsagent.config import Settings
+from evals import run_answer_eval as runner
+from evals.answer_report import AnswerReport, RunInfo
+from evals.answer_run import QuestionRun, TokenUse
+from evals.answer_scores import score
+from evals.gold import GoldError, GoldFile, GoldQuestion, GoldScope, RegisterSource
+from evals.judge import Judgement, ModelJudge
+from evals.run_answer_eval import (
+    Judge,
+    ask_question,
+    build_parser,
+    check_mcp,
+    evaluate,
+    judge_answer,
+    run_settings,
+    select_questions,
+)
+
+SECRET = "sk-test-not-a-real-key"
+CORRECT = Judgement(verdict="correct", missing=[], wrong=[], reason="Samma som facit.")
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+def gold(id: str) -> GoldQuestion:
+    return GoldQuestion(
+        id=id,
+        category="registerfråga",
+        area="IT-drift",
+        scope=GoldScope(),
+        question=f"Fråga {id}?",
+        answer="Svar.",
+        answerable=True,
+        sources=(RegisterSource(("23.3-5890-2023-002",), ("org_number",)),),
+        why_hard="",
+        difficulty=1,
+    )
+
+
+QUESTIONS = (gold("q01"), gold("q02"), gold("Q03"))
+GOLD = GoldFile(Path("evals/datasets/gold_sv.jsonl"), "0" * 64, QUESTIONS)
+
+
+def run(answer: Answer | None, error: str | None = None) -> QuestionRun:
+    return QuestionRun(
+        answer=answer,
+        draft=None,
+        tools=(),
+        tool_errors=0,
+        asked=(),
+        check_retries=0,
+        refused_drafts=0,
+        seconds=1.0,
+        usage={},
+        error=error,
+    )
+
+
+ANSWERED = run(Answer(text="Svar.", status="verified", citations=[]))
+
+
+class FakeJudge(Judge):
+    """A judge that finds every answer correct and records what it read."""
+
+    def __init__(self) -> None:
+        self.read: list[str] = []
+
+    async def judge(
+        self, question: GoldQuestion, answer: Answer
+    ) -> tuple[Judgement | None, Mapping[str, TokenUse]]:
+        self.read.append(question.id)
+        return CORRECT, {"judge-model": TokenUse(calls=1)}
+
+
+def info(**changes: Any) -> RunInfo:
+    values: dict[str, Any] = {
+        "agent_model": "gpt-6.1-sol",
+        "agent_effort": "low",
+        "model_call_limit": 16,
+        "validation_retries": 2,
+        "reviewer_model": "gpt-6-astra",
+        "reviewer_effort": "low",
+        "judge_model": "gpt-6-astra",
+        "judge_effort": "medium",
+        "mcp": "stdio",
+        "concurrency": 2,
+        "timeout": 600.0,
+        "label": None,
+    }
+    return RunInfo(**(values | changes))
+
+
+# --- the questions and the settings -----------------------------------------------------------
+
+
+def test_only_the_named_questions_are_asked_in_the_golds_order() -> None:
+    assert select_questions(QUESTIONS, None) == list(QUESTIONS)
+    assert [q.id for q in select_questions(QUESTIONS, ["q03", "Q01"])] == ["q01", "Q03"]
+    with pytest.raises(GoldError, match="no question q09"):
+        select_questions(QUESTIONS, ["q01", "q09"])
+
+
+def test_the_measurement_keeps_its_checkpoints_in_memory() -> None:
+    settings = Settings(_env_file=None, checkpointer="postgres", agent_reasoning_effort="low")
+
+    assert run_settings(settings, None).checkpointer == "memory"
+    assert run_settings(settings, None).agent_reasoning_effort == "low"
+    assert run_settings(settings, "high").agent_reasoning_effort == "high"
+
+
+def test_the_options_have_their_defaults() -> None:
+    args = build_parser().parse_args([])
+
+    assert (args.concurrency, args.timeout, args.judge_effort) == (4, 600, "medium")
+    assert (args.no_judge, args.judge_model, args.effort, args.only) == (False, None, None, None)
+    assert args.gold == Path("evals/datasets/gold_sv.jsonl")
+    assert args.out == Path("evals/reports")
+
+
+# --- verdicts ---------------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_the_verdict_is_by_rule_by_the_judge_or_none() -> None:
+    judge = FakeJudge()
+    question = gold("q01")
+    no_draft = run(Answer(text=NO_DRAFT_TEXT, status="no_answer", citations=[]))
+
+    assert await judge_answer(judge, question, run(None, error="fel")) == (None, None, {})
+    verdict, by, usage = await judge_answer(judge, question, no_draft)
+    assert (verdict and verdict.verdict, by, usage) == ("incorrect", "rule", {})
+    assert await judge_answer(None, question, ANSWERED) == (None, None, {})
+    assert await judge_answer(judge, question, ANSWERED) == (
+        CORRECT,
+        "judge",
+        {"judge-model": TokenUse(calls=1)},
+    )
+    assert judge.read == ["q01"]
+
+
+# --- avtal-mcp --------------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def unreachable(settings: Settings) -> AsyncIterator[McpTools]:
+    raise ConnectionError(f"All connection attempts failed ({SECRET})")
+    yield  # an async generator, as open_mcp_tools
+
+
+@pytest.mark.anyio
+async def test_a_server_that_is_not_there_stops_the_run_with_a_clear_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "open_mcp_tools", unreachable)
+    settings = Settings(
+        _env_file=None,
+        openai_api_key=SecretStr(SECRET),
+        mcp_transport="streamable_http",
+        mcp_url="http://mcp:8001/mcp",
+    )
+
+    with pytest.raises(CommandError) as raised:
+        await check_mcp(settings)
+
+    message = str(raised.value)
+    assert message.startswith("avtal-mcp svarar inte på http://mcp:8001/mcp")
+    assert "ConnectionError" in message and SECRET not in message
+
+
+@pytest.mark.anyio
+async def test_a_question_whose_session_fails_is_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "open_mcp_tools", unreachable)
+    settings = Settings(_env_file=None, openai_api_key=SecretStr(SECRET))
+
+    result = await ask_question(settings, None, None, None, gold("q01"), 10)  # type: ignore[arg-type]
+
+    assert result.answer is None
+    assert result.error is not None and result.error.startswith("avtal-mcp: ConnectionError")
+    assert SECRET not in result.error
+
+
+# --- the run ----------------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_the_questions_run_at_once_and_the_results_keep_the_golds_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    running = 0
+    most = 0
+
+    async def ask(
+        settings: Settings, model: Any, reviewer: Any, saver: Any, question: GoldQuestion, t: float
+    ) -> QuestionRun:
+        nonlocal running, most
+        running += 1
+        most = max(most, running)
+        await anyio.sleep({"q01": 0.05, "q02": 0.01, "Q03": 0.0}[question.id])
+        running -= 1
+        return run(None, error="tidsgräns") if question.id == "q02" else ANSWERED
+
+    async def reachable(settings: Settings) -> None:
+        return None
+
+    monkeypatch.setattr(runner, "make_agent_model", lambda settings: object())
+    monkeypatch.setattr(runner, "make_reviewer", lambda settings: object())
+    monkeypatch.setattr(runner, "check_mcp", reachable)
+    monkeypatch.setattr(runner, "ask_question", ask)
+    judge = FakeJudge()
+
+    report = await evaluate(
+        Settings(_env_file=None),
+        GOLD,
+        QUESTIONS,
+        concurrency=2,
+        timeout=10,
+        judge=judge,
+        info=info(),
+    )
+
+    assert [r.id for r in report.results] == ["q01", "q02", "Q03"]
+    assert [r.verdict for r in report.results] == ["correct", None, "correct"]
+    assert report.results[1].run.error == "tidsgräns"
+    assert [r.register_found for r in report.results] == [0, 0, 0]
+    assert most == 2
+    assert sorted(judge.read) == ["Q03", "q01"]
+    assert (report.gold_questions, report.gold_path) == (3, "evals/datasets/gold_sv.jsonl")
+
+
+# --- the command line -------------------------------------------------------------------------
+
+
+def fixed_report(questions: tuple[GoldQuestion, ...], judge_model: str | None) -> AnswerReport:
+    return AnswerReport(
+        created_at=datetime(2026, 10, 7, tzinfo=UTC),
+        gold_path="evals/datasets/gold_sv.jsonl",
+        gold_sha256="0" * 64,
+        gold_questions=3,
+        info=info(judge_model=judge_model, judge_effort="medium" if judge_model else None),
+        seconds=12.0,
+        results=tuple(score(q, ANSWERED, None, None) for q in questions),
+    )
+
+
+def test_the_command_writes_the_reports_and_prints_the_numbers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gold_file = tmp_path / "gold.jsonl"
+    gold_file.write_text(Path("evals/datasets/gold_sv.jsonl").read_text(encoding="utf-8"))
+    seen: dict[str, Any] = {}
+
+    async def fake_evaluate(settings: Settings, gold: GoldFile, questions: Any, **kw: Any) -> Any:
+        seen.update(kw, settings=settings, questions=[q.id for q in questions])
+        return fixed_report(tuple(questions), None)
+
+    monkeypatch.setattr(runner, "evaluate", fake_evaluate)
+    monkeypatch.setattr(runner, "get_settings", lambda: Settings(_env_file=None))
+
+    runner.main(
+        [
+            "--gold",
+            str(gold_file),
+            "--only",
+            "q21",
+            "q01",
+            "--no-judge",
+            "--effort",
+            "medium",
+            "--concurrency",
+            "2",
+            "--label",
+            "test",
+            "--out",
+            str(tmp_path / "out"),
+        ]
+    )
+
+    out = capsys.readouterr().out
+    assert out.startswith("Answer evaluation, gpt-6.1-sol (low): 2 questions in 12 s\n")
+    assert "Reports: " in out
+    assert seen["questions"] == ["q01", "q21"]
+    assert (seen["concurrency"], seen["timeout"], seen["judge"]) == (2, 600, None)
+    assert seen["settings"].agent_reasoning_effort == "medium"
+    assert seen["settings"].checkpointer == "memory"
+    assert seen["info"].judge_model is None and seen["info"].label == "test"
+    assert (tmp_path / "out" / "answers-gpt-6.1-sol-low.md").exists()
+
+
+def test_an_unknown_question_stops_the_command(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(runner, "get_settings", lambda: Settings(_env_file=None))
+
+    with caplog.at_level(logging.ERROR, logger="evals.answers"), pytest.raises(SystemExit) as end:
+        runner.main(["--only", "q99", "--no-judge"])
+
+    assert end.value.code == 1
+    assert "no question q99" in caplog.text
+
+
+def test_without_a_key_the_command_stops_before_any_question(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(runner, "get_settings", lambda: Settings(_env_file=None))
+
+    async def never(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("no question may be asked without a key")
+
+    monkeypatch.setattr(runner, "evaluate", never)
+
+    with pytest.raises(SystemExit) as end:
+        runner.main(["--only", "q01"])
+
+    assert end.value.code == 1
+    assert "OPENAI_API_KEY saknas" in capsys.readouterr().err
+
+
+def test_the_judges_model_needs_the_judge() -> None:
+    with pytest.raises(SystemExit) as end:
+        runner.main(["--no-judge", "--judge-model", "x"])
+
+    assert end.value.code == 2
+
+
+def test_the_judge_is_made_on_the_judge_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    made: list[tuple[str, str]] = []
+
+    def make(settings: Settings, model: str, effort: str) -> Any:
+        made.append((model, effort))
+        return object()
+
+    async def fake_evaluate(settings: Settings, gold: GoldFile, questions: Any, **kw: Any) -> Any:
+        assert isinstance(kw["judge"], Judge)
+        raise CommandError("stopp")
+
+    monkeypatch.setattr(runner, "make_judge_model", make)
+    monkeypatch.setattr(runner, "ModelJudge", lambda model: ModelJudge.__new__(ModelJudge))
+    monkeypatch.setattr(runner, "evaluate", fake_evaluate)
+    monkeypatch.setattr(
+        runner, "get_settings", lambda: Settings(_env_file=None, reviewer_model="the-reviewer")
+    )
+
+    with pytest.raises(SystemExit):
+        runner.main(["--only", "q01"])
+    with pytest.raises(SystemExit):
+        runner.main(["--only", "q01", "--judge-model", "other", "--judge-effort", "high"])
+
+    assert made == [("the-reviewer", "medium"), ("other", "high")]

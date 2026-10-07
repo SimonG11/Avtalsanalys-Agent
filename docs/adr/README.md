@@ -22,6 +22,7 @@ Ett beslut ändras aldrig i efterhand. Ändras beslutet skrivs en ny ADR som ers
 | [0015](0015-valideringskedjan.md) | Valideringskedjan: registeruppgifter mot registret, en granskarmodell och två nya försök | Föreslaget (PR för M8) |
 | [0016](0016-datumrakning.md) | `calculate_date`: datumräkning med svenska helgdagar, och registerregeln räknar om steget | Föreslaget (PR efter M8) |
 | [0017](0017-andringar.md) | `find_amendments` och regeln om senaste lydelsen: ändringar ur steg 4:s hänvisningar | Föreslaget (PR efter `calculate_date`) |
+| [0019](0019-matning-av-svaren.md) | Mätningen av agentens svar: samma körning som API:t, en domare mot facit och kostnaden som intervall | Föreslaget (PR för den förenklade M11) |
 
 Mall: *Status*, *Kontext* (problemet), *Beslut*, *Konsekvenser* (vad vi vinner och vad det kostar),
 *Alternativ som valts bort*.

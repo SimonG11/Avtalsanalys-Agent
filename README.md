@@ -4,7 +4,7 @@ En agent som besvarar frågor om Statens inköpscentrals ramavtal (avropa.se) d�
 påstående har en verifierad källa. Inläsningen av avtalen är ett fast workflow, och
 frågebesvarandet är en agent i LangGraph som själv väljer verktyg och ordning.
 
-> **Status:** M8 (valideringskedjan: registeruppgifter, granskare och två nya försök), efter M9. Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
+> **Status:** Den förenklade M11 (mätningen av agentens svar på testsamlingen), efter M0–M10. Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
 > förklaras i [`docs/steg/`](docs/steg/) och varje designbeslut i [`docs/adr/`](docs/adr/).
 
 ## Kör demot
@@ -22,6 +22,10 @@ docker compose up -d --wait --wait-timeout 300     # databasen, avtal-mcp, API:t
 `docker compose logs api` varför (till exempel att `OPENAI_API_KEY` saknas). Första inläsningen tolkar alla dokument med Docling, vilket tar
 ungefär två timmar; med en sparad tolkningscache i `data/` hoppar den över tolkningen.
 [Steg 09](docs/steg/09-api.md) förklarar varje steg, cachen och hur du felsöker.
+
+När allt är igång mäter `docker compose --profile eval run --rm eval` agentens svar på de 30
+testfrågorna: rätt enligt facit, kontrollerade citat, tid och kostnad. Rapporten hamnar i
+`evals/reports/` ([steg 11](docs/steg/11-utvardering.md)).
 
 ## Kom igång
 
@@ -46,6 +50,7 @@ uv run python -m avtalsagent.ingestion search "Hur stort är vitet?"   # provar 
 uv run python -m avtalsagent.ingestion outline     # visar hur varje dokument delades
 uv run python -m avtalsagent.ingestion verify      # jämför avsnitten med PDF:ernas textlager
 uv run python -m evals.run_retrieval_eval          # mäter sökningen på testsamlingen
+uv run python -m evals.run_answer_eval             # mäter agentens svar på testsamlingen (M11)
 uv run python -m avtalsagent.mcp_server http       # verktygslagret avtal-mcp på http://127.0.0.1:8001/mcp
 uv run python -m avtalsagent.mcp_server stdio      # samma verktyg över stdin och stdout
 uv run python -m avtalsagent.agent "Hur stort är vitet i IT-drift Mindre?"   # frågar agenten
@@ -115,7 +120,7 @@ Se [`web/README.md`](web/README.md).
 | `tests/unit/` | Tester utan databas eller LLM, speglar `src/` |
 | `tests/integration/` | Tester mot riktig Postgres (testcontainers) |
 | `tests/fixtures/` | Små exempelfiler, t.ex. riktiga rader ur Excel-registret |
-| `evals/` | Testsamlingen (`evals/datasets/`) och mätningen av sökningen |
+| `evals/` | Testsamlingen (`evals/datasets/`), mätningen av sökningen och av agentens svar |
 | `docs/adr/` | Arkitekturbeslut, ett per fil |
 | `docs/steg/` | Förklaring av varje milstolpe |
 | `docker/` | Konfiguration för containrarna |
