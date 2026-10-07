@@ -11,16 +11,17 @@ sida med citatet markerat. När agenten behöver veta mer frågar den i en dialo
 > att agenten (M7) provkörts. Den är också provad i webbläsaren mot API:t (M9) med den riktiga
 > modellen, med avtal-mcp:s verktyg utbytta mot två påhittade dokument: verifierat svar med
 > markerat citat, frågedialogen, en Word-fil utan PDF, ett svar ur registret och ett fel när
-> avtal-mcp inte svarar fungerade som med mocken. Webbappen byggdes i en egen tråd, parallellt med
-> backend.
+> avtal-mcp inte svarar fungerade som med mocken. Efter M8 visar den också reservationerna,
+> registerraderna som ett svar bygger på och att svaret kontrolleras. Webbappen byggdes i en egen
+> tråd, parallellt med backend.
 
 ## Vad du ser
 
 | Del | Vad den visar |
 |---|---|
 | Chatten | Frågorna och svaren. Innan första frågan finns tre exempelfrågor att klicka på. |
-| Agentens steg | Ett kort per verktygsanrop, live medan agenten arbetar: "Söker i dokumenten" blir "Sökte i dokumenten" när verktyget har svarat. Kortet visar huvudargumentet ("uppsägningstid") och de andra argumenten med svenska namn. Verktygets svar går att fälla ut. Agentens fråga till dig är också ett steg, "Frågar dig". Anropet `FinalAnswer`, där agenten lämnar in sitt svar för kontroll, visas inte. |
-| Svarskortet | Status (**Verifierat**, **Med reservation** eller **Inget svar**), svarstexten där `[1]` och `[2]` är knappar, och en lista med källorna: dokument, avsnitt, sida och citat. Ett citat som inte kunde kontrolleras mot avtalstexten får en varning. Svarstextens stycken och listor behåller sina radbrytningar. |
+| Agentens steg | Ett kort per verktygsanrop, live medan agenten arbetar: "Söker i dokumenten" blir "Sökte i dokumenten" när verktyget har svarat. Kortet visar huvudargumentet ("uppsägningstid") och de andra argumenten med svenska namn. Verktygets svar går att fälla ut. Agentens fråga till dig är också ett steg, "Frågar dig". När agenten lämnar in sitt svar (`FinalAnswer`) står det "Kontrollerar svaret …" tills svaret är klart. Granskningen tar i median 9 sekunder. |
+| Svarskortet | Status (**Verifierat**, **Med reservation** eller **Inget svar**) med en rad om vad som kontrollerades, svarstexten där `[1]` och `[2]` är knappar, reservationerna, avtalen ur registret som svaret bygger på, och en lista med källorna: dokument, avsnitt, sida och citat. Ett citat som inte kunde kontrolleras mot avtalstexten får en varning. Svarstextens stycken och listor behåller sina radbrytningar. |
 | Källpanelen | Öppnas till höger när man klickar på en källa. PDF:en visas på den citerade sidan och citatet är markerat i gult. Om citatet inte finns på sidan står det i panelen. En Word-fil har ingen PDF, och då visar panelen bara citatet. |
 | Frågedialogen | När agenten anropar `ask_user` öppnas en dialog med frågan och svarsalternativen som knappar. Man kan också skriva ett eget svar. Agenten fortsätter med svaret. |
 | Fel | Om agenten inte kan svara, till exempel när API:t inte svarar, står det under frågan i stället för ett svarskort. |
@@ -94,10 +95,20 @@ Argumenten `query`, `agreement_number`, `framework_area`, `document_type`, `sha2
 `section_number`, `section_position`, `reference`, `supplier`, `org_number`, `valid_on`, `limit`,
 `offset` och `options` får svenska namn i stegen. Andra argument visas under sina egna namn.
 
-Agenten lämnar in sitt svar genom att anropa verktyget `FinalAnswer`. Anropet och dess svar
-("Svaret är lämnat för kontroll.", eller kontrollens fel inför ett nytt försök) finns i
-meddelandehistoriken och kan komma som händelser för verktygsanrop. Webbappen visar dem inte, och
-svaret läses bara ur tillståndet.
+Agenten lämnar in sitt svar genom att anropa verktyget `FinalAnswer`. Kontrollen läser då varje
+citerat avsnitt och registret, och en andra modell granskar att källorna stöder svaret. Under
+granskningen kommer inga händelser, i median 9 sekunder. Ett underkänt utkast får ett verktygssvar
+som börjar med "Kontrollen underkände svaret (försök 1 av 3):", och agenten försöker igen, högst
+tre utkast per fråga. Ett utkast som formatkontrollen avvisar får svaret "Error: Failed to parse
+…" och räknas inte. Det godkända utkastets svar ("Svaret är lämnat för kontroll.") kommer först
+med meddelandehistoriken när körningen är klar.
+
+Webbappen visar varken utkasten eller kontrollens svar. I stället för ett steg står det
+"Kontrollerar svaret …" från att `FinalAnswer`-anropet kommer tills anropet får ett svar,
+`answer` sätts, agenten anropar nästa verktyg eller körningen slutar. Kontrollens svar på ett
+underkänt utkast kan också komma först i slutet, så utkastets rad försvinner när agenten gör
+något nytt, och nästa utkast får en ny. Svaret läses bara ur tillståndet. Grafens steg
+(`AnswerCheck.before_agent` och `AnswerCheck.after_agent`) läser webbappen inte.
 
 **Svaret** ligger i agentens delade tillstånd under nyckeln `answer`, och bara där. Backend
 strömmar inte svaret som ett chattmeddelande (metadata `emit-messages: False` på det modellanropet)
@@ -121,6 +132,19 @@ svaret inte är klart.
       "quote": "…",
       "verified": true
     }
+  ],
+  "reservations": [],
+  "register_facts": [
+    {
+      "agreement_number": "23.3-5890-2023-002",
+      "supplier_name": "Nordlo Advance AB",
+      "former_names": ["EPM Data"],
+      "org_number": "556486-1689",
+      "sub_area": "IT-drift / IT-drift Mindre, upp till 200 anställda",
+      "valid_from": "2024-11-14",
+      "valid_to": "2028-11-13",
+      "max_extension_to": null
+    }
   ]
 }
 ```
@@ -135,10 +159,25 @@ svaret inte är klart.
   läsa har dessutom tomma `file_title` och `section_title`, och visas som "Okänt dokument".
 - En Word-fil har ingen PDF: `GET /api/documents/{sha256}/pdf` svarar `404`, och källpanelen visar
   citatet utan dokumentet. Utan `page` visas dokumentet från början.
+- `reservations` och `register_facts` finns alltid, som tomma listor när de inte används. Ett svar
+  från före M8 saknar dem, och då läser webbappen dem som tomma.
+- `register_facts` är registrets rader för avtalen som svaret tar uppgifter ur. Ett avtal har en
+  rad per delområde (och region), och registret skriver ibland samma nummer på två sätt (`-001` och
+  `-01`). Webbappen visar därför en rad per avtal: numret, leverantören med organisationsnummer
+  och tidigare namn, delområdet eller "N delområden", och giltighetstiden med "längst till" när
+  avtalet kan förlängas. Har raderna olika giltighetstider står det "olika giltighetstider". Fler
+  än tre avtal fälls ihop under rubriken "Ur registret: N avtal".
+
+Statusen betyder:
+
+- **Verifierat**: varje citat står ordagrant i sitt avsnitt, varje uppgift ur registret stämmer
+  med registret, och granskaren fann stöd för svaret. Ett svar ur registret kan vara Verifierat
+  utan citat. Raden under statusen säger vad som kontrollerades: citaten, registret eller båda.
+- **Med reservation**: något kunde inte kontrolleras, granskningen misslyckades eller svaret har
+  ingen källa. `reservations` har då minst en mening om vad, och svarskortet visar dem under
+  svaret.
 - **Inget svar** kan ha källor, som visar var frågan regleras i stället (till exempel en bilaga som
-  kunden fyller i själv). **Med reservation** utan källor är ett svar ur registret (avtalsnummer,
-  leverantörer, datum), som inte har någon avtalstext att citera. Svarskortet förklarar båda
-  fallen med en rad under statusen.
+  kunden fyller i själv). Raden under statusen säger det.
 
 Formatet skiljer sig från agentens strukturerade output i `docs/arkitektur.md`
 (avsnitt 6, med påståenden och källor per påstående). Det är backend som lägger svaret i den här
@@ -176,7 +215,7 @@ En tabell med två etiketter per verktyg (pågår och klart), svenska namn på a
 argument som är huvudsaken för varje verktyg. `describeToolCall` gör ett verktygsanrop till rubrik,
 huvudargument och övriga argument. SHA-256 kortas till åtta tecken. Ett verktyg eller argument som
 inte finns i tabellen visas med sitt eget namn, så ett nytt verktyg i backend syns direkt.
-`isHiddenTool` säger vilka anrop som inte är steg: bara `FinalAnswer`. Argument som inte säger
+`ANSWER_TOOL` är namnet på anropet som inte är ett steg, `FinalAnswer`. Argument som inte säger
 något visas inte: `offset` när det är 0, och avsnittets plats i filen när avsnittets nummer finns.
 
 ### 3. `src/lib/answerText.ts` och `src/lib/citation.ts` – källorna
@@ -214,7 +253,19 @@ citat sträcker sig oftast över flera. Därför:
 
 Varje fråga får sitt svarskort efter det sista meddelandet som hör till frågan, alltså före nästa
 fråga. Funktionen räknar ut det från meddelandelistan, så korten hamnar rätt även när en fråga
-pausats av en dialog och fortsatt i en ny körning.
+pausats av en dialog och fortsatt i en ny körning. `isLatestToolCall` säger om ett verktygsanrop
+är det senaste i den senaste frågan, så att "Kontrollerar svaret …" bara visas för det utkast som
+kontrolleras nu.
+
+### 5b. `src/lib/registerFacts.ts` och `src/lib/answerStatus.ts` – registret och statusen
+
+`registerFacts.ts` grupperar `register_facts` per avtal. `agreementKey` skriver leverantörens
+löpnummer med tre siffror, som backendens `domain/identifiers.py`, så `-01` och `-001` blir samma
+avtal. `describeAgreement` gör raden som svarskortet visar, med samma delar som kommandoradens
+`register_lines` (`agent/__main__.py`).
+
+`answerStatus.ts` har statusarnas namn och raden under statusen, som beror på vad svaret har:
+citat, registerrader eller reservationer.
 
 ### 6. `src/app/api/copilotkit/[[...slug]]/route.ts` – vägen till agenten
 
@@ -232,10 +283,11 @@ vidare. Om API:t inte svarar blir det `502`, och en fil som saknas blir `404`.
 | Fil | Del |
 |---|---|
 | `AgentApp.tsx` | Sidan: CopilotKit, rubriken, chatten och källpanelen bredvid varandra (under varandra på smala skärmar). |
-| `Chat.tsx` | CopilotKits chatt med svenska texter, exempelfrågorna och `useRenderTool` som ritar varje verktygsanrop som ett steg. |
+| `Chat.tsx` | CopilotKits chatt med svenska texter, exempelfrågorna och `useRenderTool` som ritar varje verktygsanrop som ett steg, utom `FinalAnswer`. |
+| `AnswerCheck.tsx` | Raden "Kontrollerar svaret …" för ett `FinalAnswer`-anrop. CopilotKit ger ett verktyg i backend samma status medan argumenten strömmar och medan det väntar på svar, så raden kan inte skilja på att agenten skriver och att svaret kontrolleras. |
 | `AgentSteps.tsx` | Ett steg: etikett, argument, en snurra medan verktyget arbetar och verktygets svar. |
 | `Answers.tsx` | Sparar varje frågas svar när körningen är klar och placerar svarskortet i chatten. Svaret sparas bara om körningen lyckades och skickade tillstånd, annars skulle en misslyckad fråga få förra frågans svar. En misslyckad körning får ett felmeddelande. |
-| `AnswerCard.tsx` | Svarskortet: status, text med hänvisningar och källistan, och en förklarande rad när ett Inget svar har källor eller ett svar Med reservation saknar dem. |
+| `AnswerCard.tsx` | Svarskortet: status med en förklarande rad, text med hänvisningar, reservationerna, avtalen ur registret och källistan. |
 | `SourcePanel.tsx` | Källpanelen: källans uppgifter, citatet och PDF:en. |
 | `PdfViewer.tsx` | PDF:en med `react-pdf` (PDF.js). Sidan ritas med sitt textlager, citatet markeras och panelen rullar till markeringen. Svarar API:t `404` (en Word-fil) säger den att det inte finns någon PDF. |
 | `ClarifyDialog.tsx` | Frågedialogen, med `useInterrupt`. Den kan inte stängas utan svar, eftersom agenten väntar på det: Escape är avstängt (`closedby="none"`), och dialogen öppnas igen om den ändå stängs. |
@@ -251,13 +303,15 @@ samma ordning som `ag-ui-langgraph` skickar händelserna:
 |---|---|
 | uppsägning och ett område (IT-drift, Programvaror, Bemanningstjänster) | Söker, läser avsnittet och svarar **Verifierat** med två källor. |
 | uppsägning utan område | Söker och anropar `ask_user`, som frågar vilket ramavtalsområde som menas, med båda händelserna. Fortsätter sedan med svaret. Med `[legacy]` i frågan kommer bara den äldre händelsen, med `[outcome]` bara standardformen. |
-| vite | Svarar **Med reservation**. Den andra källans citat finns inte i PDF:en. |
+| vite | Kontrollen underkänner första utkastet, och skälet kommer först med meddelandehistoriken i slutet. Mocken läser avsnittet och svarar **Med reservation** med två reservationer. Den andra källans citat finns inte i PDF:en. |
 | bilaga | Svarar **Inget svar** med en källa i en Word-fil: utan sida, utan avsnittsnummer och utan PDF. Texten har stycken och en lista. |
-| avtalsnummer | Söker i registret och svarar **Med reservation** utan källor. |
+| avtalsnummer | Söker i registret och svarar **Verifierat** utan citat, med tre registerrader för två påhittade avtal. Det första har två delområden och sitt nummer skrivet på två sätt. |
 | `[fel]` | Gör ett steg och avslutar med `RUN_ERROR`, som när backend fallerar. |
 | allt annat | Svarar **Inget svar**. |
 
-Före varje svar anropar mocken `FinalAnswer`, som den riktiga agenten gör.
+Mocken lämnar in varje svar med `FinalAnswer` och sätter `answer` efter en paus för granskningen,
+utan händelser och utan svar på anropet, som den riktiga agenten gör. Pausen är 3 sekunder, och
+0,8 sekunder med `MOCK_FAST=1` i testerna, så att de hinner se "Kontrollerar svaret …".
 
 PDF:en som mocken citerar skapas av `mock/fixture-pdf.ts`. Den är påhittad, säger på varje sida att
 den inte är ett avtal från avropa.se, och har alltid samma SHA-256. Inga dokument från avropa.se
@@ -306,9 +360,9 @@ Två nya jobb i `.github/workflows/ci.yml`:
 
 | Var | Vad | Antal |
 |---|---|---|
-| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null`), verktygens etiketter, hänvisningarna i texten, källornas namn, var korten hamnar och markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan) | 39 |
-| `mock/scenarios.test.ts` | Mockens händelser: ordningen, att svaren följer kontraktet, att varje verifierat citat finns på sin sida i test-PDF:en, de tre formerna av interrupt, att `ask_user` får svaret som resultat, båda sätten att svara och en körning som misslyckas | 9 |
-| `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, steg, svarskort, källpanel med markerat citat över två rader, dialogen i alla tre formerna, att Escape inte stänger den, eget svar, reservation, flera frågor efter varandra, en fråga vars körning misslyckas, en källa i en Word-fil utan sida och PDF, och ett svar ur registret utan källor | 11 |
+| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null` och svar utan M8:s fält), verktygens etiketter, hänvisningarna i texten, källornas namn, var korten hamnar, raden under statusen, registerraderna per avtal och markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan) | 49 |
+| `mock/scenarios.test.ts` | Mockens händelser: ordningen, att svaren följer kontraktet, att bara det inlämnade `FinalAnswer` saknar svar, pausen för granskningen, det underkända utkastet, att varje verifierat citat finns på sin sida i test-PDF:en, de tre formerna av interrupt, att `ask_user` får svaret som resultat, båda sätten att svara och en körning som misslyckas | 12 |
+| `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, steg, "Kontrollerar svaret …", svarskort, källpanel med markerat citat över två rader, dialogen i alla tre formerna, att Escape inte stänger den, eget svar, reservationer och ett dolt underkänt utkast, flera frågor efter varandra, en fråga vars körning misslyckas, en källa i en Word-fil utan sida och PDF, och ett svar ur registret med en rad per avtal | 11 |
 
 ## Så verifierar du M10 själv
 
@@ -320,16 +374,18 @@ docker compose -f web/compose.mock.yaml up --build
 
 Öppna http://localhost:3000 och prova:
 
-1. Klicka på exempelfrågan **Uppsägning i IT-drift**. Två steg visas, sedan ett verifierat svar.
+1. Klicka på exempelfrågan **Uppsägning i IT-drift**. Två steg visas, sedan "Kontrollerar svaret
+   …" och ett verifierat svar.
    Klicka på `[1]` och se citatet markerat på sidan 2 i PDF:en.
 2. Skriv *Vilken uppsägningstid gäller för ett kontrakt?* Dialogen frågar vilket område som menas.
    Välj ett, eller skriv ett eget svar.
-3. Skriv *Vilket vite gäller vid försenad leverans?* Svaret har reservation, och källa 2 hittas
-   inte i PDF:en.
+3. Skriv *Vilket vite gäller vid försenad leverans?* Kontrollen underkänner första utkastet, men
+   det syns bara som en längre väntan. Svaret har två reservationer, och källa 2 hittas inte i
+   PDF:en.
 4. Skriv *Står säkerhetsnivån i en bilaga?* Inget svar, men källan visar var frågan regleras. Den
    är en Word-fil, så panelen visar citatet utan PDF.
-5. Skriv *Vilket avtalsnummer har IT-drift?* Ett svar ur registret, med reservation och utan
-   källor.
+5. Skriv *Vilket avtalsnummer har IT-drift?* Ett verifierat svar ur registret utan citat, med två
+   avtal under "Ur registret". Det första har två delområden.
 
 Med Node 22.18 eller senare:
 

@@ -28,15 +28,34 @@ export const CitationSchema = z.object({
   verified: z.boolean(),
 });
 
+/** One row of the register as the check read it: an agreement has a row per sub-area. */
+export const RegisterFactSchema = z.object({
+  agreement_number: z.string().min(1),
+  supplier_name: z.string(),
+  former_names: z.array(z.string()).default([]),
+  org_number: z.string(),
+  sub_area: z.string(),
+  // Dates as YYYY-MM-DD.
+  valid_from: z.string(),
+  valid_to: z.string(),
+  // Null when the register gives no latest date for an extension.
+  max_extension_to: z.string().nullable(),
+});
+
 export const AnswerStatusSchema = z.enum(["verified", "with_reservation", "no_answer"]);
 
 export const AnswerSchema = z.object({
   text: z.string(),
   status: AnswerStatusSchema,
   citations: z.array(CitationSchema),
+  // What could not be checked, in Swedish; empty unless the status is with_reservation. The
+  // backend always sends both lists; the defaults keep answers from before M8 readable.
+  reservations: z.array(z.string().min(1)).default([]),
+  register_facts: z.array(RegisterFactSchema).default([]),
 });
 
 export type Citation = z.infer<typeof CitationSchema>;
+export type RegisterFact = z.infer<typeof RegisterFactSchema>;
 export type AnswerStatus = z.infer<typeof AnswerStatusSchema>;
 export type Answer = z.infer<typeof AnswerSchema>;
 

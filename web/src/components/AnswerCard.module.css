@@ -79,6 +79,53 @@
   color: var(--warn-strong);
 }
 
+.reservations,
+.register {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.875rem;
+}
+
+.reservations {
+  border: 1px solid var(--warn-soft);
+  background: var(--warn-soft);
+  color: var(--warn-strong);
+}
+
+.register {
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.reservations ul,
+.register ul {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.register summary {
+  cursor: pointer;
+}
+
+.agreementNumber {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.agreementDetails {
+  display: block;
+  color: var(--text-muted);
+}
+
 .sources {
   display: grid;
   gap: 6px;

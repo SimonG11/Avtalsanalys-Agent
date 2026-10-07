@@ -8,15 +8,17 @@
  * example questions.
  *
  * How: `useRenderTool` with the name "*" makes AgentStep render every tool call except the one
- * that hands in the answer (FinalAnswer, see lib/tools.ts); the answer
- * card is registered on the provider (see AgentApp). Labels CopilotKit shows are translated here.
+ * that hands in the answer (FinalAnswer, see lib/tools.ts), which gets AnswerCheck instead; the
+ * answer card is registered on the provider (see AgentApp). Labels CopilotKit shows are
+ * translated here.
  */
 import { CopilotChat, useConfigureSuggestions, useRenderTool } from "@copilotkit/react-core/v2";
 
 import { AGENT_ID } from "@/lib/agent";
-import { isHiddenTool } from "@/lib/tools";
+import { ANSWER_TOOL } from "@/lib/tools";
 
 import { AgentStep } from "./AgentSteps";
+import { AnswerCheck } from "./AnswerCheck";
 import type { AgentStepProps } from "./AgentSteps";
 
 const LABELS = {
@@ -53,7 +55,7 @@ export function Chat() {
       name: "*",
       agentId: AGENT_ID,
       render: (props: AgentStepProps) =>
-        isHiddenTool(props.name) ? null : <AgentStep {...props} />,
+        props.name === ANSWER_TOOL ? <AnswerCheck {...props} /> : <AgentStep {...props} />,
     },
     [],
   );

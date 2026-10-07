@@ -48,6 +48,38 @@ describe("parseAnswer", () => {
     assert.equal(parsed.kind, "answer");
   });
 
+  it("reads the reservations and register rows, and defaults them for older answers", () => {
+    const fact = {
+      agreement_number: "00.0-0000-2026-001",
+      supplier_name: "Exempelleverantören AB",
+      former_names: [],
+      org_number: "000000-0000",
+      sub_area: "IT-drift / IT-drift Större",
+      valid_from: "2026-01-01",
+      valid_to: "2028-12-31",
+      max_extension_to: null,
+    };
+    const state = {
+      answer: {
+        text: "Avtalet gäller till 2028-12-31.",
+        status: "with_reservation",
+        citations: [],
+        reservations: ["Svaret kunde inte granskas."],
+        register_facts: [fact],
+      },
+    };
+    const parsed = parseAnswer(state);
+    assert.equal(parsed.kind, "answer");
+    assert.deepEqual(parsed.kind === "answer" && parsed.answer.reservations, [
+      "Svaret kunde inte granskas.",
+    ]);
+    assert.deepEqual(parsed.kind === "answer" && parsed.answer.register_facts, [fact]);
+
+    const older = parseAnswer({ answer: { text: "x", status: "no_answer", citations: [] } });
+    assert.deepEqual(older.kind === "answer" && older.answer.reservations, []);
+    assert.deepEqual(older.kind === "answer" && older.answer.register_facts, []);
+  });
+
   it("rejects an empty quote", () => {
     const state = {
       answer: { text: "x", status: "verified", citations: [{ ...CITATION, quote: "" }] },
