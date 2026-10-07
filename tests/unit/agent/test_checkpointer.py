@@ -4,12 +4,10 @@ Each round trip goes through a checkpointer's own put and get, or through a
 small compiled graph, both with LANGGRAPH_STRICT_MSGPACK unset and set.
 LangGraph reads the variable once, at import, into module constants; the
 tests set those constants as the import would. The Postgres branch is
-checked for its address and its one `setup()` with a stand-in saver: no
-test opens a database connection.
+checked for its address, its pool and its one `setup()` with a stand-in
+pool and saver: no test opens a database connection.
 """
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from typing import Any, TypedDict
 
 import langgraph._internal._serde as graph_serde
@@ -17,16 +15,19 @@ import pytest
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver, ChannelVersions, empty_checkpoint
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.serde import _msgpack
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from psycopg import conninfo
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 from sqlalchemy.engine import make_url
 
+from avtalsagent.agent import checkpointer
 from avtalsagent.agent.checkpointer import (
     CHECKPOINT_TYPES,
+    POOL_SIZE,
     checkpoint_dsn,
     open_checkpointer,
     serializer,
@@ -193,42 +194,73 @@ async def test_memory_is_an_in_memory_saver_with_the_serializer() -> None:
         assert isinstance(saver.serde, JsonPlusSerializer)
 
 
-class StandInSaver:
-    """Stands in for AsyncPostgresSaver: counts setup() calls, opens no connection."""
+class StandInPool:
+    """Stands in for AsyncConnectionPool: records how it was made, opens no connection."""
 
-    def __init__(self) -> None:
+    made: list["StandInPool"] = []
+    check_connection = AsyncConnectionPool.check_connection
+
+    def __init__(self, conninfo: str, **options: Any) -> None:
+        self.conninfo = conninfo
+        self.options = options
+        self.open = False
+        self.closed = False
+        StandInPool.made.append(self)
+
+    async def __aenter__(self) -> "StandInPool":
+        self.open = True
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        self.closed = True
+
+
+class StandInSaver:
+    """Stands in for AsyncPostgresSaver: records its pool and serializer, counts setup()."""
+
+    def __init__(self, conn: StandInPool, *, serde: JsonPlusSerializer) -> None:
+        self.conn = conn
+        self.serde = serde
         self.setups = 0
 
     async def setup(self) -> None:
+        assert self.conn.open, "setup() before the pool was opened"
         self.setups += 1
 
 
 @pytest.mark.anyio
-async def test_postgres_opens_database_url_without_the_driver_and_sets_up_once(
+async def test_postgres_opens_a_pool_on_database_url_without_the_driver_and_sets_up_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    saver = StandInSaver()
-    opened: list[tuple[str, Any]] = []
-
-    @asynccontextmanager
-    async def from_conn_string(dsn: str, *, serde: Any) -> AsyncIterator[StandInSaver]:
-        opened.append((dsn, serde))
-        yield saver
-
-    monkeypatch.setattr(AsyncPostgresSaver, "from_conn_string", from_conn_string)
+    StandInPool.made = []
+    monkeypatch.setattr(checkpointer, "AsyncConnectionPool", StandInPool)
+    monkeypatch.setattr(checkpointer, "AsyncPostgresSaver", StandInSaver)
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@db:5432/avtalsagent")
     settings = Settings(_env_file=None, checkpointer="postgres")
 
     async with open_checkpointer(settings) as yielded:
         assert isinstance(yielded, StandInSaver)
-        assert saver.setups == 1
+        assert yielded.setups == 1
+        (pool,) = StandInPool.made
+        assert yielded.conn is pool
+        assert not pool.closed
 
-    ((dsn, serde),) = opened
-    assert dsn == "postgresql://u:p@db:5432/avtalsagent"
+    assert pool.closed
+    assert pool.conninfo == "postgresql://u:p@db:5432/avtalsagent"
+    # Opened by the block, with POOL_SIZE connections, each checked before it is lent.
+    assert pool.options["open"] is False
+    assert pool.options["max_size"] == POOL_SIZE
+    assert pool.options["check"] is AsyncConnectionPool.check_connection
+    # What the saver needs of a connection, as AsyncPostgresSaver.from_conn_string sets it.
+    assert pool.options["kwargs"] == {
+        "autocommit": True,
+        "prepare_threshold": 0,
+        "row_factory": dict_row,
+    }
     # The agent's serializer, by what it does: the agent's classes back, any other a dict.
+    serde = yielded.serde
     assert type(serde.loads_typed(serde.dumps_typed(DRAFT))) is FinalAnswer
     assert serde.loads_typed(serde.dumps_typed(Stranger(text="x"))) == {"text": "x"}
-    assert saver.setups == 1
 
 
 @pytest.mark.parametrize(

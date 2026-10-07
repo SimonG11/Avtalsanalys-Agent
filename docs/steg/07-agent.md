@@ -328,18 +328,20 @@ också integrationstesterna använder.
   med det okontrollerade utkastet finns i det AG-UI skickar; webbappen ska dölja `FinalAnswer` och
   läsa bara `answer`.
 - **En ny fråga medan `ask_user` väntar** lämnar ett verktygsanrop utan svar i historiken, som
-  modellens API troligen avvisar. Kommandoraden svarar alltid på frågan; webbappen hanteras i M9.
+  modellens API troligen avvisar. Kommandoraden svarar alltid på frågan. I API:t (M9) skickar
+  AG-UI-adaptern i stället den väntande frågan igen ([steg 09](09-api.md)).
 - **Ett fel från databasen** när kontrollen läser ett avsnitt räknas som ett avsnitt som inte går
   att läsa: kontrollen ber om ett nytt försök i stället för att säga att databasen inte svarar.
 - **Ingen tidsgräns för ett verktygsanrop över stdio.** Ett anrop som hänger får körningen att
   hänga. Över HTTP finns tidsgränser, men ett anrop som når dem avslutar körningen.
 - **En bruten MCP-session öppnas inte igen.** Över HTTP avslutar ett anrop som misslyckas
   (servern nere just då, ett 5xx-svar eller inget svar inom tidsgränsen) både körningen och
-  sessionen, och kommandoraden säger att förbindelsen bröts. API:t (M9) bör öppna en session per
-  körning (servern är tillståndslös) eller öppna den igen.
-- **Checkpoints i Postgres** använder en anslutning och ett anrop i taget, och en bruten
-  anslutning öppnas inte igen. API:t (M9) bör använda en anslutningspool. Tabellerna hamnar i samma
-  databas som resten, och `alembic revision --autogenerate` ser dem som tabeller att ta bort.
+  sessionen, och kommandoraden säger att förbindelsen bröts. API:t (M9) öppnar därför en session
+  per körning ([ADR 0014](../adr/0014-api-och-compose.md)).
+- **Checkpoints i Postgres** använde i M7 en anslutning som inte öppnades igen om den bröts, och
+  `alembic revision --autogenerate` såg tabellerna som tabeller att ta bort. M9 ger checkpointern
+  en pool som byter ut en bruten anslutning och utesluter tabellerna ur migreringarna
+  ([steg 09](09-api.md)).
 - **Vanlig text begärs, men kontrolleras inte.** Prompten ber om text utan Markdown; skriver
   modellen ändå `**`, syns tecknen i webbappen.
 - **Engelska framför verktygsfelen.** SDK:t skriver "Error executing tool …" före varje fel som

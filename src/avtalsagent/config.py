@@ -21,6 +21,7 @@ How:
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote, unquote
 
 from pydantic import Field, PostgresDsn, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -121,6 +122,12 @@ class Settings(BaseSettings):
     # "postgres" is the database in DATABASE_URL (the API; ADR 0004).
     checkpointer: Literal["memory", "postgres"] = "memory"
 
+    # The API (M9, api/; ADR 0014): the address and port it listens on. 127.0.0.1 keeps it on
+    # this machine; the container listens on 0.0.0.0 and docker compose decides what is
+    # published.
+    api_host: str = "127.0.0.1"
+    api_port: int = Field(default=8000, gt=0, lt=65536)
+
     log_level: str = "INFO"
 
     @property
@@ -132,6 +139,25 @@ class Settings(BaseSettings):
     def reports_dir(self) -> Path:
         """Where each run of steps 3-5 writes its ingestion report, markdown and JSON (M4)."""
         return self.data_dir / "reports"
+
+    def redact(self, text: str) -> str:
+        """`text` without the OpenAI key or the database password, should an error quote them.
+
+        The password is replaced where an error would show it: in a database
+        address (":password@", as written or percent-encoded) and in quotes, as
+        libpq quotes a part of the address it cannot read. Alone it can be an
+        ordinary word, as the default "avtalsagent" is, so it is not replaced
+        everywhere.
+        """
+        if self.openai_api_key is not None and (key := self.openai_api_key.get_secret_value()):
+            text = text.replace(key, "***")
+        for host in self.database_url.hosts():
+            if password := host.get("password"):
+                # As written, as the server reads it and percent-encoded as libpq gets it.
+                decoded = unquote(password)
+                for form in {password, decoded, quote(decoded, safe="")}:
+                    text = text.replace(f":{form}@", ":***@").replace(f'"{form}"', '"***"')
+        return text
 
 
 @lru_cache(maxsize=1)

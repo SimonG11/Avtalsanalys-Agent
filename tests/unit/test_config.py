@@ -39,6 +39,8 @@ ENV_VARS = (
     "CITATION_RETRIES",
     "MCP_TRANSPORT",
     "CHECKPOINTER",
+    "API_HOST",
+    "API_PORT",
 )
 
 
@@ -173,6 +175,49 @@ def test_the_agents_settings_refuse_values_out_of_range(
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_the_apis_address_is_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_HOST", "0.0.0.0")
+    monkeypatch.setenv("API_PORT", "8080")
+
+    settings = Settings(_env_file=None)
+
+    assert (settings.api_host, settings.api_port) == ("0.0.0.0", 8080)
+
+
+@pytest.mark.parametrize("port", ["0", "65536"])
+def test_the_api_port_must_be_a_port(monkeypatch: pytest.MonkeyPatch, port: str) -> None:
+    monkeypatch.setenv("API_PORT", port)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_redact_removes_the_key_and_the_password_where_an_error_shows_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    # "p%40ss" is the address's encoding of "p@ss".
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:p%40ss@db:5432/x")
+    settings = Settings(_env_file=None)
+
+    text = (
+        "key sk-test-secret; postgresql://user:p%40ss@db; server read user:p@ss@db; "
+        'libpq: invalid password "p@ss"; the word p@ss alone'
+    )
+
+    assert settings.redact(text) == (
+        "key ***; postgresql://user:***@db; server read user:***@db; "
+        'libpq: invalid password "***"; the word p@ss alone'
+    )
+
+
+def test_redact_leaves_text_without_secrets_as_it_is(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://avtalsagent@db:5432/x")
+    settings = Settings(_env_file=None, openai_api_key=None)
+
+    assert settings.redact("avtalsagent: allt väl") == "avtalsagent: allt väl"
 
 
 def test_get_settings_returns_same_instance() -> None:

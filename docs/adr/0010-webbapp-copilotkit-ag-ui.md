@@ -1,6 +1,6 @@
 # ADR 0010: Webbappen med Next.js och CopilotKit över AG-UI
 
-**Status:** Föreslaget (M10).
+**Status:** Godkänt av Simon 2026-10-07 (PR #7, M10).
 
 ## Kontext
 

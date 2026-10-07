@@ -2,7 +2,8 @@
 # Five jobs, each answering one question:
 #   lint       - does the code follow the style and type rules?
 #   test       - do the tests pass?
-#   compose    - does the database in docker-compose.yml start, with pgvector?
+#   compose    - does the whole system in docker-compose.yml build and start, on both processor
+#                architectures (amd64, and arm64 as on a Mac with Apple silicon)?
 #   web        - does the web app pass its checks and tests, and work in a browser?
 #   web-docker - do the web app's container images work, as on the demo computer?
 name: CI
@@ -43,7 +44,16 @@ jobs:
       - run: uv run pytest
 
   compose:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    # A service that keeps restarting is waited on until the timeouts below, not for hours.
+    timeout-minutes: 30
+    env:
+      # The API does not start without a key. This one is never sent: nothing here asks a question.
+      OPENAI_API_KEY: sk-ci-not-a-real-key
     steps:
       - uses: actions/checkout@v6
       - run: docker compose up -d postgres --wait
@@ -53,6 +63,34 @@ jobs:
           psql -U avtalsagent -d avtalsagent -tAc
           "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
           | grep -E '^[0-9]+\.[0-9]+'
+      - name: Build the backend image
+        run: docker compose build mcp
+      - name: Create the tables, as the ingestion does first
+        run: docker compose --profile ingest run --rm ingest alembic upgrade head
+      - name: Start avtal-mcp and the API
+        run: docker compose up -d --wait --wait-timeout 180 --no-build mcp api
+      - name: Check the API
+        run: |
+          curl -fsS http://127.0.0.1:8000/health
+          curl -fsS http://127.0.0.1:8000/agui/health
+          # No document is loaded, so any document is unknown: 404, not an error.
+          sha=$(printf 'a%.0s' $(seq 64))
+          test "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8000/api/documents/$sha/pdf")" = 404
+          # The checkpoint tables were created when the API opened its checkpointer.
+          docker compose exec -T postgres psql -U avtalsagent -d avtalsagent -tAc "SELECT to_regclass('checkpoints')" | grep -x checkpoints
+      - name: Build and start the web app
+        run: |
+          docker compose build web
+          docker compose up -d --wait --wait-timeout 180 --no-build web
+      - name: Check that the web app reaches the API
+        run: |
+          curl -fsS -o /dev/null http://127.0.0.1:3000/
+          # The web app passes the PDF request on to the API inside compose; its 404 comes back.
+          sha=$(printf 'a%.0s' $(seq 64))
+          test "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:3000/api/documents/$sha/pdf")" = 404
+      - name: Show the services' logs
+        if: failure()
+        run: docker compose logs
       - if: always()
         run: docker compose down -v
 

@@ -4,8 +4,24 @@ En agent som besvarar frågor om Statens inköpscentrals ramavtal (avropa.se) d�
 påstående har en verifierad källa. Inläsningen av avtalen är ett fast workflow, och
 frågebesvarandet är en agent i LangGraph som själv väljer verktyg och ordning.
 
-> **Status:** M7 (agenten med citatkontrollen). Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
+> **Status:** M9 (API:t och hela systemet i Docker Compose). Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
 > förklaras i [`docs/steg/`](docs/steg/) och varje designbeslut i [`docs/adr/`](docs/adr/).
+
+## Kör demot
+
+Du behöver Docker Desktop och en OpenAI-nyckel. Det fungerar likadant på en Mac med Apple silicon
+som på en dator med Intel eller AMD.
+
+```bash
+cp .env.example .env                               # sätt OPENAI_API_KEY i .env
+docker compose --profile ingest run --rm ingest    # första gången: registret och dokumenten
+docker compose up -d --wait --wait-timeout 300     # databasen, avtal-mcp, API:t och webbappen
+```
+
+Öppna sedan http://localhost:3000. Slutar kommandot med att en tjänst inte blev frisk, visar
+`docker compose logs api` varför (till exempel att `OPENAI_API_KEY` saknas). Första inläsningen tolkar alla dokument med Docling, vilket tar
+ungefär två timmar; med en sparad tolkningscache i `data/` hoppar den över tolkningen.
+[Steg 09](docs/steg/09-api.md) förklarar varje steg, cachen och hur du felsöker.
 
 ## Kom igång
 
@@ -35,6 +51,7 @@ uv run python -m avtalsagent.mcp_server stdio      # samma verktyg över stdin o
 uv run python -m avtalsagent.agent "Hur stort är vitet i IT-drift Mindre?"   # frågar agenten
 uv run python -m avtalsagent.agent                 # ett samtal: en fråga i taget, följdfrågor i samma tråd
 uv run python -m avtalsagent.agent --json "…"      # svaret som JSON, som webbappen får det
+uv run python -m avtalsagent.api                   # API:t på http://127.0.0.1:8000 (POST /agui, PDF:erna)
 ```
 
 Första gången tar `parse` för urvalet ungefär två timmar på fyra processorkärnor. `uv sync`
@@ -62,6 +79,10 @@ Den startar avtal-mcp själv över stdio (`MCP_TRANSPORT=streamable_http` anslut
 terminalen. Svaret skrivs ut med status (Kontrollerat, Med reservation eller Inget svar) och
 källorna, där ✓ betyder att citatet finns ordagrant i avsnittet.
 
+API:t ([M9](docs/steg/09-api.md)) kör samma agent för webbappen över AG-UI (`POST /agui`) och ger
+PDF:en som ett citat pekar på (`GET /api/documents/{sha256}/pdf`). Det behöver `OPENAI_API_KEY`
+och avtal-mcp; i Docker Compose ansluter det till avtal-mcp över HTTP och sparar samtalen i Postgres.
+
 Kontroller som CI kör (pre-commit kör de tre första):
 
 ```bash
@@ -71,7 +92,8 @@ uv run mypy                  # typkontroll (strict)
 uv run pytest                # tester
 ```
 
-CI startar dessutom Postgres med Docker Compose och kontrollerar att pgvector finns.
+CI bygger dessutom backendens image och startar Postgres, avtal-mcp och API:t med Docker Compose,
+på både amd64 och arm64, och kontrollerar att pgvector finns och att API:t svarar.
 
 Webbappen har egna kommandon och kan provas mot en mock av agenten, utan backend:
 

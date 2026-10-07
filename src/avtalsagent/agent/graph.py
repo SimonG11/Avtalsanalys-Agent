@@ -27,6 +27,9 @@ How:
       draft into `no_answer`. The count is not checkpointed, so a run
       resumed after `ask_user` counts from zero. (`create_agent` sets
       LangGraph's recursion limit itself.)
+    - `AnswerOpenToolCalls` gives the model an error result for a tool
+      call whose run broke off before the tool answered, so the
+      conversation can go on (`open_tool_calls.py`).
     - `ToolErrorMiddleware` turns a `ToolException` that escapes a tool
       into a tool result with status error. langchain-mcp-adapters already
       does so for an MCP error result (its default `handle_tool_errors`),
@@ -63,6 +66,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from avtalsagent.agent.ask_user import ask_user
 from avtalsagent.agent.middleware import CitationCheck
+from avtalsagent.agent.open_tool_calls import AnswerOpenToolCalls
 from avtalsagent.agent.prompts import system_prompt, today_in_sweden
 from avtalsagent.agent.schemas import AvtalState, FinalAnswer
 from avtalsagent.agent.sections import SectionReader
@@ -101,6 +105,7 @@ def build_agent(
         dated_system_prompt,
         CitationCheck(reader, retries=settings.citation_retries),
         ModelCallLimitMiddleware(run_limit=settings.agent_model_call_limit, exit_behavior="end"),
+        AnswerOpenToolCalls(),
         ToolErrorMiddleware(_tool_error_message),
     ]
     return create_agent(

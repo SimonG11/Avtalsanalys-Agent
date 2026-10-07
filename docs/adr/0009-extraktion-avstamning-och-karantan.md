@@ -1,6 +1,6 @@
 # ADR 0009: Extraktion, avstämning mot registret och karantän
 
-**Status:** Föreslaget (PR #6). Bygger på förslaget som Simon godkände 2026-10-06
+**Status:** Godkänt av Simon 2026-10-07 (PR #6). Bygger på förslaget som Simon godkände 2026-10-06
 (`implementering/m4-forslag.md`). Ändringarna mot förslaget står i en egen tabell nedan. Ändrar ADR
 0008 beslut 5 (beslut 10 nedan).
 
