@@ -8,7 +8,8 @@
  *
  * How: AgentApp renders the panel when a citation is opened, with a key per citation so each
  * one starts fresh. The PDF is fetched from the web app's own /api/documents/{sha256}/pdf
- * route, and PdfViewer is loaded only in the browser.
+ * route, and PdfViewer is loaded only in the browser. The citation's page is where its section
+ * starts; when PdfViewer finds the quote on a later page, the panel says so.
  */
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -31,12 +32,17 @@ const MATCH_NOTES: Record<QuoteMatch["kind"], string | null> = {
 };
 
 export function SourcePanel({ citation, onClose }: { citation: Citation; onClose: () => void }) {
-  const [match, setMatch] = useState<QuoteMatch["kind"] | null>(null);
+  const [match, setMatch] = useState<{ kind: QuoteMatch["kind"]; page: number } | null>(null);
   const pageArea = useRef<HTMLDivElement>(null);
   const width = useWidth(pageArea);
-  const onMatch = useCallback((kind: QuoteMatch["kind"]) => setMatch(kind), []);
+  const onMatch = useCallback(
+    (kind: QuoteMatch["kind"], page: number) => setMatch({ kind, page }),
+    [],
+  );
 
-  const note = match ? MATCH_NOTES[match] : null;
+  const note = match ? MATCH_NOTES[match.kind] : null;
+  const laterPage =
+    match !== null && citation.page !== null && match.page !== citation.page ? match.page : null;
   const location = locationLabel(citation);
 
   return (
@@ -62,6 +68,11 @@ export function SourcePanel({ citation, onClose }: { citation: Citation; onClose
         </footer>
       </blockquote>
 
+      {laterPage !== null && (
+        <p className={styles.meta} data-testid="page-note">
+          Citatet står på sida {laterPage}. Avsnittet börjar på sida {citation.page}.
+        </p>
+      )}
       {note && (
         <p className={styles.note} data-testid="match-note">
           {note}

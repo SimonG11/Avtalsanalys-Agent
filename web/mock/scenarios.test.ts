@@ -149,14 +149,27 @@ describe("planRun", () => {
     }
   });
 
-  it("cites only quotes that are on the cited page of the fixture, unless unverified", () => {
+  it("cites quotes that are in the fixture from the cited page on, unless unverified", () => {
+    const pagesWith = (quote: string, from: number) =>
+      PAGES.map((lines, index) => ({ page: index + 1, lines }))
+        .filter(({ page }) => page >= from)
+        .filter(
+          ({ lines }) =>
+            findQuote(
+              lines.map((str) => ({ str })),
+              quote,
+            ).kind === "full",
+        )
+        .map(({ page }) => page);
     for (const question of questions) {
       for (const citation of finalAnswer(input(question)).citations) {
-        const lines = PAGES[citation.page - 1].map((str) => ({ str }));
-        const match = findQuote(lines, citation.quote);
-        assert.equal(match.kind, citation.verified ? "full" : "none", citation.quote);
+        const found = pagesWith(citation.quote, citation.page);
+        assert.equal(found.length > 0, citation.verified, citation.quote);
       }
     }
+    // The vite answer's third quote is on the page after the one its section starts on.
+    const third = finalAnswer(input(questions[1])).citations[2];
+    assert.deepEqual([third.page, pagesWith(third.quote, third.page)], [3, [4]]);
   });
 
   it("asks which area is meant with both interrupt events, or with one of them", () => {
