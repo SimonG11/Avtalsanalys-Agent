@@ -38,6 +38,7 @@ from avtalsagent.agent.middleware import NO_DRAFT_TEXT
 from avtalsagent.agent.schemas import Answer, Citation, RegisterFact
 from avtalsagent.config import Settings
 from tests.unit.agent.scripted_model import (
+    PURPOSE_TEXT,
     DictAmendments,
     DictReader,
     ListRegister,
@@ -233,6 +234,31 @@ def test_the_models_calls_are_steps_but_ask_user_is_asked_when_the_run_stops() -
     assert cli.update_lines({"model": {"messages": [message]}}) == [
         '→ search_documents(query="vite")',
         "→ Svaret lämnas för kontroll.",
+    ]
+
+
+def test_the_agents_reason_is_a_line_of_its_own_under_the_call() -> None:
+    reason = (
+        "Jag letar efter uppsägningstiden i IT-driftavtalet,\n för att se vilka fall som finns."
+    )
+    message = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "search_documents",
+                "args": {"syfte": reason, "query": "uppsägning", "framework_area": "IT-drift"},
+                "id": "c1",
+                "type": "tool_call",
+            },
+            {"name": "read_section", "args": {"sha256": SHA}, "id": "c2", "type": "tool_call"},
+        ],
+    )
+
+    assert cli.message_lines(message) == [
+        '→ search_documents(query="uppsägning", framework_area="IT-drift")',
+        "  Syfte: Jag letar efter uppsägningstiden i IT-driftavtalet, för att se vilka fall som "
+        "finns.",
+        '→ read_section(sha256="a1a1a1a1a1a1…")',
     ]
 
 
@@ -506,13 +532,14 @@ async def test_a_question_prints_its_steps_and_the_users_reply_resumes_the_run()
 
     assert answer.status == "verified"
     steps = log.getvalue().splitlines()
-    assert steps[:4] == [
+    assert steps[:5] == [
         '→ search_documents(query="uppsägningstid")',
+        f"  Syfte: {PURPOSE_TEXT}",
         "? Vilket avtal menar du?",
         "  1. IT-drift Större",
         "  2. IT-drift Mindre",
     ]
-    assert steps[4:] == [
+    assert steps[5:] == [
         "→ Svaret lämnas för kontroll.",
         "  ✗ Kontrollen underkände svaret, som går tillbaka till agenten:",
         "    - Källa [1]: citatet finns inte ordagrant i avsnitt 6.21.9 (Uppsägning). Kopiera "

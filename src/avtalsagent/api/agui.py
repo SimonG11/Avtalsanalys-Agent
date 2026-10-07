@@ -66,6 +66,9 @@ Why:
     streamed id, not the checkpoint's; the library would fold a summary
     sent back into that message, add it as new, and OpenAI would get the
     same reasoning item twice and refuse every later call in the thread.
+    The agent's stated reason for each avtal-mcp call, `syfte` (ADR 0025),
+    is one of the call's arguments: it streams in TOOL_CALL_ARGS, first, and
+    stays in MESSAGES_SNAPSHOT's tool calls; nothing here changes it.
     Each run gets its own session to avtal-mcp. Over HTTP a call that
     fails (avtal-mcp restarting, a timeout) ends its session as well as
     the run (ADR 0013); a session shared by all runs would then fail every

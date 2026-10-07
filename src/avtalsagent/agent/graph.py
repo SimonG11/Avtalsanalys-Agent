@@ -35,6 +35,12 @@ How:
     - `AnswerOpenToolCalls` gives the model an error result for a tool
       call whose run broke off before the tool answered, so the
       conversation can go on (`open_tool_calls.py`).
+    - `StatedPurpose` offers the model each avtal-mcp tool with one more
+      required argument, `syfte`, a short sentence on what the agent wants
+      to find out with the call and why, which the web app shows as the
+      step's thought; it removes `syfte` before the tool runs, and refuses
+      a call without it as a tool error the model can correct
+      (`purpose.py`, ADR 0025).
     - `ToolErrorMiddleware` turns a `ToolException` that escapes a tool
       into a tool result with status error. langchain-mcp-adapters already
       does so for an MCP error result (its default `handle_tool_errors`),
@@ -74,6 +80,7 @@ from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.agent.middleware import AnswerCheck
 from avtalsagent.agent.open_tool_calls import AnswerOpenToolCalls
 from avtalsagent.agent.prompts import system_prompt, today_in_sweden
+from avtalsagent.agent.purpose import StatedPurpose
 from avtalsagent.agent.schemas import AvtalState, FinalAnswer
 from avtalsagent.config import Settings
 from avtalsagent.validation.review import AnswerReviewer
@@ -121,6 +128,7 @@ def build_agent(
         ),
         ModelCallLimitMiddleware(run_limit=settings.agent_model_call_limit, exit_behavior="end"),
         AnswerOpenToolCalls(),
+        StatedPurpose(mcp.tools),
         ToolErrorMiddleware(_tool_error_message),
     ]
     return create_agent(

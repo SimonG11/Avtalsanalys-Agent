@@ -3,8 +3,9 @@
 What:
     `ScriptedModel`, a chat model that answers with prepared messages in
     order and records what it was sent; `tool_call` and `final_answer`
-    build those messages. `DictReader` is a `SectionReader` over a dict,
-    `ListRegister` a `RegisterReader` over register rows, `DictAmendments`
+    build those messages, a call to an avtal-mcp tool with its `syfte`.
+    `DictReader` is a `SectionReader` over a dict, `ListRegister` a
+    `RegisterReader` over register rows, `DictAmendments`
     an `AmendmentReader` over a dict (no amendments for a section it does
     not have), and `ScriptedReviewer` an `AnswerReviewer` that gives
     prepared verdicts (a pass when it has none left); each records what it
@@ -35,9 +36,14 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import Field
 
 from avtalsagent.agent.amendments import AmendmentInfo
+from avtalsagent.agent.ask_user import ask_user
+from avtalsagent.agent.purpose import PURPOSE
 from avtalsagent.agent.register_reader import RegisterEntry
 from avtalsagent.agent.sections import CitedSection
 from avtalsagent.validation.review import ReviewInput, ReviewVerdict
+
+# The agent's reason for a scripted call to an avtal-mcp tool (`syfte`).
+PURPOSE_TEXT = "Jag letar efter det i avtalen som svarar på frågan."
 
 
 class ScriptedModel(BaseChatModel):
@@ -74,8 +80,17 @@ class ScriptedModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=self.script.pop(0))])
 
 
-def tool_call(name: str, args: dict[str, Any], call_id: str) -> AIMessage:
-    """An AI message calling one tool."""
+def tool_call(
+    name: str, args: dict[str, Any], call_id: str, *, purpose: str | None = PURPOSE_TEXT
+) -> AIMessage:
+    """An AI message calling one tool.
+
+    A call to any tool but `ask_user` and `FinalAnswer` carries `purpose` as its `syfte`,
+    as the agent's schema requires of avtal-mcp's tools, unless `args` has one or `purpose`
+    is None.
+    """
+    if purpose is not None and name not in (ask_user.name, "FinalAnswer"):
+        args = {PURPOSE: purpose, **args}
     return AIMessage(
         content="", tool_calls=[{"name": name, "args": args, "id": call_id, "type": "tool_call"}]
     )
