@@ -130,7 +130,8 @@ class AvtalAguiAgent(LangGraphAgent):
     """`LangGraphAgent` with its snapshots, errors, client state and resumes fitted to the API.
 
     A snapshot holds only the answer, an error names no internals, the client's state is
-    dropped, and the answers to waiting `ask_user` questions are matched to them by id.
+    dropped, and the answers to waiting `ask_user` questions go to them by id where an id names
+    a question (`_build_command_from_agui_resume`).
     """
 
     def get_state_snapshot(self, state: dict[str, Any]) -> dict[str, Any]:
