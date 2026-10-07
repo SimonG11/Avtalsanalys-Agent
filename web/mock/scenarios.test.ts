@@ -233,6 +233,11 @@ describe("planRun", () => {
       (event) => event.type === EventType.TOOL_CALL_RESULT && event.toolCallId === toolCallId,
     );
     assert.equal(result?.content, "IT-drift");
+    // Like ag-ui-langgraph, the resumed run streams the ask_user call again before its result.
+    const repeated = resumed.findIndex(
+      (event) => event.type === EventType.TOOL_CALL_START && event.toolCallId === toolCallId,
+    );
+    assert.ok(repeated >= 0 && repeated < resumed.indexOf(result!));
 
     // The refused call has no result event, only a tool message with the error in the snapshot.
     const refused = calls[0].toolCallId;

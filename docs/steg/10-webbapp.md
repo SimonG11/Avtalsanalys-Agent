@@ -232,6 +232,11 @@ i `MESSAGES_SNAPSHOT` har dess verktygsmeddelande `error`. Modellen frågar då 
 inte det avvisade anropet: det försvinner när meddelandet med `error` kommer, eller när agenten
 fortsätter med annat. Bara en interrupt är en fråga till användaren.
 
+När körningen fortsätter efter svaret skickar `ag-ui-langgraph` `ask_user`-anropet en gång till,
+med samma id, före resultatet. AG-UI-klienten behåller ett steg per id men lägger de nya
+argumenten efter de gamla, så `parsePartialJson` läser det första hela objektet och frågan står
+kvar i steget.
+
 ## Vad som byggdes, fil för fil
 
 Allt ligger i `web/`. Kod och identifierare är på engelska, texten i gränssnittet på svenska.
@@ -362,7 +367,7 @@ samma ordning som `ag-ui-langgraph` skickar händelserna:
 | Fråga som innehåller | Vad mocken gör |
 |---|---|
 | uppsägning och ett område (IT-drift, Programvaror, Bemanningstjänster) | Tänker före varje steg, med tankar som strömmar ord för ord, söker, läser avsnittet och svarar **Verifierat** med två källor. Med ett datum i frågan (2027-02-17) räknar mocken också ut sista dagen för uppsägning med `calculate_date`. |
-| uppsägning utan område | Söker, anropar `ask_user` en gång utan alternativ (backend avvisar det) och sedan rätt, och frågar vilket ramavtalsområde som menas, med båda händelserna. Fortsätter sedan med svaret. Med `[legacy]` i frågan kommer bara den äldre händelsen, med `[outcome]` bara standardformen. |
+| uppsägning utan område | Söker, anropar `ask_user` en gång utan alternativ (backend avvisar det) och sedan rätt, och frågar vilket ramavtalsområde som menas, med båda händelserna. Fortsätter sedan med svaret och skickar då `ask_user`-anropet en gång till före resultatet, som backend. Med `[legacy]` i frågan kommer bara den äldre händelsen, med `[outcome]` bara standardformen. |
 | vite | Resonerar utan text, som dagens backend. Kontrollen underkänner första utkastet, och skälet kommer först med meddelandehistoriken i slutet. Mocken läser avsnittet och svarar **Med reservation** med två reservationer. Den andra källans citat finns inte i PDF:en, och den tredje källans citat står på sidan efter den där avsnittet börjar. |
 | bilaga | Svarar **Inget svar** med en källa i en Word-fil: utan sida, utan avsnittsnummer och utan PDF. Texten har stycken och en lista. |
 | avtalsnummer | Söker i registret och svarar **Verifierat** utan citat, med tre registerrader för två påhittade avtal. Det första har två delområden och sitt nummer skrivet på två sätt. |
@@ -426,7 +431,7 @@ Två nya jobb i `.github/workflows/ci.yml`:
 
 | Var | Vad | Antal |
 |---|---|---|
-| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null` och svar utan M8:s fält), verktygens etiketter och raden om vad de fann, hänvisningarna i texten, källornas namn, frågorna och deras tidslinjer (tankar, steg, argument som strömmar, godkända, underkända och felformaterade utkast, avvisade frågor), halva JSON-texter, tankarnas rubriker, raden under statusen, registerraderna per avtal, markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan, radslut i en tom bit) och sidan med citatet | 78 |
+| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null` och svar utan M8:s fält), verktygens etiketter och raden om vad de fann, hänvisningarna i texten, källornas namn, frågorna och deras tidslinjer (tankar, steg, argument som strömmar, godkända, underkända och felformaterade utkast, avvisade frågor), halva och dubblerade JSON-texter, tankarnas rubriker, raden under statusen, registerraderna per avtal, markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan, radslut i en tom bit) och sidan med citatet | 79 |
 | `mock/scenarios.test.ts` | Mockens händelser: ordningen, att svaren följer kontraktet, att bara det inlämnade `FinalAnswer` saknar svar, pausen för granskningen, det underkända utkastet, att varje verifierat citat finns i test-PDF:en från sin sida och framåt, de tre formerna av interrupt, det avvisade `ask_user`-anropet, att `ask_user` får svaret som resultat, båda sätten att svara, datumuträkningen och en körning som misslyckas | 13 |
 | `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, tankar och steg live, en datumuträkning, "Kontrollerar svaret …", tidslinjen som fälls ihop och öppnas, svarskort, källpanel med markerat citat över två rader, agentens fråga i chatten i alla tre formerna, eget svar i chattfältet, reservationer och ett underkänt utkast med skälet, flera frågor efter varandra, en fråga vars körning misslyckas, ett citat på sidan efter avsnittets första, en källa i en Word-fil utan sida och PDF, ett svar ur registret med en rad per avtal, och kontrasten på all text i mörkt och ljust läge | 14 |
 

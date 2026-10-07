@@ -5,10 +5,12 @@
  * `{"query": "uppsägn` before it gets the whole object. Showing what has arrived makes the step
  * live, instead of empty until the call is complete.
  *
- * How: JSON that parses is returned as it is. Otherwise the text is closed: an open string gets
- * its quote, a key without a value is dropped, a trailing comma or colon is dropped, and open
- * objects and arrays get their brackets, in reverse order. What still does not parse gives
- * undefined.
+ * How: JSON that parses is returned as it is. Arguments sent twice are read once: when a run
+ * resumes after ask_user, the backend streams that call's arguments again under the same id, and
+ * the AG-UI client adds them to the ones it has (`{…}{…`), so a complete object followed by more
+ * text is read on its own. Otherwise the text is closed: an open string gets its quote, a key
+ * without a value is dropped, a trailing comma or colon is dropped, and open objects and arrays
+ * get their brackets, in reverse order. What still does not parse gives undefined.
  */
 
 export function parsePartialJson(text: string): unknown {
@@ -17,13 +19,40 @@ export function parsePartialJson(text: string): unknown {
   try {
     return JSON.parse(trimmed);
   } catch {
-    // Not complete yet: close it below.
+    // Not complete yet, or more than one value: see below.
+  }
+  const end = firstValueEnd(trimmed);
+  if (end > 0) {
+    try {
+      return JSON.parse(trimmed.slice(0, end));
+    } catch {
+      // Not JSON after all.
+    }
   }
   try {
     return JSON.parse(closeJson(trimmed));
   } catch {
     return undefined;
   }
+}
+
+/** Where the first complete object or array in the text ends, or -1 if none is complete. */
+function firstValueEnd(text: string): number {
+  if (text[0] !== "{" && text[0] !== "[") return -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+    } else if (char === '"') inString = true;
+    else if (char === "{" || char === "[") depth++;
+    else if ((char === "}" || char === "]") && --depth === 0) return i + 1;
+  }
+  return -1;
 }
 
 function closeJson(text: string): string {

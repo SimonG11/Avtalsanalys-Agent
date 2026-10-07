@@ -39,6 +39,14 @@ describe("parsePartialJson", () => {
     assert.deepEqual(parsePartialJson('{"limit": 1'), { limit: 1 });
   });
 
+  it("reads arguments that were streamed twice under the same id once", () => {
+    const args = '{"question": "Vilket område?", "options": ["IT-drift", "Bemanning"]}';
+    const expected = { question: "Vilket område?", options: ["IT-drift", "Bemanning"] };
+    assert.deepEqual(parsePartialJson(args + args), expected);
+    assert.deepEqual(parsePartialJson(args + '{"question": "Vil'), expected);
+    assert.deepEqual(parsePartialJson('{"q": "a } b"}{"q"'), { q: "a } b" });
+  });
+
   it("gives undefined for nothing or for text that cannot be completed", () => {
     assert.equal(parsePartialJson(""), undefined);
     assert.equal(parsePartialJson("{]"), undefined);

@@ -190,6 +190,33 @@ class RunBuilder {
     return toolCallId;
   }
 
+  /**
+   * A call from an earlier run streamed again under the same id, as ag-ui-langgraph does for the
+   * ask_user call when a run resumes, before that call's result.
+   */
+  repeatCall(toolCallId: string): void {
+    for (const message of this.input.messages) {
+      const call =
+        message.role === "assistant"
+          ? message.toolCalls?.find((c) => c.id === toolCallId)
+          : undefined;
+      if (!call) continue;
+      this.push({
+        type: EventType.TOOL_CALL_START,
+        toolCallId,
+        toolCallName: call.function.name,
+        parentMessageId: message.id,
+      } as BaseEvent);
+      this.push({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId,
+        delta: call.function.arguments,
+      } as BaseEvent);
+      this.push({ type: EventType.TOOL_CALL_END, toolCallId } as BaseEvent);
+      return;
+    }
+  }
+
   /** The tool's answer to a call, which may have been made in an earlier run. */
   toolResult(toolCallId: string, content: string): void {
     const toolMessageId = this.nextId("tool");
@@ -558,7 +585,12 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
   if (resumed !== null) {
     // The person answered which area the question is about: ask_user returns the answer.
     const pending = pendingAskUser(input.messages);
-    if (pending) run.step("research_agent", () => run.toolResult(pending, resumed));
+    if (pending) {
+      run.step("research_agent", () => {
+        run.repeatCall(pending);
+        run.toolResult(pending, resumed);
+      });
+    }
     answerNoticePeriod(run, context, resumed || AREAS[0]);
   } else {
     // A new question: the previous answer no longer applies.
