@@ -120,6 +120,62 @@ describe("buildTurns", () => {
   });
 });
 
+describe("buildTurns and refused questions", () => {
+  const ask = (id: string, args: string) => ({
+    id: `a-${id}`,
+    role: "assistant",
+    toolCalls: [call(id, "ask_user", args)],
+  });
+
+  it("leaves out an ask_user call the backend refused, once its tool message says so", () => {
+    const [turn] = buildTurns([
+      QUESTION,
+      ask("c1", '{"question": "Vilket område?"}'),
+      { id: "t1", role: "tool", toolCallId: "c1", content: "", error: "options saknas" },
+      ask("c2", '{"question": "Vilket område?", "options": ["IT-drift", "Bemanning"]}'),
+    ]);
+    assert.deepEqual(
+      turn.items.map((item) => item.id),
+      ["c2"],
+    );
+  });
+
+  it("leaves out an unanswered ask_user call once the agent goes on with other work", () => {
+    const [turn] = buildTurns([
+      QUESTION,
+      ask("c1", '{"question": "Vilket område?"}'),
+      { id: "a2", role: "assistant", toolCalls: [call("c2", "search_documents", "{}")] },
+    ]);
+    assert.deepEqual(
+      turn.items.map((item) => item.id),
+      ["c2"],
+    );
+  });
+
+  it("keeps questions that wait for their answers, also two at once and before a thought", () => {
+    const [turn] = buildTurns([
+      QUESTION,
+      ask("c1", '{"question": "Vilket område?", "options": ["A", "B"]}'),
+      ask("c2", '{"question": "Vilket fall?", "options": ["C", "D"]}'),
+      // The messages snapshot ends with empty reasoning messages.
+      { id: "rs_1", role: "reasoning", content: "" },
+    ]);
+    assert.deepEqual(
+      turn.items.map((item) => item.id),
+      ["c1", "c2", "rs_1"],
+    );
+  });
+
+  it("shows a failed tool's error when it has no other content", () => {
+    const [turn] = buildTurns([
+      QUESTION,
+      { id: "a1", role: "assistant", toolCalls: [call("c1", "read_section", "{}")] },
+      { id: "t1", role: "tool", toolCallId: "c1", content: "", error: "Avsnittet finns inte." },
+    ]);
+    assert.equal(turn.items[0].kind === "tool" && turn.items[0].result, "Avsnittet finns inte.");
+  });
+});
+
 describe("currentActivity", () => {
   it("names the step that waits for its result, the check, or the model's next move", () => {
     assert.equal(currentActivity([]), "Tänker …");

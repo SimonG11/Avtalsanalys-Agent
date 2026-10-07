@@ -255,6 +255,23 @@ class RunBuilder {
     this.callTool("ask_user", value);
   }
 
+  /**
+   * An ask_user call the backend refuses before asking, here for want of options
+   * (webbapp-kontrakt.md, point 32): no result event and no interrupt, and in the messages
+   * snapshot a tool message with `error` set. The model then asks again.
+   */
+  refusedAskUser(question: string): void {
+    const toolCallId = this.callTool("ask_user", { question });
+    const error = "ask_user behöver 2-5 korta svarsalternativ.";
+    this.newMessages.push({
+      id: this.nextId("tool"),
+      role: "tool",
+      toolCallId,
+      content: error,
+      error,
+    });
+  }
+
   interrupt(value: { question: string; options: string[] }, shape: InterruptShape): void {
     const interruptId = this.nextId("interrupt");
     if (shape !== "outcome") {
@@ -560,6 +577,7 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
             hits: AREAS.map((area) => ({ section_title: "Uppsägning", framework_areas: [area] })),
           },
         );
+        run.refusedAskUser(ASK_AREA.question);
         run.askUser(ASK_AREA);
       });
       run.messagesSnapshot();

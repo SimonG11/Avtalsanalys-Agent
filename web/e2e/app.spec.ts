@@ -132,6 +132,8 @@ for (const [shape, suffix] of Object.entries(INTERRUPT_SHAPES)) {
     await openTimeline(page);
     const steps = page.getByTestId("agent-step");
     await expect(steps).toHaveCount(4);
+    // The mock's first ask_user call is refused for want of options; only the second asked.
+    await expect(page.locator('[data-tool="ask_user"]')).toHaveCount(1);
     await expect(steps.nth(1)).toContainText("Fick svar");
     await expect(steps.nth(1)).toContainText("Vilket ramavtalsområde gäller frågan?");
     await expect(steps.nth(1)).toContainText("Du svarade: Programvaror och tjänster");

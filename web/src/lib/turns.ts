@@ -14,7 +14,9 @@
  * whether the check took it ("Svaret är lämnat för kontroll.") or sent it back with a reason
  * (webbapp-kontrakt.md, points 13 and 26). The real stream may send that message only at the end
  * of the run, so a draft without one that is followed by more work was sent back. A draft the
- * format check refused ("Error: Failed to parse") is left out, as before.
+ * format check refused ("Error: Failed to parse") is left out, as before. So is an ask_user call
+ * the backend refused before asking (point 32: no options, or too many): its tool message has
+ * `error` set, and before that message comes, the agent going on with other work shows it.
  */
 import { parsePartialJson } from "./partialJson.ts";
 import { ANSWER_TOOL, TOOL_LABELS } from "./tools.ts";
@@ -26,6 +28,8 @@ export interface ConversationMessage {
   content?: unknown;
   toolCalls?: readonly { id: string; function: { name: string; arguments: string } }[];
   toolCallId?: string;
+  /** Set on a tool message when the call failed or was refused. */
+  error?: string;
 }
 
 export type TimelineItem =
@@ -57,9 +61,11 @@ const FORMAT_ERROR = "Error: Failed to parse";
 
 export function buildTurns(messages: readonly ConversationMessage[]): Turn[] {
   const results = new Map<string, string>();
+  const failed = new Set<string>();
   for (const message of messages) {
     if (message.role === "tool" && message.toolCallId) {
-      results.set(message.toolCallId, textOf(message.content));
+      results.set(message.toolCallId, textOf(message.content) || (message.error ?? ""));
+      if (message.error) failed.add(message.toolCallId);
     }
   }
 
@@ -81,6 +87,8 @@ export function buildTurns(messages: readonly ConversationMessage[]): Turn[] {
         if (call.function.name === ANSWER_TOOL) {
           if (result?.startsWith(FORMAT_ERROR)) continue;
           turn.items.push(draftOf(call.id, result));
+        } else if (call.function.name === ASK_USER && failed.has(call.id)) {
+          continue;
         } else {
           const args = parsePartialJson(call.function.arguments);
           turn.items.push({ kind: "tool", id: call.id, name: call.function.name, args, result });
@@ -96,8 +104,23 @@ export function buildTurns(messages: readonly ConversationMessage[]): Turn[] {
         ? { ...item, outcome: "rejected" }
         : item,
     );
+    // An unanswered ask_user call followed by other work was refused: only an interrupt asks.
+    turn.items = turn.items.filter(
+      (item, index) => !(isOpenQuestion(item) && turn.items.slice(index + 1).some(isOtherWork)),
+    );
   }
   return turns;
+}
+
+const ASK_USER = "ask_user";
+
+function isOpenQuestion(item: TimelineItem): boolean {
+  return item.kind === "tool" && item.name === ASK_USER && item.result === undefined;
+}
+
+/** A step or draft other than a question; thoughts do not count. */
+function isOtherWork(item: TimelineItem): boolean {
+  return item.kind === "draft" || (item.kind === "tool" && item.name !== ASK_USER);
 }
 
 function draftOf(id: string, result: string | undefined): TimelineItem {

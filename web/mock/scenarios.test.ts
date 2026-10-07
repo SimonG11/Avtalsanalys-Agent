@@ -210,10 +210,12 @@ describe("planRun", () => {
   it("calls ask_user and gives its result, the answer, in the run that resumes", () => {
     const question = "Vilken uppsägningstid gäller för ett kontrakt?";
     const asked = events(input(question));
-    const start = asked.find(
+    const calls = asked.filter(
       (event) => event.type === EventType.TOOL_CALL_START && event.toolCallName === "ask_user",
     );
-    assert.ok(start);
+    // The first call is refused for want of options; the second asks.
+    assert.equal(calls.length, 2);
+    const start = calls[1];
     const toolCallId = start.toolCallId as string;
     assert.ok(
       !asked.some((e) => e.type === EventType.TOOL_CALL_RESULT && e.toolCallId === toolCallId),
@@ -231,6 +233,14 @@ describe("planRun", () => {
       (event) => event.type === EventType.TOOL_CALL_RESULT && event.toolCallId === toolCallId,
     );
     assert.equal(result?.content, "IT-drift");
+
+    // The refused call has no result event, only a tool message with the error in the snapshot.
+    const refused = calls[0].toolCallId;
+    assert.ok(
+      !asked.some((e) => e.type === EventType.TOOL_CALL_RESULT && e.toolCallId === refused),
+    );
+    const refusal = messages.find((m) => m.role === "tool" && m.toolCallId === refused);
+    assert.ok(refusal?.role === "tool" && refusal.error);
   });
 
   it("continues with the answer from either resume channel", () => {
