@@ -4,7 +4,8 @@
 into a store for the conversation and named in the terminal, or the command
 stops with the API's Swedish reason; `main` with a file answers from it,
 and a source in the user's file is printed as "Din fil". The example
-contract of the demo is attached as it is.
+contract of the demo is attached as it is, and a PDF is named with its
+pages and its warnings.
 """
 
 import hashlib
@@ -25,6 +26,7 @@ from avtalsagent.uploads.errors import UNSUPPORTED
 from tests.unit.agent.scripted_model import ScriptedModel, ScriptedReviewer, final_answer, tool_call
 from tests.unit.agent.test_agent_cli import KEY, VERIFIED, Lines, Runs, mcp
 from tests.unit.agent.uploaded import CONTRACT, LIABILITY, LIABILITY_QUOTE
+from tests.unit.uploads.upload_files import AGREEMENT_PAGES, pdf_bytes
 
 EXAMPLE = Path(__file__).parents[3] / "examples" / "uppladdning" / "exempelavtal-it-konsult.md"
 
@@ -163,3 +165,19 @@ def test_a_source_in_the_users_file_is_printed_as_din_fil() -> None:
     )
 
     assert cli.source_lines(upload)[0] == "[1] Din fil: avtal.pdf, 7 Ansvar, s. 2 ✓"
+
+
+@pytest.mark.anyio
+async def test_an_attached_pdf_is_named_with_its_pages_and_warning(tmp_path: Path) -> None:
+    path = tmp_path / "avtal.pdf"
+    path.write_bytes(pdf_bytes(AGREEMENT_PAGES))
+    used, log = terminal()
+
+    store = await cli.attach_files([path], "cli-1", Settings(_env_file=None), used)
+
+    [upload] = await store.list_uploads("cli-1")
+    assert cli.attached_lines(upload)[0] == "Bifogad fil: avtal.pdf (pdf, 4 sidor, 5 avsnitt)"
+    assert log.getvalue().splitlines() == cli.attached_lines(upload)
+    assert "  ! Sidan 3 har ingen text" in log.getvalue()
+    one_page = upload.model_copy(update={"pages": 1})
+    assert cli.attached_lines(one_page)[0] == "Bifogad fil: avtal.pdf (pdf, 1 sida, 5 avsnitt)"

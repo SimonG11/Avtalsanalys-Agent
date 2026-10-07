@@ -36,11 +36,17 @@ Det som styr besluten:
    ur körningens config (`thread_id`, som ag-ui-langgraph och kommandoraden sätter), aldrig ur
    modellens argument. Ett upload_id eller en hash som modellen kopierar från ett annat samtal
    hittas inte.
-3. **Gränser mot fientliga filer**, var och en kontrollerad före det arbete den begränsar: högst
-   10 MB (räknat medan kroppen kommer, också utan Content-Length), filtypen ur innehållet och
-   ändelsen som måste stämma, en Word-fils arkiv högst 100 MB uppackat och 5 000 delar innan det
-   öppnas, högst 300 PDF-sidor, högst 1,5 miljoner tecken, läsningen i en egen tråd med 60
-   sekunders gräns, högst fem filer per samtal. Filnamnet rensas från sökvägar och styrtecken.
+3. **Gränser mot fientliga filer**: högst 10 MB (räknat medan kroppen kommer, också utan
+   Content-Length), filtypen ur innehållet och ändelsen som måste stämma, en Word-fils arkiv högst
+   100 MB uppackat, 5 000 delar och 16 MB per XML-del innan det öppnas, där varje del packas upp en
+   megabyte i taget och inte får bli större än arkivet säger, högst 50 000 stycken i en Word-fil,
+   högst 300 PDF-sidor, högst 1,5 miljoner tecken (läsningen slutar vid sidan eller stycket där
+   texten passerar gränsen), högst fem filer per samtal och högst `UPLOAD_MAX_TOTAL_BYTES` (2 GB)
+   för alla samtal tillsammans, eftersom klienten väljer tråd-id:t. Allt arbete går inte att
+   begränsa innan det görs: pdfium bygger en sidas text hel, och en komprimerad sida kan ha
+   miljoner tecken. Läsningen körs därför i en egen barnprocess, högst två åt gången, som dödas
+   efter 60 sekunder och har högst 1 GB minne; när pdfium inte får minne avbryter det bara
+   barnprocessen, inte API:t. Filnamnet rensas från sökvägar och styrtecken.
 4. **Läsningen.** PDF läses ur textlagret med pypdfium2, Word med python-docx och text som UTF-8,
    utan Docling och utan OCR, så att en fil läses på någon sekund. Texten delas i avsnitt med
    inläsningens egna regler (`ingestion/step3_chunk.split_sections`), så att "punkt 6.2" i
@@ -66,8 +72,8 @@ Det som styr besluten:
    (`agent/upload_readers.py`). Citatet jämförs med den lagrade texten, som `read_upload` gav
    modellen. Kontraktets `Citation` får `source` (`"framework"` som standard, `"upload"` för en
    fil) och `upload_id`; för en fil är `file_title` filnamnet, `page_title` null och `page` PDF:ens
-   sida där avsnittet börjar (null för Word och text). `sha256` är filens hash, inte null som
-   kontraktets förslag: fältet förblir en sträng för mätningen och kommandoraden, och webbappen
+   sida där avsnittet börjar (null för Word och text). `sha256` är filens hash, som kontraktet
+   förutser, inte null: fältet förblir en sträng för mätningen och kommandoraden, och webbappen
    skiljer källorna på `source`. En fil har inga ändringar i avtalen, så regeln om senaste
    lydelsen frågar inte avtal-mcp om den (det skulle ge varje sådant svar en reservation), och ett
    datum eller ett nummer i filen backar samma värde i svaret, som ett citerat avsnitt ur avtalen.
@@ -78,7 +84,7 @@ Det som styr besluten:
    modellen att säga något, men inte få ett citat godkänt som inte står i en källa, och granskaren
    ser vilken källa som är användarens.
 9. **Sju dagar.** En fil läses inte efter `UPLOAD_RETENTION_DAYS` (7) och tas bort när API:t
-   startar och vid varje uppladdning, eller när användaren tar bort den.
+   startar, en gång i timmen och vid varje uppladdning, eller när användaren tar bort den.
 10. **Kommandoraden** bifogar lokala filer med `--fil` (en gång per fil), lästa med samma regler,
     i ett lager i minnet för körningen. Det är demots reserv när webbappen inte finns, och
     röktestets väg in.
@@ -95,8 +101,13 @@ Det som styr besluten:
   samtal med filer, och `read_upload` ger upp till 24 000 tecken (omkring 6 000 token) per
   sökning. Granskaren läser filens citerade avsnitt som andra källor.
 - **Kostnad i drift:** filerna ligger i Postgres som bytea, högst 10 MB och fem filer per samtal,
-  i sju dagar. Varje modellanrop i API:t listar trådens filer (en indexerad fråga), och
-  `list_uploads` läser alla en fils avsnitt.
+  i sju dagar, och högst 2 GB tillsammans. Varje modellanrop i API:t listar trådens filer (en
+  indexerad fråga), och `list_uploads` läser alla en fils avsnitt. Varje uppladdning startar en
+  barnprocess (millisekunder med multiprocessings forkserver), och två läsningar samtidigt kan ta
+  upp till 1 GB minne var.
+- **Det agenten har läst ur en fil finns kvar längre än filen.** Det agenten har läst ur en fil
+  (verktygssvaren och citaten) sparas i samtalets checkpoints, och i Langfuse när spårningen är på,
+  och tas inte bort när filen tas bort eller blir sju dagar gammal.
 - **Kända gränser:** ingen OCR och inga tabeller som tabeller (text i ordning), en Word-fil har
   inga sidor, och Words automatiska numrering finns inte i texten. Laddar användaren upp ett av
   ramavtalens egna dokument, byte för byte, har filen samma hash som dokumentet i korpusen, och i
@@ -119,7 +130,7 @@ Det som styr besluten:
   undantag).
 - **Lägga hela filen i prompten.** Enkelt för en kort fil, men en fil kan ha 1,5 miljoner tecken,
   och ett citat måste peka på ett avsnitt som kontrollen kan läsa igen.
-- **`sha256` null för en fil, som kontraktets förslag.** Fältet skulle bli valfritt för alla
+- **`sha256` null för en fil.** Fältet skulle bli valfritt för alla
   källor, också i mätningen och kommandoraden, utan att webbappen vinner något som `source` inte
   redan ger.
 - **Docling för uppladdade filer.** Bättre tabeller och OCR, men tiotals sekunder per fil, PyTorch

@@ -4,7 +4,7 @@ A conversation without files gets exactly the prompt and the tools of a
 graph without a store, byte for byte; a conversation with files gets them
 named after the prompt, with the upload tools; another conversation's files
 are not named; a file name cannot leave its quotes; a store that does not
-answer leaves the call as without files.
+answer leaves the prompt as it is but keeps the upload tools, which say so.
 """
 
 import json
@@ -122,11 +122,11 @@ async def test_a_file_name_stays_inside_its_quotes() -> None:
 
 
 @pytest.mark.anyio
-async def test_a_store_that_does_not_answer_leaves_the_call_as_without_files(
+async def test_a_store_that_does_not_answer_keeps_the_tools_and_names_no_files(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     messages, tools = await first_call(DownStore())
 
-    assert tools == BASE_TOOLS
+    assert tools == UPLOAD_TOOLS  # a call to them says the files cannot be read now
     assert messages[0] == SystemMessage(system_prompt(TODAY))
     assert "connection refused" in caplog.text

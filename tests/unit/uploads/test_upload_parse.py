@@ -3,26 +3,45 @@
 A PDF, a Word file and text files are cut at their numbered headings, with
 the page each section starts on; headings without numbers ("§ 3", "Bilaga
 2", Word's and Markdown's) are used when there is no numbered outline; a
-long section is cut into pieces that keep their pages. Each limit and each
-file that cannot be read gives its status and Swedish text. The PDFs and
-Word files are built in the tests (`upload_files.py`).
+long section is cut into pieces that keep their pages. A hyphen at a PDF
+line's end is kept, so a quote across it matches. Each limit and each file
+that cannot be read gives its status and Swedish text; a PDF or Word file
+with too much text is refused as soon as its text passes the limit, and a
+Word file with too many paragraphs before its text is read, its styles
+looked up once as python-docx would. The PDFs and Word files are built in
+the tests (`upload_files.py`).
 """
 
+import io
+import zipfile
+from typing import Any
+
+import docx
 import pytest
 from docx.document import Document as WordDocument
 
 from avtalsagent.domain.uploads import UploadKind
+from avtalsagent.uploads import extract
 from avtalsagent.uploads.errors import (
     EMPTY,
     NO_TEXT,
     NOT_UTF8,
     SCANNED,
+    TOO_MANY_PARAGRAPHS,
+    TOO_MUCH_TEXT_OVER,
     UNREADABLE,
     UploadRejected,
 )
-from avtalsagent.uploads.parse import ParsedFile, UploadLimits, parse_upload
+from avtalsagent.uploads.parse import ParsedFile, UploadLimits, _empty_pages_warning, parse_upload
 from avtalsagent.uploads.sections import MAX_SECTION_CHARS
-from tests.unit.uploads.upload_files import AGREEMENT_PAGES, docx_bytes, pdf_bytes, zip_bytes
+from avtalsagent.validation.citations import normalise
+from tests.unit.uploads.upload_files import (
+    AGREEMENT_PAGES,
+    docx_bytes,
+    pdf_bytes,
+    text_bomb_pdf,
+    zip_bytes,
+)
 
 LIMITS = UploadLimits(max_bytes=10 * 1024 * 1024, max_pages=300, max_characters=1_500_000)
 FILLER = "Leverantören ska utföra tjänsten enligt avtalet och dess bilagor med omsorg."
@@ -71,6 +90,24 @@ def test_pages_without_text_are_named_in_a_warning() -> None:
     pages = [*AGREEMENT_PAGES, [], []]
     (warning,) = parse(pdf_bytes(pages), "avtal.pdf").warnings
     assert warning.startswith("Sidorna 3, 5 och 6 har ingen text")
+    assert _empty_pages_warning(list(range(1, 14))).startswith(
+        "Sidorna 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 och 3 till har ingen text"
+    )
+
+
+def test_a_hyphen_at_a_lines_end_is_kept_so_a_quote_across_it_matches() -> None:
+    lines = [
+        "1. Avtalets omfattning",
+        "Avtalet avser IT-",
+        "konsulttjänster enligt ramavtalet och ska tillämpas av Kunden.",
+    ]
+
+    [section] = parse(pdf_bytes([lines]), "avtal.pdf").sections
+
+    # pdfium gives the hyphen as U+FFFE and joins the two lines.
+    assert "Avtalet avser IT-konsulttjänster enligt ramavtalet" in section.text
+    assert "\ufffe" not in section.text
+    assert normalise("avser IT-konsulttjänster enligt ramavtalet") in normalise(section.text)
 
 
 def test_a_pdf_without_text_is_refused_as_scanned() -> None:
@@ -107,6 +144,85 @@ def test_too_much_text_is_413() -> None:
 
     assert error.status_code == 413
     assert "högst 100" in error.detail
+
+
+def test_a_pdf_stops_at_the_page_where_its_text_passes_the_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Five pages of 500 000 characters each, 2 kB on disk.
+    read: list[int] = []
+    page_text = extract._page_text
+
+    def counted(pdf: Any, index: int) -> str:
+        read.append(index)
+        return page_text(pdf, index)
+
+    monkeypatch.setattr(extract, "_page_text", counted)
+    limits = UploadLimits(max_bytes=LIMITS.max_bytes, max_pages=300, max_characters=1_200_000)
+
+    error = rejected(text_bomb_pdf(pages=5, lines=5_000), "avtal.pdf", limits)
+
+    assert (error.status_code, error.detail) == (
+        413,
+        TOO_MUCH_TEXT_OVER.format(limit="1\u00a0200\u00a0000"),
+    )
+    assert read == [0, 1, 2]
+
+
+def test_a_word_file_stops_where_its_text_passes_the_limit() -> None:
+    def build(document: WordDocument) -> None:
+        for number in range(1, 40):
+            document.add_paragraph(f"{number} {FILLER}")
+
+    limits = UploadLimits(max_bytes=LIMITS.max_bytes, max_pages=300, max_characters=1_000)
+
+    error = rejected(docx_bytes(build), "avtal.docx", limits)
+
+    assert (error.status_code, error.detail) == (
+        413,
+        TOO_MUCH_TEXT_OVER.format(limit="1\u00a0000"),
+    )
+
+
+def test_a_word_file_with_too_many_paragraphs_is_413_before_its_text_is_read() -> None:
+    empty = docx_bytes(lambda document: document.add_paragraph("Hej"))
+    paragraphs = b"<w:p/>" * (extract.MAX_DOCX_BLOCKS + 1)
+    data = zip_bytes(
+        {
+            name: content.replace(b"<w:body>", b"<w:body>" + paragraphs, 1)
+            if name == "word/document.xml"
+            else content
+            for name, content in unzipped(empty).items()
+        }
+    )
+
+    error = rejected(data, "avtal.docx")
+
+    assert error.status_code == 413
+    assert error.detail == TOO_MANY_PARAGRAPHS.format(count="50\u00a0003", limit="50\u00a0000")
+
+
+def unzipped(data: bytes) -> dict[str, bytes]:
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return {name: archive.read(name) for name in archive.namelist()}
+
+
+def test_the_style_names_are_those_python_docx_gives_each_paragraph() -> None:
+    def build(document: WordDocument) -> None:
+        document.add_heading("Rubrik", 1)
+        document.add_paragraph("Punkt", style="List Bullet")
+        document.add_paragraph("Brödtext")
+        for style_id in ("DefaultParagraphFont", "FinnsInte"):  # a character style's, none's
+            paragraph = document.add_paragraph(style_id)
+            paragraph._p.get_or_add_pPr().get_or_add_pStyle().val = style_id
+
+    document = docx.Document(io.BytesIO(docx_bytes(build)))
+    names = extract._paragraph_style_names(document)
+
+    given = [(p.style.name if p.style is not None else "") for p in document.paragraphs]
+    looked_up = [names.get(p._p.style, names[None]) for p in document.paragraphs]
+    assert looked_up == given
+    assert given == ["Heading 1", "List Bullet", "Normal", "Normal", "Normal"]
 
 
 def test_too_many_bytes_and_an_empty_file_are_refused() -> None:

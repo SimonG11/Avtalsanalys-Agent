@@ -2,7 +2,8 @@
 
 An upload is read back with its sections and bytes by its own thread only;
 the same file in a thread is the same upload; a thread has at most
-`max_per_thread`; deleting removes it; an upload past the retention is not
+`max_per_thread`, and all threads together at most `max_total_bytes`;
+deleting removes it; an upload past the retention is not
 read and is deleted by `delete_expired`. The clock is a variable the test
 moves. The same behaviour in Postgres is in
 tests/integration/test_upload_store_postgres.py.
@@ -14,7 +15,7 @@ from uuid import uuid4
 import pytest
 
 from avtalsagent.domain.uploads import NewUpload, UploadKind, UploadSection
-from avtalsagent.uploads.store import MemoryUploadStore, TooManyUploads
+from avtalsagent.uploads.store import MemoryUploadStore, StoreFull, TooManyUploads
 
 THREAD = "tråd-1"
 OTHER = "tråd-2"
@@ -117,6 +118,33 @@ async def test_a_thread_has_at_most_max_per_thread_uploads() -> None:
     assert not created
     await store.add_upload(new_upload(OTHER, content=b"fil 3"), max_per_thread=2)
     assert [u.filename for u in await store.list_uploads(THREAD)] == ["avtal.pdf"] * 2
+
+
+@pytest.mark.anyio
+async def test_all_threads_together_have_at_most_max_total_bytes() -> None:
+    clock = Clock()
+    store = MemoryUploadStore(timedelta(days=7), clock)
+    await store.add_upload(new_upload(content=b"a" * 60), max_per_thread=5, max_total_bytes=100)
+
+    # Thread ids are the client's to choose: a new one does not get more space.
+    with pytest.raises(StoreFull):
+        await store.add_upload(
+            new_upload(OTHER, content=b"b" * 41), max_per_thread=5, max_total_bytes=100
+        )
+    fits, created = await store.add_upload(
+        new_upload(OTHER, content=b"b" * 40), max_per_thread=5, max_total_bytes=100
+    )
+    assert created and fits.size == 40
+    # The same file again takes no more space, and an expired file none at all.
+    _, created = await store.add_upload(
+        new_upload(content=b"a" * 60), max_per_thread=5, max_total_bytes=100
+    )
+    assert not created
+    clock.now += timedelta(days=8)
+    _, created = await store.add_upload(
+        new_upload("tråd-3", content=b"c" * 100), max_per_thread=5, max_total_bytes=100
+    )
+    assert created
 
 
 @pytest.mark.anyio

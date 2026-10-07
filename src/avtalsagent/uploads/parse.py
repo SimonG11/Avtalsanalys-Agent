@@ -9,13 +9,17 @@ What:
 
 Why:
     The file comes from a browser and can be anything, so every step has a
-    limit that is checked before the work it bounds: the bytes before
-    anything is read, the type from the content (`file_type.py`), a Word
-    archive's unpacked size before it is opened, a PDF's pages before their
-    text is read, and the characters before the text is cut into sections.
-    The function is pure and synchronous: the route runs it in a worker
-    thread with a time limit, so a slow file never holds up the agent's
-    runs.
+    limit: the bytes before anything is read, the type from the content
+    (`file_type.py`), a Word archive's real unpacked size and its XML parts
+    before it is opened, a PDF's pages before their text is read, and the
+    characters as the text is read, page by page or paragraph by paragraph,
+    so the rest of a file that has too much is never read. Not all the work
+    can be bounded before it is done: pdfium builds a page's text whole,
+    and one compressed page can hold millions of characters. So the
+    function is pure and synchronous, and the API and the command line run
+    it in a child process (`parse_process.py`) that has a time limit and a
+    memory limit and is killed when it passes either, so a hostile file
+    never holds up or brings down the agent's runs.
 
 How:
     `detect_kind`, then the kind's reader in `extract.py`, then
@@ -39,6 +43,7 @@ from avtalsagent.uploads.errors import (
     TOO_MUCH_TEXT,
     UNREADABLE,
     UploadRejected,
+    thousands,
 )
 from avtalsagent.uploads.extract import docx_blocks, pdf_blocks, text_blocks
 from avtalsagent.uploads.file_type import detect_kind
@@ -95,11 +100,11 @@ def parse_upload(data: bytes, filename: str, limits: UploadLimits) -> ParsedFile
     warnings: list[str] = []
     try:
         if kind is UploadKind.PDF:
-            blocks, pages, empty = pdf_blocks(data, limits.max_pages)
+            blocks, pages, empty = pdf_blocks(data, limits.max_pages, limits.max_characters)
             if empty:
                 warnings.append(_empty_pages_warning(empty))
         elif kind is UploadKind.DOCX:
-            blocks = docx_blocks(data)
+            blocks = docx_blocks(data, limits.max_characters)
         else:
             blocks = text_blocks(data, markdown=filename.lower().endswith((".md", ".markdown")))
     except UploadRejected:
@@ -146,8 +151,3 @@ def megabytes(size: int) -> str:
     """A size in Swedish: 10485760 gives "10 MB"."""
     value = size / (1024 * 1024)
     return f"{value:.0f} MB" if value >= 1 else f"{size / 1024:.0f} kB"
-
-
-def thousands(number: int) -> str:
-    """A number with (non-breaking) spaces between thousands, as Swedish writes it: "1 500 000"."""
-    return f"{number:,}".replace(",", " ")

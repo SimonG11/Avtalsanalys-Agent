@@ -8,6 +8,8 @@ dependencies = [
     "alembic>=1.20.0",
     "beautifulsoup4>=4.13",
     # Docling reads PDF and Word; models-local runs its layout and table models on PyTorch.
+    # format-docx also brings python-docx, which uploads/extract.py imports directly for
+    # uploaded Word files (ADR 0026); it is listed itself only in the dev group.
     "docling-slim[convert-core,format-docx,format-pdf,models-local]>=2.133",
     # The table model needs OpenCV, and its package leaves the build to us: headless,
     # without GUI libraries.

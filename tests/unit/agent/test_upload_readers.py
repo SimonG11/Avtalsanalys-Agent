@@ -2,15 +2,18 @@
 
 The readers find a cited hash among the conversation's files and read the
 section from the store, else ask the fallback (avtal-mcp's stand-in); a file
-has no amendments. Through the whole graph, an answer that cites the user's
-file is verified with the citation's fields from the store, a forged quote
-fails, a hash from another conversation is not found, a date in the file
-backs the same date in the answer, and the reviewer is told which source is
-the user's file.
+has no amendments, and a store that stops answering at the section gives
+none, without asking the fallback. Through the whole graph, an answer that
+cites the user's file is verified with the citation's fields from the
+store, a forged quote fails and goes back to the model naming read_upload,
+a hash from another conversation is not found, a date in the file backs the
+same date in the answer, and the reviewer is told which source is the
+user's file.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
+from uuid import UUID
 
 import pytest
 from langchain.agents.middleware import InputAgentState
@@ -26,8 +29,8 @@ from avtalsagent.agent.reviewer import UPLOAD_NOTE, review_messages
 from avtalsagent.agent.schemas import Answer
 from avtalsagent.agent.upload_readers import UploadAmendmentReader, UploadSectionReader
 from avtalsagent.config import Settings
-from avtalsagent.domain.uploads import Upload
-from avtalsagent.uploads.store import MemoryUploadStore
+from avtalsagent.domain.uploads import Upload, UploadSection
+from avtalsagent.uploads.store import MemoryUploadStore, UploadStoreUnavailable
 from avtalsagent.validation.review import ReviewInput, ReviewSource
 from tests.unit.agent.scripted_model import (
     DictAmendments,
@@ -146,6 +149,30 @@ async def test_a_position_the_file_does_not_have_is_none_without_asking_avtal_mc
         await UploadSectionReader(store, fallback, in_thread("t1")).read(upload.sha256, 99) is None
     )
     assert fallback.reads == []
+
+
+class DownAtTheSection(MemoryUploadStore):
+    """A store that lists the thread's files but does not answer when a section is read."""
+
+    async def read_section(
+        self, thread_id: str, upload_id: UUID, position: int
+    ) -> UploadSection | None:
+        raise UploadStoreUnavailable("connection refused")
+
+
+@pytest.mark.anyio
+async def test_a_store_that_stops_answering_at_the_section_gives_none_without_avtal_mcp(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = DownAtTheSection(timedelta(days=7))
+    upload = await add(store, "t1")
+    fallback = DictReader([SECTION])
+
+    reader = UploadSectionReader(store, fallback, in_thread("t1"))
+
+    assert await reader.read(upload.sha256, LIABILITY) is None
+    assert fallback.reads == []
+    assert "connection refused" in caplog.text
 
 
 @pytest.mark.anyio
@@ -275,6 +302,29 @@ async def test_a_forged_quote_from_the_users_file_fails() -> None:
     assert answer.status == "with_reservation"
     [citation] = answer.citations
     assert (citation.verified, citation.source) == (False, "upload")
+
+
+@pytest.mark.anyio
+async def test_a_forged_quote_from_the_users_file_goes_back_naming_read_upload() -> None:
+    store = memory_store()
+    upload = await add(store, "t1")
+
+    result = await ask(
+        store,
+        [
+            final_answer(
+                "Ditt avtal begränsar ansvaret till 50 procent [1].",
+                [cites(upload, "skadeståndsansvar är begränsat till 50 procent")],
+                call_id="c1",
+            ),
+            final_answer("Det framgår inte.", answered=False, call_id="c2"),
+        ],
+        retries=1,
+    )
+
+    feedback = [m for m in result["messages"] if isinstance(m, ToolMessage) and m.status == "error"]
+    assert "Kopiera det ur texten från read_upload," in feedback[0].text
+    assert "från read_section, utan" not in feedback[0].text
 
 
 @pytest.mark.anyio

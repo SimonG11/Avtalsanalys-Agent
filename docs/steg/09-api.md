@@ -227,7 +227,7 @@ i [steg 07](07-agent.md#egna-filer-2026-10-07), hela designen i
 
 | Route | Vad |
 |---|---|
-| `POST /api/uploads` | Formulär (multipart) med `file` och `thread_id`. 201 med `{upload_id, filename, kind, pages, sections, characters, size, warnings, created_at}`; 200 med samma svar om tråden redan har filen. 409 när tråden har fem filer, 413 för stor fil (bytes, sidor, tecken eller uppackad Word-fil), 415 fel filtyp, 422 ingen text eller trasig fil, 503 när databasen inte svarar |
+| `POST /api/uploads` | Formulär (multipart) med `file` och `thread_id`. 201 med `{upload_id, filename, kind, pages, sections, characters, size, warnings, created_at}`; 200 med samma svar om tråden redan har filen. 409 när tråden har fem filer, 413 för stor fil (bytes, sidor, tecken, stycken, minne eller uppackad Word-fil), 415 fel filtyp, 422 ingen text, trasig fil eller mer än 60 sekunder att läsa, 503 när databasen inte svarar, 507 när alla filer tillsammans tar `UPLOAD_MAX_TOTAL_BYTES` |
 | `GET /api/uploads?thread_id=…` | `{"uploads": [...]}`, trådens filer, äldst först |
 | `DELETE /api/uploads/{upload_id}?thread_id=…` | 204, eller 404 om tråden inte har filen |
 | `GET /api/uploads/{upload_id}/file?thread_id=…` | Filen som den laddades upp: PDF och text `inline`, Word som bilaga |
@@ -238,21 +238,37 @@ samma lager (`uploads/store.py`).
 
 **Läsningen** (`uploads/`). Filtypen avgörs av innehållet och namnets ändelse måste stämma med det:
 `%PDF-` för PDF, ett zip-arkiv med `word/document.xml` för .docx, och .txt eller .md utan
-NUL-tecken för text. En Word-fils arkiv kontrolleras innan det öppnas (högst 100 MB uppackat och
-5 000 delar), så en zip-bomb stoppas. En PDF läses med pypdfium2:s textlager, sida för sida, utan
-Docling och PyTorch (300 sidor tar ungefär en sekund); en PDF utan text (inskannad) får 422, och
-sidor utan text nämns i `warnings`. Word läses med python-docx (rubrikformat, listor, tabeller) och
-text som UTF-8, där Markdowns `#`-rubriker räknas. Texten delas sedan i avsnitt med inläsningens
+NUL-tecken för text (en textfil i UTF-16 får felet för text som inte är UTF-8). En Word-fils arkiv
+kontrolleras innan det öppnas: högst 100 MB uppackat, 5 000 delar och 16 MB per XML-del, bara
+okomprimerade och deflate-packade delar, och varje del packas upp en megabyte i taget och får inte
+bli större än arkivet säger, så en zip-bomb stoppas också när arkivet ljuger om storlekarna. En PDF
+läses med pypdfium2:s textlager, sida för sida, utan Docling och PyTorch (300 sidor tar ungefär en
+sekund), och läsningen slutar när texten passerar teckengränsen; en PDF utan text (inskannad) får
+422, och sidor utan text nämns i `warnings`. Ett avstavningsstreck i slutet av en rad, som pdfium
+ger som U+FFFE, blir "-" igen, så att ett citat av de tryckta orden stämmer. Word läses med
+python-docx (rubrikformat, listor, tabeller; högst 50 000 stycken och tabeller) och text som
+UTF-8, där Markdowns `#`-rubriker räknas. Texten delas sedan i avsnitt med inläsningens
 egna regler (`ingestion/step3_chunk.split_sections`): vid numrerade rubriker som "6.2 Ansvar", och
 annars vid rubriker utan nummer, "§ 3" och "Bilaga 2". Ett avsnitt längre än 12 000 tecken delas
-i delar ("(del 2 av 3)"), som var och en har sidan den börjar på. Läsningen körs i en egen tråd med
-en gräns på 60 sekunder, så att agentens körningar aldrig väntar på den.
+i delar ("(del 2 av 3)"), som var och en har sidan den börjar på.
+
+Läsningen körs i en egen barnprocess (`uploads/parse_process.py`), högst två åt gången, med 60
+sekunders gräns och 1 GB minne. En del arbete går inte att begränsa innan det görs: pdfium bygger
+en sidas text hel, och en PDF på 40 kB kan ha en sida med tio miljoner tecken, som tar gigabyte.
+När pdfium inte får minne avbryter det hela processen. I barnprocessen dödas läsningen när tiden
+går ut, minnet är begränsat och en process som dör tar inget annat med sig: filen får 422, och
+API:ts andra samtal märker inget.
 
 **Lagringen.** Med `UPLOAD_STORE=postgres` (compose) ligger filerna i tabellerna `upload` (en rad
 per fil, med filens bytes) och `upload_section`, som API:t skapar själv när det startar, som
 LangGraphs checkpointtabeller. Demot behöver alltså bara `docker compose up --build`, inte
 inläsningen igen. `memory` (standard) håller filerna i processen. Filer äldre än sju dagar läses
-aldrig och tas bort när API:t startar och vid varje uppladdning.
+aldrig och tas bort när API:t startar, en gång i timmen och vid varje uppladdning. Tråd-id:t väljer
+klienten själv, så gränsen per konversation begränsar inte lagret: alla filer tillsammans får ta
+högst `UPLOAD_MAX_TOTAL_BYTES`.
+
+Det agenten har läst ur en fil (verktygssvaren och citaten) sparas i samtalets checkpoints, och i
+Langfuse när spårningen är på, och tas inte bort när filen tas bort eller blir sju dagar gammal.
 
 | Variabel | Standard | Vad |
 |---|---|---|
@@ -261,20 +277,20 @@ aldrig och tas bort när API:t startar och vid varje uppladdning.
 | `UPLOAD_MAX_PAGES` | 300 | Högsta antal sidor i en PDF |
 | `UPLOAD_MAX_CHARACTERS` | 1500000 | Högsta antal tecken text i en fil |
 | `UPLOAD_MAX_PER_THREAD` | 5 | Filer per konversation |
-| `UPLOAD_RETENTION_DAYS` | 7 | Dagar en fil sparas |
+| `UPLOAD_MAX_TOTAL_BYTES` | 2147483648 | Bytes alla konversationers filer får ta tillsammans (2 GB) |
+| `UPLOAD_RETENTION_DAYS` | 7 | Dagar en fil läses och sparas i upload-tabellerna |
 
-Tester: `tests/unit/uploads/` (filtyper, zip-bomben, namnen, läsningen av PDF, Word och text,
-gränserna, avsnitten och lagret i minnet; PDF:erna byggs med reportlab och Word-filerna med
-python-docx i testerna), `tests/unit/api/test_api_uploads.py` (routerna genom hela appen, varje
-fel, trådarna hålls isär) och `tests/integration/test_upload_store_postgres.py` (lagret mot
-Postgres, också två uppladdningar samtidigt). CI:s compose-jobb laddar upp, läser och tar bort en
-textfil genom API:t.
+Tester: `tests/unit/uploads/` (filtyper, zip-bomberna, namnen, läsningen av PDF, Word och text,
+gränserna, barnprocessen, avsnitten och lagret i minnet; PDF:erna byggs med reportlab och
+Word-filerna med python-docx i testerna), `tests/unit/api/test_api_uploads.py` (routerna genom
+hela appen, varje fel, en läsning vars process dör, trådarna hålls isär) och
+`tests/integration/test_upload_store_postgres.py` (lagret mot Postgres, också fyra uppladdningar
+samtidigt mot en gräns på två, och gränsen för alla filer). CI:s compose-jobb laddar upp, läser och
+tar bort en textfil genom API:t.
 
 Begränsningar: inskannade sidor läses inte (ingen OCR), en Word-fil har inga sidor, Words
 automatiska numrering finns inte i texten (avsnitten får då rubrikerna utan nummer), och en "Bilaga"
-på PDF:ens sista sida blir en del av avsnittet före, som i inläsningen. En läsning som passerar
-tidsgränsen får 422, men dess tråd arbetar klart i bakgrunden; gränserna för sidor och tecken
-håller den kort.
+på PDF:ens sista sida blir en del av avsnittet före, som i inläsningen.
 
 ## Kända begränsningar
 

@@ -47,6 +47,7 @@ ENV_VARS = (
     "UPLOAD_MAX_PAGES",
     "UPLOAD_MAX_CHARACTERS",
     "UPLOAD_MAX_PER_THREAD",
+    "UPLOAD_MAX_TOTAL_BYTES",
     "UPLOAD_RETENTION_DAYS",
 )
 
@@ -248,6 +249,7 @@ def test_uploads_are_kept_in_memory_with_the_contracts_limits_by_default() -> No
     assert settings.upload_max_bytes == 10 * 1024 * 1024  # webbapp-kontrakt.md, point 33
     assert (settings.upload_max_pages, settings.upload_max_characters) == (300, 1_500_000)
     assert settings.upload_max_per_thread == 5
+    assert settings.upload_max_total_bytes == 2 * 1024**3
     assert settings.upload_retention_days == 7  # point 38
 
 
@@ -262,5 +264,9 @@ def test_upload_settings_are_read_and_checked(monkeypatch: pytest.MonkeyPatch) -
         Settings(_env_file=None)
     monkeypatch.setenv("UPLOAD_STORE", "memory")
     monkeypatch.setenv("UPLOAD_MAX_BYTES", "0")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+    monkeypatch.setenv("UPLOAD_MAX_BYTES", "1")
+    monkeypatch.setenv("UPLOAD_MAX_TOTAL_BYTES", "0")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)

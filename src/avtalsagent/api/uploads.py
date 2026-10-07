@@ -27,16 +27,18 @@ How:
     read, so a large body never reaches the disk. Then, in order: expired
     uploads are deleted, the same file in the thread is returned at once,
     a thread with UPLOAD_MAX_PER_THREAD files is 409, and the file is read
-    in a worker thread, at most `PARSE_SECONDS` (422 after that; the thread
-    finishes on its own, bounded by the limits). The store then adds it,
-    checking the thread's limit and the same file again in one transaction.
+    in a child process (`app.state.parser`, `uploads/parse_process.py`),
+    which is killed after PARSE_SECONDS (422) or when it passes its memory
+    limit, so a hostile file can neither hold the API's threads nor bring
+    its process down. The store then adds it, checking the thread's limit,
+    the same file again and the space all files may take (507 when they
+    take it all) in one transaction.
     A store whose database does not answer is 503 with a fixed text, the
     details logged. The file route sends a PDF and text inline and a Word
     file as an attachment, with `nosniff` and the stored name, sanitized
     again, in both an ASCII and a UTF-8 form.
 """
 
-import asyncio
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
@@ -56,20 +58,24 @@ from avtalsagent.config import Settings
 from avtalsagent.domain.uploads import NewUpload, Upload, UploadKind
 from avtalsagent.uploads.errors import TOO_LARGE, UploadRejected
 from avtalsagent.uploads.file_type import safe_filename
-from avtalsagent.uploads.parse import ParsedFile, UploadLimits, megabytes, parse_upload
-from avtalsagent.uploads.store import TooManyUploads, UploadStore, UploadStoreUnavailable
+from avtalsagent.uploads.parse import ParsedFile, UploadLimits, megabytes
+from avtalsagent.uploads.parse_process import ProcessParser
+from avtalsagent.uploads.store import (
+    StoreFull,
+    TooManyUploads,
+    UploadStore,
+    UploadStoreUnavailable,
+)
 
 _log = logging.getLogger(__name__)
 
-# Seconds a file may take to read; a PDF of 300 pages takes a few.
-PARSE_SECONDS = 60.0
 # Bytes of the form around the file: the part headers and the thread's id.
 FORM_MARGIN = 64 * 1024
 THREAD_ID_MAX_CHARS = 200
 
 NOT_FOUND = "Filen finns inte i den här konversationen."
 TOO_MANY = "Konversationen har redan {limit} filer. Ta bort en innan du laddar upp en ny."
-TOO_SLOW = "Filen tog för lång tid att läsa. Prova en mindre fil."
+STORE_FULL = "Det finns inte plats för fler filer just nu. Försök igen senare."
 BAD_FORM = "Uppladdningen ska vara ett formulär med fälten file och thread_id."
 
 MEDIA_TYPES = {
@@ -126,6 +132,11 @@ def _store(request: Request) -> UploadStore:
     return store
 
 
+def _parser(request: Request) -> ProcessParser:
+    parser: ProcessParser = request.app.state.parser
+    return parser
+
+
 def _settings(request: Request) -> Settings:
     settings: Settings = request.app.state.settings
     return settings
@@ -169,8 +180,12 @@ _FORM_SCHEMA: dict[str, Any] = {
         409: {"description": "Tråden har redan så många filer som den får ha."},
         413: {"description": "För stor fil, för många sidor eller för mycket text."},
         415: {"description": "Filtypen stöds inte."},
-        422: {"description": "Ingen text att läsa, eller en fil som inte går att läsa."},
+        422: {
+            "description": "Ingen text att läsa, en fil som inte går att läsa eller som tar "
+            "för lång tid att läsa."
+        },
         503: {"description": "Databasen svarar inte."},
+        507: {"description": "Filerna tar redan all plats de får ta."},
     },
 )
 async def upload_file(request: Request, response: Response) -> UploadInfo:
@@ -186,7 +201,7 @@ async def upload_file(request: Request, response: Response) -> UploadInfo:
         return UploadInfo.of(same)
     if len(current) >= settings.upload_max_per_thread:
         raise HTTPException(409, detail=TOO_MANY.format(limit=settings.upload_max_per_thread))
-    parsed = await _parse(data, filename, UploadLimits.from_settings(settings))
+    parsed = await _parse(_parser(request), data, filename, UploadLimits.from_settings(settings))
     new = NewUpload(
         thread_id=thread_id,
         filename=filename,
@@ -200,12 +215,19 @@ async def upload_file(request: Request, response: Response) -> UploadInfo:
     )
     try:
         upload, created = await _stored(
-            lambda: store.add_upload(new, settings.upload_max_per_thread)
+            lambda: store.add_upload(
+                new,
+                settings.upload_max_per_thread,
+                max_total_bytes=settings.upload_max_total_bytes,
+            )
         )
     except TooManyUploads:
         raise HTTPException(
             409, detail=TOO_MANY.format(limit=settings.upload_max_per_thread)
         ) from None
+    except StoreFull:
+        _log.warning("the uploads take UPLOAD_MAX_TOTAL_BYTES; a file was refused")
+        raise HTTPException(507, detail=STORE_FULL) from None
     response.status_code = 201 if created else 200
     return UploadInfo.of(upload)
 
@@ -251,17 +273,14 @@ async def _read_form(request: Request, max_bytes: int) -> tuple[bytes, str, str]
     return data, filename, thread_id
 
 
-async def _parse(data: bytes, filename: str, limits: UploadLimits) -> ParsedFile:
-    """The file read in a worker thread, at most `PARSE_SECONDS`; refusals as HTTP errors."""
+async def _parse(
+    parser: ProcessParser, data: bytes, filename: str, limits: UploadLimits
+) -> ParsedFile:
+    """The file read in a child process; a refusal as an HTTP error."""
     try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(parse_upload, data, filename, limits), PARSE_SECONDS
-        )
+        return await parser.parse(data, filename, limits)
     except UploadRejected as rejected:
         raise HTTPException(rejected.status_code, detail=rejected.detail) from None
-    except TimeoutError:
-        _log.warning("reading the uploaded file %r took more than %s s", filename, PARSE_SECONDS)
-        raise HTTPException(422, detail=TOO_SLOW) from None
 
 
 @router.get(

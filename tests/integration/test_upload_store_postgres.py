@@ -5,7 +5,9 @@ What:
     its tables), adds an upload with its bytes and sections and reads them
     back; checks that another thread finds nothing, that the same file is
     one upload, that two uploads at once cannot pass the thread's limit,
-    that deleting an upload removes its sections, and that an upload past
+    that all threads together cannot pass the store's limit in bytes, which
+    does not count expired files, that deleting an upload removes its
+    sections, and that an upload past
     the retention is not read and is deleted when the store opens.
 
 Why:
@@ -32,7 +34,7 @@ from avtalsagent.config import Settings
 from avtalsagent.domain.uploads import NewUpload, UploadKind, UploadSection
 from avtalsagent.uploads.open_store import open_upload_store
 from avtalsagent.uploads.postgres_store import PostgresUploadStore
-from avtalsagent.uploads.store import TooManyUploads
+from avtalsagent.uploads.store import StoreFull, TooManyUploads
 
 DATABASE = "upload_store"
 THREAD = "tråd-1"
@@ -161,6 +163,32 @@ async def test_uploads_at_the_same_time_cannot_pass_the_limit(settings: Settings
 
         assert sum(isinstance(result, TooManyUploads) for result in results) == 2
         assert len(await store.list_uploads(THREAD)) == 2
+
+
+@pytest.mark.anyio
+async def test_all_threads_together_have_at_most_max_total_bytes(settings: Settings) -> None:
+    async with open_upload_store(settings) as store:
+        first, _ = await store.add_upload(
+            new_upload(content=b"a" * 60), max_per_thread=5, max_total_bytes=100
+        )
+        with pytest.raises(StoreFull):
+            await store.add_upload(
+                new_upload(OTHER, content=b"b" * 41), max_per_thread=5, max_total_bytes=100
+            )
+        _, created = await store.add_upload(
+            new_upload(OTHER, content=b"b" * 40), max_per_thread=5, max_total_bytes=100
+        )
+        assert created
+        execute(
+            settings,
+            "UPDATE upload SET created_at = now() - interval '8 days' "
+            f"WHERE id = '{first.upload_id}'",
+        )
+        # The expired file is not counted, before or after a sweep deletes it.
+        _, created = await store.add_upload(
+            new_upload("tråd-3", content=b"c" * 60), max_per_thread=5, max_total_bytes=100
+        )
+        assert created
 
 
 @pytest.mark.anyio

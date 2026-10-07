@@ -2,11 +2,14 @@
 
 UPLOAD_STORE=memory gives the memory store with the settings' retention;
 postgres opens the Postgres store and deletes the expired uploads before the
-API uses it. A database error in the Postgres store, a pool timeout
+API uses it; while the store is open, the expired uploads are deleted again
+at each sweep, also after a sweep the database did not answer, and the
+sweeps stop when the block ends. A database error in the Postgres store, a pool timeout
 included, is `UploadStoreUnavailable`, which the routes answer with 503. The
 store's SQL runs against Postgres in tests/integration.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -69,6 +72,42 @@ async def test_postgres_opens_its_store_and_deletes_the_expired_uploads_first(
 
     assert fake.log[-1] == "close"
     assert opened == [settings]
+
+
+class SweptStore(FakePostgresStore):
+    """A store whose first sweep finds the database down."""
+
+    async def delete_expired(self) -> int:
+        self.log.append("delete expired")
+        if self.log.count("delete expired") == 2:
+            raise UploadStoreUnavailable("connection refused")
+        return 1
+
+
+@pytest.mark.anyio
+async def test_the_expired_uploads_are_swept_while_the_store_is_open(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    swept = SweptStore()
+
+    @asynccontextmanager
+    async def open_postgres(settings: Settings) -> AsyncIterator[SweptStore]:
+        yield swept
+
+    monkeypatch.setattr(open_store, "open_postgres_upload_store", open_postgres)
+    settings = Settings(_env_file=None, upload_store="postgres")
+
+    async with open_store.open_upload_store(settings, sweep_seconds=0.01):
+        for _ in range(500):
+            if swept.log.count("delete expired") >= 4:
+                break
+            await asyncio.sleep(0.01)
+    sweeps = len(swept.log)
+    await asyncio.sleep(0.05)
+
+    assert sweeps >= 4  # on opening, the failed sweep and the ones after it
+    assert len(swept.log) == sweeps  # no sweep after the block
+    assert "connection refused" in caplog.text
 
 
 class FailingPool:

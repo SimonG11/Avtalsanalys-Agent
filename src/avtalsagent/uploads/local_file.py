@@ -1,11 +1,12 @@
 """A file on this machine as an upload: for the command line's `--fil`.
 
 What:
-    `read_local_file(path, thread_id, limits)` reads a file from disk and
-    gives the `NewUpload` the store takes, read into sections by the same
-    rules and limits as an upload through the API (`parse.py`). A file that
-    is refused raises `UploadRejected` with the API's Swedish text; one that
-    cannot be opened raises `OSError`.
+    `await read_local_file(path, thread_id, limits, parser)` reads a file
+    from disk and gives the `NewUpload` the store takes, read into sections
+    by the same rules and limits as an upload through the API (`parse.py`),
+    in a child process as there (`parse_process.ProcessParser`). A file
+    that is refused raises `UploadRejected` with the API's Swedish text;
+    one that cannot be opened raises `OSError`.
 
 Why:
     The command line is the demo's fallback when the web app is not there
@@ -26,16 +27,19 @@ from pathlib import Path
 from avtalsagent.domain.uploads import NewUpload
 from avtalsagent.uploads.errors import TOO_LARGE, UploadRejected
 from avtalsagent.uploads.file_type import safe_filename
-from avtalsagent.uploads.parse import UploadLimits, megabytes, parse_upload
+from avtalsagent.uploads.parse import UploadLimits, megabytes
+from avtalsagent.uploads.parse_process import ProcessParser
 
 
-def read_local_file(path: Path, thread_id: str, limits: UploadLimits) -> NewUpload:
+async def read_local_file(
+    path: Path, thread_id: str, limits: UploadLimits, parser: ProcessParser
+) -> NewUpload:
     """The file at `path` as an upload of the thread, or `UploadRejected` (see the module)."""
     if path.stat().st_size > limits.max_bytes:
         raise UploadRejected(413, TOO_LARGE.format(limit=megabytes(limits.max_bytes)))
     data = path.read_bytes()
     filename = safe_filename(path.name)
-    parsed = parse_upload(data, filename, limits)
+    parsed = await parser.parse(data, filename, limits)
     return NewUpload(
         thread_id=thread_id,
         filename=filename,

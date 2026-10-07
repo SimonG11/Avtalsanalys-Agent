@@ -29,11 +29,12 @@ How:
     checkpointer (`open_checkpointer`; CHECKPOINTER=postgres in the
     container) and the document lookup, then the upload store
     (`open_upload_store`; UPLOAD_STORE=postgres in the container, which
-    creates its tables and deletes expired files), after the tracing
-    (`open_tracing`, off without Langfuse's keys), which closes last and so
-    sends what is left. It puts the settings, `AgentRuns`, the lookup and
-    the upload store on `app.state`, where the routes read them; the agent's
-    runs read the same store (`agui.AgentRuns`). `GET /health` answers
+    creates its tables and deletes expired files, then once an hour), after
+    the tracing (`open_tracing`, off without Langfuse's keys), which closes
+    last and so sends what is left. It puts the settings, `AgentRuns`, the
+    lookup, the upload store and the parser that reads uploaded files in
+    child processes (`ProcessParser`) on `app.state`, where the routes read
+    them; the agent's runs read the same store (`agui.AgentRuns`). `GET /health` answers
     without touching the database or avtal-mcp: it says the process serves
     HTTP, which is what a container's health check asks.
 """
@@ -64,6 +65,7 @@ from avtalsagent.config import Settings, get_settings
 from avtalsagent.db.session import create_db_engine, session_factory
 from avtalsagent.observability.tracing import Tracing, open_tracing
 from avtalsagent.uploads.open_store import open_upload_store
+from avtalsagent.uploads.parse_process import ProcessParser
 from avtalsagent.uploads.store import UploadStore
 from avtalsagent.validation.review import AnswerReviewer
 
@@ -93,6 +95,7 @@ def create_app(
     open_documents: OpenDocuments = open_document_files,
     open_trace: OpenTracing = open_tracing,
     open_uploads: OpenUploads = open_upload_store,
+    make_parser: Callable[[], ProcessParser] = ProcessParser,
 ) -> FastAPI:
     """The API; the agent and its connections open when the app starts (see the module)."""
 
@@ -108,6 +111,8 @@ def create_app(
             checkpointer = await stack.enter_async_context(open_saver(current))
             app.state.documents = stack.enter_context(open_documents(current))
             app.state.uploads = await stack.enter_async_context(open_uploads(current))
+            app.state.parser = make_parser()
+            stack.callback(app.state.parser.close)
             app.state.settings = current
             app.state.runs = AgentRuns(
                 current, model, reviewer, checkpointer, open_tools, tracing, app.state.uploads

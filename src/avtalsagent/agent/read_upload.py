@@ -31,10 +31,14 @@ How:
     with a score are returned whole, best first, as long as they fit in
     `MAX_MATCH_CHARS` together (the best always does: a section is at most
     12 000 characters, `uploads/sections.py`); the next matches are named
-    by position, for `section_position`. Errors are `ToolException`s with
-    Swedish text, which `ToolErrorMiddleware` hands the model.
+    by position, for `section_position`. The ranking runs in a worker
+    thread: a file of 1.5 million characters takes a quarter of a second,
+    and the model often reads several at once, so the API's other runs keep
+    streaming meanwhile. Errors are `ToolException`s with Swedish text,
+    which `ToolErrorMiddleware` hands the model.
 """
 
+import asyncio
 import math
 import re
 import unicodedata
@@ -141,7 +145,7 @@ def make_read_upload(store: UploadStore) -> BaseTool:
                 "exempel ansvarsbegränsning eller uppsägningstid."
             )
         sections = await stored(store.read_sections(thread, upload.upload_id))
-        ranked = rank_sections(sections, query)
+        ranked = await asyncio.to_thread(rank_sections, sections, query)
         chosen: list[UploadSection] = []
         size = 0
         for section in ranked[:MAX_MATCHES]:

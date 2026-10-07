@@ -21,9 +21,10 @@ Why:
     It runs the same graph, with the same check, as the API will; only the
     checkpointer (memory) and the way the user answers differ. The messages
     are in Swedish, for the people who ask. The attached files are read by
-    the API's rules and limits (`uploads/local_file.py`) into a store in
-    memory, for this run only, so `--fil` is also the demo's fallback for
-    the comparison when the web app is not there (ADR 0026).
+    the API's rules and limits (`uploads/local_file.py`), in a child
+    process as there, into a store in memory, for this run only, so
+    `--fil` is also the demo's fallback for the comparison when the web app
+    is not there (ADR 0026).
 
 How:
     Starts the model clients (`make_agent_model` and `make_reviewer`;
@@ -84,6 +85,7 @@ from avtalsagent.observability.tracing import Tracing, open_tracing, traced
 from avtalsagent.uploads.errors import UploadRejected
 from avtalsagent.uploads.local_file import read_local_file
 from avtalsagent.uploads.parse import UploadLimits
+from avtalsagent.uploads.parse_process import ProcessParser
 from avtalsagent.uploads.store import MemoryUploadStore, TooManyUploads, retention
 
 STATUS_NAMES = {
@@ -222,23 +224,27 @@ async def attach_files(
     """A store in memory with the files read into sections for the thread, each one named."""
     store = MemoryUploadStore(retention(settings))
     limits = UploadLimits.from_settings(settings)
-    for path in paths:
-        try:
-            new = await asyncio.to_thread(read_local_file, path, thread_id, limits)
-        except UploadRejected as error:
-            raise CommandError(f"Filen {path} kunde inte bifogas: {error.detail}") from None
-        except OSError as error:
-            raise CommandError(
-                f"Filen {path} gick inte att öppna: {error.strerror or error}"
-            ) from None
-        try:
-            upload, _ = await store.add_upload(new, settings.upload_max_per_thread)
-        except TooManyUploads:
-            raise CommandError(
-                f"Högst {settings.upload_max_per_thread} filer kan bifogas i ett samtal."
-            ) from None
-        for line in attached_lines(upload):
-            terminal.say(line)
+    parser = ProcessParser(workers=1)
+    try:
+        for path in paths:
+            try:
+                new = await read_local_file(path, thread_id, limits, parser)
+            except UploadRejected as error:
+                raise CommandError(f"Filen {path} kunde inte bifogas: {error.detail}") from None
+            except OSError as error:
+                raise CommandError(
+                    f"Filen {path} gick inte att öppna: {error.strerror or error}"
+                ) from None
+            try:
+                upload, _ = await store.add_upload(new, settings.upload_max_per_thread)
+            except TooManyUploads:
+                raise CommandError(
+                    f"Högst {settings.upload_max_per_thread} filer kan bifogas i ett samtal."
+                ) from None
+            for line in attached_lines(upload):
+                terminal.say(line)
+    finally:
+        parser.close()
     return store
 
 

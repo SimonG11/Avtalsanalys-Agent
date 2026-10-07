@@ -4,8 +4,10 @@ What:
     `pdf_bytes(pages)` builds a PDF with one page per list of lines (an
     empty list is a page with a drawing and no text, as a scanned page);
     `docx_bytes(build)` a Word file that `build` fills in; `zip_bytes`
-    any zip archive; `AGREEMENT_PAGES` a short agreement with numbered
-    sections over three pages and an empty page.
+    any zip archive; `text_bomb_pdf(pages, lines)` a small PDF whose
+    compressed pages hold `lines` lines of 100 characters each;
+    `AGREEMENT_PAGES` a short agreement with numbered sections over three
+    pages and an empty page.
 
 Why:
     No binary fixtures in git: each file is made from a few readable lines,
@@ -13,11 +15,13 @@ Why:
 
 How:
     reportlab writes each line as text at a fixed place on the page, so
-    pdfium reads the lines back in order.
+    pdfium reads the lines back in order. The text bomb is written by hand:
+    one content stream, deflated, that every page shares.
 """
 
 import io
 import zipfile
+import zlib
 from collections.abc import Callable, Sequence
 
 import docx
@@ -62,3 +66,36 @@ def zip_bytes(members: dict[str, bytes]) -> bytes:
         for name, content in members.items():
             archive.writestr(name, content)
     return buffer.getvalue()
+
+
+def text_bomb_pdf(pages: int, lines: int) -> bytes:
+    """A PDF of a few kB whose every page has `lines` lines of 100 "A"s."""
+    line = b"(" + b"A" * 100 + b") Tj T*\n"
+    content = b"BT /F1 1 Tf 1 TL 0 0 Td\n" + line * lines + b"ET\n"
+    stream = zlib.compress(content, 9)
+    font = 3 + pages
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Count %d /Kids [%s] >>"
+        % (pages, b" ".join(b"%d 0 R" % (3 + n) for n in range(pages))),
+        *(
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents %d 0 R "
+            b"/Resources << /Font << /F1 %d 0 R >> >> >>" % (font + 1, font)
+            for _ in range(pages)
+        ),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length %d /Filter /FlateDecode >>\nstream\n%s\nendstream" % (len(stream), stream),
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (number, body)
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1,
+        xref,
+    )
+    return bytes(out)

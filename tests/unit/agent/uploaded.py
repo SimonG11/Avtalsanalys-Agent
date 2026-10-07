@@ -73,7 +73,9 @@ async def add(
 class DownStore:
     """An `UploadStore` whose database does not answer."""
 
-    async def add_upload(self, upload: NewUpload, max_per_thread: int) -> tuple[Upload, bool]:
+    async def add_upload(
+        self, upload: NewUpload, max_per_thread: int, *, max_total_bytes: int | None = None
+    ) -> tuple[Upload, bool]:
         raise UploadStoreUnavailable("connection refused")
 
     async def list_uploads(self, thread_id: str) -> list[Upload]:

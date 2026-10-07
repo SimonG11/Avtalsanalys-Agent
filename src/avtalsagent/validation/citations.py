@@ -137,6 +137,7 @@ def _quote_problem(source: DraftCitation, section: CitedSection | None) -> str |
     quote = normalise(_trim(source.quote))
     text = normalise(section.text)
     where = _section_name(section)
+    tool = "read_upload" if section.source == "upload" else "read_section"
     if not quote or (len(quote) < MIN_QUOTE_LENGTH and quote != text):
         return (
             f"Källa [{source.id}]: citatet är för kort (minst {MIN_QUOTE_LENGTH} tecken). "
@@ -145,7 +146,7 @@ def _quote_problem(source: DraftCitation, section: CitedSection | None) -> str |
     if quote not in text:
         return (
             f"Källa [{source.id}]: citatet finns inte ordagrant i {where}. Kopiera det ur "
-            "texten från read_section, utan utelämningar och utan egna ord."
+            f"texten från {tool}, utan utelämningar och utan egna ord."
         )
     return None
 

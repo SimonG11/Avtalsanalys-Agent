@@ -6,10 +6,12 @@ read and listed, sent back with its type and a safe name, and deleted; the
 same file again is the same upload; another thread gets 404; each limit
 and refusal has its status and Swedish text, also for a body without a
 Content-Length; a store whose database is down is 503; a file that takes
-too long to read is 422; expired uploads are deleted on the next upload.
+too long to read is 422, and so is one whose reading process aborts, after
+which the API goes on; a thread that filled while the file was read is
+409, and a store whose files take all their space is 507; expired uploads
+are deleted on the next upload.
 """
 
-import time
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
@@ -23,14 +25,20 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 
 from avtalsagent.agent.mcp_tools import McpTools
-from avtalsagent.api import uploads as upload_routes
 from avtalsagent.api.app import create_app
 from avtalsagent.api.documents import DATABASE_DOWN, DocumentFiles, StoredFile
-from avtalsagent.api.uploads import BAD_FORM, NOT_FOUND, TOO_SLOW
+from avtalsagent.api.uploads import BAD_FORM, NOT_FOUND, STORE_FULL, TOO_MANY
 from avtalsagent.config import Settings
 from avtalsagent.domain.uploads import NewUpload, Upload, UploadSection
-from avtalsagent.uploads.errors import SCANNED, UNSUPPORTED
-from avtalsagent.uploads.store import MemoryUploadStore, UploadStore, UploadStoreUnavailable
+from avtalsagent.uploads.errors import SCANNED, TOO_SLOW, UNREADABLE, UNSUPPORTED
+from avtalsagent.uploads.parse_process import ProcessParser
+from avtalsagent.uploads.store import (
+    MemoryUploadStore,
+    StoreFull,
+    TooManyUploads,
+    UploadStore,
+    UploadStoreUnavailable,
+)
 from tests.unit.agent.scripted_model import (
     DictAmendments,
     DictReader,
@@ -38,6 +46,7 @@ from tests.unit.agent.scripted_model import (
     ScriptedModel,
     ScriptedReviewer,
 )
+from tests.unit.uploads import child_parsers
 from tests.unit.uploads.upload_files import AGREEMENT_PAGES, docx_bytes, pdf_bytes
 
 THREAD = "f3b2c1d0-thread"
@@ -343,20 +352,66 @@ async def test_a_store_that_does_not_answer_is_503_and_logged(
 
 
 @pytest.mark.anyio
-async def test_a_file_that_takes_too_long_to_read_is_422(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def slow(*args: Any) -> None:
-        time.sleep(0.5)
-
-    monkeypatch.setattr(upload_routes, "PARSE_SECONDS", 0.05)
-    monkeypatch.setattr(upload_routes, "parse_upload", slow)
-    async with client_of(app_with()) as client:
+async def test_a_file_that_takes_too_long_to_read_is_422() -> None:
+    app = app_with(make_parser=lambda: ProcessParser(seconds=0.2, parse=child_parsers.sleep))
+    async with client_of(app) as client:
         response = await upload(client, PDF)
         listed = await client.get("/api/uploads", params={"thread_id": THREAD})
 
     assert (response.status_code, response.json()) == (422, {"detail": TOO_SLOW})
     assert listed.json() == {"uploads": []}
+
+
+@pytest.mark.anyio
+async def test_a_reading_process_that_aborts_is_422_and_the_api_goes_on() -> None:
+    # pdfium aborts the process (SIGABRT) when it cannot allocate; no Python exception is raised.
+    app = app_with(make_parser=lambda: ProcessParser(parse=child_parsers.abort))
+    async with client_of(app) as client:
+        response = await upload(client, PDF)
+        again = await upload(client, PDF)
+        listed = await client.get("/api/uploads", params={"thread_id": THREAD})
+        health = await client.get("/health")
+
+    assert (response.status_code, response.json()) == (422, {"detail": UNREADABLE})
+    assert again.status_code == 422
+    assert (listed.status_code, listed.json()) == (200, {"uploads": []})
+    assert health.status_code == 200
+
+
+class FullAtAdd(MemoryUploadStore):
+    """A thread that reached its limit while the file was read."""
+
+    async def add_upload(
+        self, upload: NewUpload, max_per_thread: int, *, max_total_bytes: int | None = None
+    ) -> tuple[Upload, bool]:
+        raise TooManyUploads(upload.thread_id)
+
+
+class NoSpace(MemoryUploadStore):
+    """A store whose files take all the space they may."""
+
+    async def add_upload(
+        self, upload: NewUpload, max_per_thread: int, *, max_total_bytes: int | None = None
+    ) -> tuple[Upload, bool]:
+        raise StoreFull(upload.thread_id)
+
+
+@pytest.mark.anyio
+async def test_a_thread_filled_while_the_file_was_read_is_409() -> None:
+    async with client_of(app_with(store=FullAtAdd(timedelta(days=7)))) as client:
+        response = await upload(client, PDF)
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": TOO_MANY.format(limit=5)}
+
+
+@pytest.mark.anyio
+async def test_a_store_without_space_is_507(caplog: pytest.LogCaptureFixture) -> None:
+    async with client_of(app_with(store=NoSpace(timedelta(days=7)))) as client:
+        response = await upload(client, PDF)
+
+    assert (response.status_code, response.json()) == (507, {"detail": STORE_FULL})
+    assert "UPLOAD_MAX_TOTAL_BYTES" in caplog.text
 
 
 class Clock:
@@ -414,7 +469,7 @@ def test_the_upload_route_documents_its_form() -> None:
 
     form = schema["requestBody"]["content"]["multipart/form-data"]["schema"]
     assert form["required"] == ["file", "thread_id"]
-    assert set(schema["responses"]) >= {"200", "201", "409", "413", "415", "422", "503"}
+    assert set(schema["responses"]) >= {"200", "201", "409", "413", "415", "422", "503", "507"}
 
 
 class RecordingStore(MemoryUploadStore):
@@ -423,10 +478,14 @@ class RecordingStore(MemoryUploadStore):
     def __init__(self) -> None:
         super().__init__(timedelta(days=7))
         self.added: list[NewUpload] = []
+        self.max_total_bytes: int | None = None
 
-    async def add_upload(self, upload: NewUpload, max_per_thread: int) -> tuple[Upload, bool]:
+    async def add_upload(
+        self, upload: NewUpload, max_per_thread: int, *, max_total_bytes: int | None = None
+    ) -> tuple[Upload, bool]:
         self.added.append(upload)
-        return await super().add_upload(upload, max_per_thread)
+        self.max_total_bytes = max_total_bytes
+        return await super().add_upload(upload, max_per_thread, max_total_bytes=max_total_bytes)
 
 
 @pytest.mark.anyio
@@ -437,6 +496,7 @@ async def test_the_store_gets_the_file_its_hash_and_its_sections() -> None:
 
     (added,) = store.added
     assert (added.thread_id, added.filename, added.content) == (THREAD, "avtal.pdf", PDF)
+    assert store.max_total_bytes == 2 * 1024**3  # UPLOAD_MAX_TOTAL_BYTES
     assert len(added.sha256) == 64
     sections = await store.read_sections(THREAD, upload_id)
     assert sections == list(added.sections)

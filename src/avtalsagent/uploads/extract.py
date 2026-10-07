@@ -1,12 +1,13 @@
 """The text of an uploaded file as blocks: PDF with pypdfium2, Word with python-docx, text.
 
 What:
-    `pdf_blocks(data, max_pages)` gives one block per line of a PDF's text
-    layer, with its page, and the pages without text. `docx_blocks(data)`
-    gives a Word file's paragraphs and tables in order, its headings marked
-    with their level. `text_blocks(data, markdown)` gives a text file's
-    paragraphs, with each line that looks like a heading as a block of its
-    own. All raise `UploadRejected` for a file they cannot read.
+    `pdf_blocks(data, max_pages, max_characters)` gives one block per line
+    of a PDF's text layer, with its page, and the pages without text.
+    `docx_blocks(data, max_characters)` gives a Word file's paragraphs and
+    tables in order, its headings marked with their level.
+    `text_blocks(data, markdown)` gives a text file's paragraphs, with each
+    line that looks like a heading as a block of its own. All raise
+    `UploadRejected` for a file they cannot read.
 
 Why:
     The blocks are what step 3 of the ingestion splits into numbered
@@ -19,20 +20,28 @@ Why:
     headings are found from the numbers (`ingestion/headings.py`), which is
     what decides the sections there too. A PDF without a text layer
     (scanned) has nothing to read and is refused; reading it would need OCR.
+    A small file can hold far more text than its size suggests (a page's
+    text is compressed), so the PDF and Word readers stop as soon as the
+    text passes `max_characters` instead of reading the rest.
 
 How:
     PDF: pypdfium2 opens the bytes; more than `max_pages` pages is 413
-    before any text is read. pdfium is not thread-safe, so one lock lets one
-    thread at a time use it. A page with fewer than `MIN_PAGE_CHARS`
-    characters (spaces not counted) has no text; when every page is like
-    that the file is refused as scanned (422). Word: python-docx, whose XML
-    parser does not resolve entities; Word's own heading styles ("Heading
-    2", "Rubrik 2") give the level, list styles a list item, a table one
-    block with a row per line. Headers, footers, footnotes and text boxes
-    are left out. Text: UTF-8 (a byte order mark is allowed), split at blank
-    lines; in Markdown, "## Rubrik" is a heading of level 2. In all three,
-    a line such as "§ 3 Avgifter" or "Bilaga 2 Prislista" is a heading of
-    level 1, which step 3 uses when the file has no numbered outline.
+    before any text is read, and the pages are read one at a time until the
+    text passes `max_characters` (413). pdfium is not thread-safe, so one
+    lock lets one thread at a time use it. A page with fewer than
+    `MIN_PAGE_CHARS` characters (spaces not counted) has no text; when every
+    page is like that the file is refused as scanned (422). pdfium gives a
+    hyphen at a line's end as U+FFFE, which is put back as "-", so a quote
+    of the printed words matches. Word: python-docx, whose XML parser does
+    not resolve entities; a body of more than `MAX_DOCX_BLOCKS` parts is 413
+    before it is read. Word's own heading styles ("Heading 2", "Rubrik 2")
+    give the level, list styles a list item, a table one block with a row
+    per line; the styles' names are looked up once per file. Headers,
+    footers, footnotes and text boxes are left out. Text: UTF-8 (a byte
+    order mark is allowed), split at blank lines; in Markdown, "## Rubrik"
+    is a heading of level 2. In all three, a line such as "§ 3 Avgifter" or
+    "Bilaga 2 Prislista" is a heading of level 1, which step 3 uses when the
+    file has no numbered outline.
 """
 
 import io
@@ -42,6 +51,7 @@ import threading
 import docx
 import pypdfium2 as pdfium
 from docx.document import Document as WordDocument
+from docx.enum.style import WD_STYLE_TYPE
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
@@ -51,13 +61,19 @@ from avtalsagent.uploads.errors import (
     NOT_UTF8,
     SCANNED,
     TOO_MANY_PAGES,
+    TOO_MANY_PARAGRAPHS,
+    TOO_MUCH_TEXT_OVER,
     UNREADABLE,
     UploadRejected,
+    thousands,
 )
 
 # Characters, spaces not counted, a PDF page needs to count as having text: a scanned page
 # can carry a stamped page number.
 MIN_PAGE_CHARS = 20
+# Paragraphs, tables and other parts of a Word file's body. A contract of 300 pages has a few
+# thousand; reading one costs time, so a file with far more is refused before it is read.
+MAX_DOCX_BLOCKS = 50_000
 
 # A heading without a section number: "§ 3", "§ 3 Avgifter", "Bilaga 2 – Prislista". The
 # title must start with a capital letter, so a wrapped line ("Bilaga 2 och 3 ska ...") is not.
@@ -74,8 +90,13 @@ _WORD_TITLE = {"title", "rubrik"}
 _PDFIUM = threading.Lock()
 
 
-def pdf_blocks(data: bytes, max_pages: int) -> tuple[list[Block], int, list[int]]:
+def pdf_blocks(
+    data: bytes, max_pages: int, max_characters: int
+) -> tuple[list[Block], int, list[int]]:
     """A PDF's text lines as blocks, its page count and the 1-based pages without text."""
+    blocks: list[Block] = []
+    empty: list[int] = []
+    characters = 0
     with _PDFIUM:
         try:
             pdf = pdfium.PdfDocument(data)
@@ -85,18 +106,22 @@ def pdf_blocks(data: bytes, max_pages: int) -> tuple[list[Block], int, list[int]
             page_count = len(pdf)
             if page_count > max_pages:
                 raise UploadRejected(413, TOO_MANY_PAGES.format(pages=page_count, limit=max_pages))
-            pages = [_page_text(pdf, index) for index in range(page_count)]
+            for number in range(1, page_count + 1):
+                text = _page_text(pdf, number - 1)
+                if sum(1 for char in text if not char.isspace()) < MIN_PAGE_CHARS:
+                    empty.append(number)
+                    continue
+                for line in text.splitlines():
+                    if line := " ".join(line.split()):
+                        blocks.append(_line_block(line, number))
+                        characters += len(line)
+                # The pages after this one are not read: a small file can hold far more text.
+                if characters > max_characters:
+                    raise UploadRejected(
+                        413, TOO_MUCH_TEXT_OVER.format(limit=thousands(max_characters))
+                    )
         finally:
             pdf.close()
-    blocks: list[Block] = []
-    empty: list[int] = []
-    for number, text in enumerate(pages, start=1):
-        if sum(1 for char in text if not char.isspace()) < MIN_PAGE_CHARS:
-            empty.append(number)
-            continue
-        for line in text.splitlines():
-            if line := " ".join(line.split()):
-                blocks.append(_line_block(line, number))
     if not blocks:
         raise UploadRejected(422, SCANNED)
     return blocks, page_count, empty
@@ -107,25 +132,59 @@ def _page_text(pdf: pdfium.PdfDocument, index: int) -> str:
         text: str = pdf[index].get_textpage().get_text_range()
     except pdfium.PdfiumError:
         raise UploadRejected(422, UNREADABLE) from None
-    return text.replace("\r\n", "\n").replace("\r", "\n")
+    # pdfium marks a hyphen at a line's end with U+FFFE and joins the lines; the page shows "-".
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\ufffe", "-")
 
 
-def docx_blocks(data: bytes) -> list[Block]:
+def docx_blocks(data: bytes, max_characters: int) -> list[Block]:
     """A Word file's paragraphs and tables as blocks, in order (see the module)."""
     document: WordDocument = docx.Document(io.BytesIO(data))
+    count = len(document.element.body)
+    if count > MAX_DOCX_BLOCKS:
+        limit = MAX_DOCX_BLOCKS
+        raise UploadRejected(
+            413, TOO_MANY_PARAGRAPHS.format(count=thousands(count), limit=thousands(limit))
+        )
+    styles = _paragraph_style_names(document)
     blocks: list[Block] = []
+    characters = 0
     for item in document.iter_inner_content():
-        block = _table_block(item) if isinstance(item, Table) else _paragraph_block(item)
+        if isinstance(item, Table):
+            block = _table_block(item)
+        else:
+            block = _paragraph_block(item, styles.get(item._p.style, styles[None]))
         if block is not None:
             blocks.append(block)
+            characters += len(block.text)
+            if characters > max_characters:
+                raise UploadRejected(
+                    413, TOO_MUCH_TEXT_OVER.format(limit=thousands(max_characters))
+                )
     return blocks
 
 
-def _paragraph_block(paragraph: Paragraph) -> Block | None:
+def _paragraph_style_names(document: WordDocument) -> dict[str | None, str]:
+    """The name `paragraph.style` would give for each style id, the default's under None.
+
+    python-docx's `paragraph.style` searches the styles for every paragraph,
+    and walks them all for a paragraph without one, so a file with many
+    paragraphs and styles took minutes. As there, an id that is not a
+    paragraph style's gives the default.
+    """
+    styles = document.styles
+    default = styles.default(WD_STYLE_TYPE.PARAGRAPH)
+    names: dict[str | None, str] = {None: (default.name or "") if default is not None else ""}
+    for style in styles:
+        if style.style_id is not None and style.style_id not in names:
+            paragraph = style.type == WD_STYLE_TYPE.PARAGRAPH
+            names[style.style_id] = (style.name or "") if paragraph else names[None]
+    return names
+
+
+def _paragraph_block(paragraph: Paragraph, style: str) -> Block | None:
     text = paragraph.text.strip()
     if not text:
         return None
-    style = (paragraph.style.name or "") if paragraph.style is not None else ""
     if match := _WORD_HEADING.match(style.strip()):
         return Block(kind=BlockKind.HEADING, text=text, page=None, level=int(match["level"]))
     if style.strip().lower() in _WORD_TITLE:

@@ -26,7 +26,9 @@ How:
     `created_at` within the retention, so an expired file is never read
     before `delete_expired` removes it. `add_upload` takes an advisory lock
     on the thread for its transaction, so two uploads to one thread at the
-    same time cannot pass the limit or store the same file twice. Each
+    same time cannot pass the limit or store the same file twice, and with
+    `max_total_bytes` one more lock, the same for all threads, so that two
+    threads cannot together pass the store's limit. Each
     operation is one transaction on a connection from the pool (at most
     `POOL_SIZE`), which checks a connection before lending it, so one that
     Postgres closed (a restart) is replaced. A psycopg error, a pool
@@ -47,7 +49,12 @@ from psycopg_pool import AsyncConnectionPool
 from avtalsagent.agent.checkpointer import checkpoint_dsn
 from avtalsagent.config import Settings
 from avtalsagent.domain.uploads import NewUpload, Upload, UploadKind, UploadSection
-from avtalsagent.uploads.store import TooManyUploads, UploadStoreUnavailable, retention
+from avtalsagent.uploads.store import (
+    StoreFull,
+    TooManyUploads,
+    UploadStoreUnavailable,
+    retention,
+)
 
 UPLOAD_TABLES = frozenset({"upload", "upload_section"})
 
@@ -124,7 +131,9 @@ class PostgresUploadStore:
     def _live(self, thread_id: str, **more: Any) -> dict[str, Any]:
         return {"thread_id": thread_id, "retention": self._retention, **more}
 
-    async def add_upload(self, upload: NewUpload, max_per_thread: int) -> tuple[Upload, bool]:
+    async def add_upload(
+        self, upload: NewUpload, max_per_thread: int, *, max_total_bytes: int | None = None
+    ) -> tuple[Upload, bool]:
         async with self._transaction() as connection:
             await connection.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))", (f"upload {upload.thread_id}",)
@@ -145,6 +154,23 @@ class PostgresUploadStore:
                 return same, False
             if len(current) >= max_per_thread:
                 raise TooManyUploads(upload.thread_id)
+            if max_total_bytes is not None:
+                # Taken after the thread's lock, always in that order, so two uploads never wait
+                # for each other's lock.
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('avtalsagent upload total'))"
+                )
+                # Expired files are not counted (they are deleted within the hour), as the memory
+                # store deletes them first.
+                cursor = await connection.execute(
+                    "SELECT coalesce(sum(size), 0) AS total FROM upload "
+                    "WHERE created_at >= now() - %s",
+                    (self._retention,),
+                )
+                total = await cursor.fetchone()
+                assert total is not None  # an aggregate gives one row
+                if total["total"] + len(upload.content) > max_total_bytes:
+                    raise StoreFull(upload.thread_id)
             cursor = await connection.execute(
                 "INSERT INTO upload (id, thread_id, filename, kind, sha256, size, pages, "
                 "sections, characters, warnings, content) VALUES (gen_random_uuid(), "

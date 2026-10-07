@@ -2,10 +2,11 @@
 
 What:
     `UploadStore`, the protocol the API writes through and the agent reads
-    through; `MemoryUploadStore`; `open_upload_store(settings)`, which
-    yields the store UPLOAD_STORE names ("memory", or "postgres":
-    `postgres_store.PostgresUploadStore`) with the expired files deleted;
-    and the store's errors, `TooManyUploads` and `UploadStoreUnavailable`.
+    through; `MemoryUploadStore`; `retention(settings)`; and the store's
+    errors, `TooManyUploads`, `StoreFull` and `UploadStoreUnavailable`.
+    `open_store.open_upload_store(settings)` opens the store UPLOAD_STORE
+    names ("memory", or "postgres": `postgres_store.PostgresUploadStore`)
+    with the expired files deleted.
 
 Why:
     A file belongs to the conversation it was uploaded in (the AG-UI
@@ -14,7 +15,10 @@ Why:
     exist, so an id that leaks gives nothing. The same file uploaded again
     in a thread is the same upload, not a second copy. Files are kept for
     UPLOAD_RETENTION_DAYS and are not read after that, even before they are
-    deleted. As the checkpointer, the store is in memory for the tests, the
+    deleted. The thread's id is the client's to choose, so a limit per
+    thread does not bound the whole store: all files together may take at
+    most UPLOAD_MAX_TOTAL_BYTES. As the checkpointer, the store is in memory
+    for the tests, the
     command line and a run without a database, and in Postgres in the API's
     container (ADR 0004: one database), where a conversation survives a
     restart.
@@ -27,10 +31,12 @@ How:
     - `read_sections(thread_id, upload_id)`: all its sections, in order.
     - `read_section(thread_id, upload_id, position)`: one section.
     - `read_content(thread_id, upload_id)`: the file's bytes.
-    The writes: `add_upload(upload, max_per_thread)` gives the stored upload
-    and whether it is new (False when the thread has the same file already)
-    and raises `TooManyUploads` when the thread has `max_per_thread`;
-    `delete_upload` and `delete_expired`. Any of them raises
+    The writes: `add_upload(upload, max_per_thread, max_total_bytes=None)`
+    gives the stored upload and whether it is new (False when the thread has
+    the same file already), raises `TooManyUploads` when the thread has
+    `max_per_thread` and `StoreFull` when the file would take the store's
+    files past `max_total_bytes` (None: no such limit); `delete_upload` and
+    `delete_expired`. Any of them raises
     `UploadStoreUnavailable` when the database does not answer. The memory
     store keeps everything in dicts, behind one lock for the writes.
 """
@@ -49,6 +55,10 @@ class TooManyUploads(Exception):
     """The thread already has as many uploads as it may."""
 
 
+class StoreFull(Exception):
+    """All files together would take more than the store may hold."""
+
+
 class UploadStoreUnavailable(Exception):
     """The store's database did not answer; the message is for the log only."""
 
@@ -56,7 +66,9 @@ class UploadStoreUnavailable(Exception):
 class UploadStore(Protocol):
     """A conversation's uploaded files (see the module for each method)."""
 
-    async def add_upload(self, upload: NewUpload, max_per_thread: int) -> tuple[Upload, bool]:
+    async def add_upload(
+        self, upload: NewUpload, max_per_thread: int, *, max_total_bytes: int | None = None
+    ) -> tuple[Upload, bool]:
         """The stored upload and True, or the thread's upload of the same file and False."""
         ...
 
@@ -115,7 +127,9 @@ class MemoryUploadStore:
     def _expired(self, upload: Upload) -> bool:
         return upload.created_at < self._clock() - self._retention
 
-    async def add_upload(self, upload: NewUpload, max_per_thread: int) -> tuple[Upload, bool]:
+    async def add_upload(
+        self, upload: NewUpload, max_per_thread: int, *, max_total_bytes: int | None = None
+    ) -> tuple[Upload, bool]:
         async with self._lock:
             await self.delete_expired()
             current = await self.list_uploads(upload.thread_id)
@@ -124,6 +138,10 @@ class MemoryUploadStore:
                 return same, False
             if len(current) >= max_per_thread:
                 raise TooManyUploads(upload.thread_id)
+            if max_total_bytes is not None:
+                total = sum(stored.size for stored in self._uploads.values())
+                if total + len(upload.content) > max_total_bytes:
+                    raise StoreFull(upload.thread_id)
             stored = Upload(
                 upload_id=uuid4(),
                 thread_id=upload.thread_id,

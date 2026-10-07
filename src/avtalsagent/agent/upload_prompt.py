@@ -34,8 +34,9 @@ How:
     follows the date's line, so the system prompt's start is unchanged and
     still cached by the provider. A file name is the user's text, so it is
     written in quotes, and cut. A store that does not answer is logged and
-    taken as no files, so a conversation without files is not failed by
-    it; the tools then say themselves that the files cannot be read.
+    the call goes as it came: the prompt names no files, but the tools
+    stay, so a conversation is not failed by it, and a call to them says
+    that the files cannot be read now, which the model tells the user.
 """
 
 import json
@@ -103,6 +104,8 @@ class UploadPrompt(AgentMiddleware[Any, None]):
         handler: Callable[[ModelRequest[None]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
         uploads = await self._uploads()
+        if uploads is None:  # the store did not answer; the tools say so when called
+            return await handler(request)
         if not uploads:
             tools = [tool for tool in request.tools if _name(tool) not in UPLOAD_TOOLS]
             return await handler(request.override(tools=tools))
@@ -111,15 +114,16 @@ class UploadPrompt(AgentMiddleware[Any, None]):
         system = f"{prompt}\n\n{section}" if prompt else section
         return await handler(request.override(system_message=SystemMessage(content=system)))
 
-    async def _uploads(self) -> list[Upload]:
+    async def _uploads(self) -> list[Upload] | None:
+        """The thread's uploads; None when the store does not answer."""
         thread = current_thread()
         if thread is None:
             return []
         try:
             return await self._store.list_uploads(thread)
         except UploadStoreUnavailable as error:
-            _log.warning("the upload store did not answer; the call has no files: %s", error)
-            return []
+            _log.warning("the upload store did not answer; the files are not named: %s", error)
+            return None
 
 
 def _name(tool: object) -> str | None:

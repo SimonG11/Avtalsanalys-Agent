@@ -406,7 +406,11 @@ verktygen bort ur anropet, och prompten är byte för byte densamma som förut. 
 citerat avsnitt ur samtalets filer först och annars ur avtal-mcp. En källa ur en fil får
 `source: "upload"`, `upload_id`, filnamnet som `file_title`, ingen `page_title` och PDF:ens sida;
 `sha256` är filens hash. En fil har inga ändringar, så regeln om senaste lydelsen frågar inte
-avtal-mcp om den, och granskaren får veta vilken källa som är användarens fil.
+avtal-mcp om den, och granskaren får veta vilken källa som är användarens fil. Ett citat ur en fil
+som inte står i den skickas tillbaka till modellen med `read_upload` som verktyget att kopiera ur.
+Svarar inte lagret i ett modellanrop nämns inga filer i prompten, men verktygen finns kvar och
+säger själva att filerna inte går att läsa just nu. `read_upload` rangordnar avsnitten i en
+arbetstråd, så att API:ts andra körningar fortsätter strömma medan en stor fil söks igenom.
 
 På kommandoraden bifogas en fil med `--fil`, en gång per fil, läst med API:ts regler:
 
