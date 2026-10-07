@@ -71,11 +71,15 @@ riktiga databasen (q-numren är frågor i testsamlingen):
 - **Nästa steg beror på vad agenten just läst (q14):** "Vår inhyrda IT-tekniker, avropad genom
   rangordning, behöver jobba en lördag. Vad får bemanningsföretaget ta betalt för de timmarna?"
   Svaret finns i punkt 9.9.2 om särskild ersättning, som prisbilagan hänvisar till, och i
-  definitionen av Arbetsdag i 9.2. Agenten läste 9.9.2, såg att punkten gäller arbete utanför
-  Arbetsdag och sökte själv upp definitionen. Inläsningen kopplar ungefär tre fjärdedelar av
-  hänvisningarna till sina mål (74,6 %, [steg 12](docs/steg/12-demo.md)), och `read_section` visar
-  dem. Resten tar agenten sig fram till själv, och likaså definitioner, som inte är hänvisningar.
-  Agenten använde nio verktygsanrop i mätningen och sju till tio steg i webbappen.
+  definitionen av Arbetsdag i 9.2. Vägen skilde sig mellan körningarna: i några läste agenten
+  prisbilagan mellan 9.9.2 och definitionen, i andra inte. Systemprompten säger, på raden om
+  `calculate_date`, att agenten ska läsa hur avtalet definierar Arbetsdag när det gäller
+  arbetsdagar. Det agenten själv avgör är vilka avsnitt den läser och när, utifrån det den just
+  har läst. Inläsningen kopplade 7 519 av 10 080 hänvisningar till sina mål (74,6 %; lagar och
+  standarder, "fråga N", listpunkter och självhänvisningar räknas inte,
+  [steg 4](docs/steg/04-extraktion.md)), och `read_section` visar dem. Resten, och definitioner,
+  som inte är hänvisningar, kan agenten bara hitta genom att söka, och bara om de finns bland
+  dokumenten. Agenten använde nio verktygsanrop i mätningen och sju till tio steg i webbappen.
 - **En rättelse ersätter klausulen (q21):** upphandlingsdokumentet säger att sju anbud antas.
   Kammarkollegiets rättelse i frågor-och-svar-loggen säger åtta. Agenten letar efter ändringar av
   varje avsnitt den citerar, som systemprompten säger, och kontrollen underkänner ett svar som citerar den ändrade punkten utan
@@ -163,9 +167,10 @@ En fråga från början till slut:
    avtal-mcp och kör agenten ([steg 9](docs/steg/09-api.md)).
 2. Agenten (`gpt-6.1-sol`) väljer själv bland verktygen: `search_register` för avtal, leverantörer
    och datum, `search_documents` för hybridsökningen, `read_section` för hela avsnittet med dess
-   hänvisningar, `resolve_reference` för vart hänvisningarna i ett avsnitt pekar, `find_amendments`
-   för senare ändringar, `get_outline`, `list_documents` och `calculate_date`. Med `ask_user`
-   pausar den körningen och frågar användaren. Webbappen visar varje anrop medan det görs
+   hänvisningar och vart de pekar, `resolve_reference` för samma hänvisningar utan avsnittets
+   text, alla eller bara dem som innehåller en viss text, `find_amendments` för senare ändringar,
+   `get_outline`, `list_documents` och `calculate_date`. Med `ask_user` pausar den körningen och
+   frågar användaren. Webbappen visar varje anrop medan det görs
    ([steg 6](docs/steg/06-verktyg.md), [steg 7](docs/steg/07-agent.md)).
 3. Agenten lämnar ett svarsutkast: text med hänvisningar [n], källor med ordagranna citat och de
    avtal ur registret som svaret bygger på.
@@ -278,8 +283,9 @@ Projektet gjordes i faser, och varje fas godkändes innan nästa började:
    rättelser och tillägg i egna pull requests.
 
 Koden är skriven av en AI-kodagent (Claude Code) efter planen och arkitekturen. Varje milstolpe kom
-tillbaka som en pull request med en förklaring, och Simon slog ihop varje pull request. Diskussionen
-och besluten fördes i projektets trådar, inte som granskningar på GitHub.
+tillbaka som en pull request med en förklaring, och det är Simon som slår ihop dem.
+Diskussionen och besluten fördes i chatten med kodagenten i ett Claude-projekt, inte som
+granskningar på GitHub.
 
 Simon fattade besluten om inriktningen, och kodagenten byggde och föreslog. Simon godkände
 avtalsanalys bland de tre idéerna och valde Statens inköpscentrals ramavtal som data, efter att ha
@@ -334,8 +340,11 @@ prioritetsordning inför presentationen.
   modellanropet, men ett modellanrop kan begära flera verktygsanrop, och dem räknar ingen gräns.
   Räknaren sparas inte i checkpointen, så den börjar om när användaren har svarat på `ask_user`;
   de nya försöken är ändå högst två per fråga (`src/avtalsagent/agent/graph.py`).
-- **Ingen tidsgräns för en hel körning i API:t.** Granskarens anrop ges upp efter 60 sekunder, men
-  koden sätter ingen tidsgräns för agentmodellens anrop eller för en körning genom `POST /agui`.
+- **Ingen tidsgräns för en hel körning i API:t.** Ett anrop till granskaren ges upp efter 60
+  sekunder och görs om högst två gånger, så en granskning kan ta upp till ungefär tre minuter. För
+  agentmodellens anrop och för en körning genom `POST /agui` sätter koden ingen tidsgräns. Det
+  enda som stoppar agentmodellen i webbappen är langchain-openai, som avbryter ett strömmat svar
+  när inget nytt har kommit på 120 sekunder (`stream_chunk_timeout`, langchain-openai 1.6.7).
   Mätningen ger upp en fråga efter 600 sekunder.
 - **Historiken växer inom ett samtal.** Varje modellanrop skickar hela samtalet, och inget
   sammanfattar det eller rensar gamla verktygssvar. Demot ställer varje fråga i en ny flik.

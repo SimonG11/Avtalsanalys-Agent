@@ -1,25 +1,30 @@
 # ADR 0023: LangGraph och `create_agent` också utan den yttre grafen
 
 **Status:** Föreslaget.
-Kompletterar [ADR 0002](0002-langgraph-och-create-agent.md), vars skäl för LangGraph var den yttre
-grafen, och [ADR 0013](0013-agenten.md), som ersatte den grafen med middleware i en enda
-`create_agent`-graf.
+Kompletterar [ADR 0002](0002-langgraph-och-create-agent.md). Den yttre grafen, ADR 0002:s lösning
+på det första av dess tre krav, ersattes av middleware i en enda `create_agent`-graf i
+[ADR 0013](0013-agenten.md). ADR 0002:s övriga skäl gäller; den här ADR:en lägger till det som
+bygget visade.
 
 ## Kontext
 
-ADR 0002 valde LangGraph för att bygga en yttre graf (inskydd → agent → svarsutkast → validering
-→ svar) runt en agentnod från `create_agent`. Skälet var att frågebesvarandet blandar
-deterministiska steg med en fri agentloop. ADR 0013 tog bort den yttre grafen: stegen runt loopen
-är krokar i samma graf som loopen. Det skrivna skälet för LangGraph gäller alltså inte längre i den
-form ADR 0002 gav det, och frågan är vad som bär valet nu.
+ADR 0002 ställde tre krav på ramverket: det ska klara både deterministiska steg (inskydd,
+validering, svar med reservation) och en fri agentloop, kunna pausa för en fråga till användaren
+och spara tillståndet så att en körning överlever en omstart. För det första kravet valde ADR 0002
+en yttre LangGraph-graf (inskydd → agent → svarsutkast → validering → svar) runt en agentnod från
+`create_agent`. ADR 0013 ersatte den yttre grafen: stegen runt loopen är krokar i samma graf som
+loopen, och "Resten av ADR 0002 gäller". Kraven står alltså kvar, och de två senare uppfylls med
+checkpoints som ADR 0002 skrev. Det som saknas är vad bygget visade om ramverket, nu när den yttre
+grafen är borta.
 
 Arkitekturvalideringen i fas 3 ([validering.md](../validering.md), avsnitt 1) jämförde LangGraph
 med sex andra ramverk. Agno fanns inte med.
 
 ## Beslut
 
-LangGraph och LangChains `create_agent` är fortfarande ramverket. Fyra saker som koden använder bär
-valet:
+LangGraph och LangChains `create_agent` är fortfarande ramverket. Punkt 1 uppfyller ADR 0002:s
+krav på paus och omstart så som ADR 0002 skrev. Punkt 2–4 är det som bygget visade: hur det
+första kravet uppfylls utan den yttre grafen, och två integrationer.
 
 1. **Checkpointern med interrupt och återupptagning bär `ask_user`.** Verktyget anropar LangGraphs
    `interrupt()`, som sparar körningen i checkpointern och avslutar den, och användarens svar
@@ -40,19 +45,28 @@ valet:
    och ett felsvar från servern till ett verktygssvar med status `error`, som modellen läser och kan
    rätta sitt anrop efter (`agent/mcp_tools.py`).
 
+Punkt 3 och 4 sparar egen kod, men de skiljer inte i sig LangGraph från Agno, som enligt
+granskningen också har stöd för AG-UI och MCP (Alternativ nedan). Om Agno klarar det som punkt 1
+och 2 kräver är inte prövat.
+
 Loopen, gränsen för modellanrop (`ModelCallLimitMiddleware`), verktygsfelen
 (`ToolErrorMiddleware`), svaret som verktyget `FinalAnswer` (`ToolStrategy`) och dagens datum i
 prompten (`dynamic_prompt`) kommer också från ramverket (`agent/graph.py`). Den egna koden är
-kontrollen, `ask_user`, prompten och kopplingen till MCP.
+kontrollen (`AnswerCheck` i `agent/middleware.py` och reglerna i `validation/`), `ask_user`,
+`AnswerOpenToolCalls`, som ger modellen ett felsvar för ett verktygsanrop vars körning bröts
+(`agent/open_tool_calls.py`), prompten, kopplingen till MCP och `AvtalAguiAgent`, som ändrar
+ag-ui-langgraphs standardval (`api/agui.py`).
 
 ## Konsekvenser
 
-- Valet vilar på det koden använder, inte på den yttre grafen. Byts ramverket ska de fyra delarna
-  ovan byggas igen: pausen för `ask_user` med checkpoints som klarar en omstart, kontrollen efter
-  loopen med nya försök, strömmen till webbappen och kopplingen till avtal-mcp.
-- Av de middleware som ADR 0002 räknade upp används bara gränsen för modellanrop. Varför gränsen
-  för verktygsanrop, sammanfattningen av lång kontext och `HumanInTheLoopMiddleware` inte används
-  står i [steg 7](../steg/07-agent.md#middleware-som-inte-används-och-varför).
+- Valet vilar på ADR 0002:s krav på paus och omstart och på det bygget visade, inte på den yttre
+  grafen. Byts ramverket ska de fyra delarna ovan byggas igen: pausen för `ask_user` med
+  checkpoints som klarar en omstart, kontrollen efter loopen med nya försök, strömmen till
+  webbappen och kopplingen till avtal-mcp.
+- Av de middleware som ADR 0002 räknade upp används bara gränsen för modellanrop.
+  [Steg 7](../steg/07-agent.md#middleware-som-inte-används-och-varför) förklarar varför
+  sammanfattningen av lång kontext och `HumanInTheLoopMiddleware` inte används. Mot en gräns för
+  verktygsanrop skrevs inget skäl, och steg 7 säger vad det betyder.
 - Ramverkens standardval passar inte alltid. ag-ui-langgraph satte LangChains gräns på 25 steg i
   grafen i stället för grafens egen, så en fråga med fler än ungefär sex modellanrop föll i
   webbappen. Demokörningen hittade felet och PR #22 rättade det ([steg 12](../steg/12-demo.md)).

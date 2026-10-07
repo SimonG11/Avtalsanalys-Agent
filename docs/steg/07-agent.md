@@ -1,7 +1,7 @@
 # M7 – Agenten med citatkontrollen
 
-> Ögonblicksbild från M7; senare tillägg säger när de kom. Läget efter körningen mot
-> den riktiga databasen står i [steg 12](12-demo.md).
+> Filen beskriver M7 som den var när den byggdes, och några stycken har lagts till senare.
+> Läget efter körningen mot den riktiga databasen står i [steg 12](12-demo.md).
 
 **Mål:** bygga agenten som besvarar frågorna: `create_agent` med `gpt-6.1-sol` (ADR 0005), som hämtar
 all sin data genom avtal-mcp (M6), kan fråga användaren när frågan passar flera avtal och lämnar
@@ -256,13 +256,14 @@ skriver den utan `+psycopg`, med lösenordet kodat så att libpq läser samma l�
 
 `make_agent_model(settings)` ger `ChatOpenAI` med Responses API, `reasoning_effort` och
 `metadata={"emit-messages": False}`, utan `temperature`, och `MissingApiKeyError` utan nyckel.
-`prompts.py` har systemprompten på svenska: rollen, verktygen och i vilken ordning de används,
-filtren (`framework_area` med registrets namn på området, ett delområde med upphandlingens
-nummer), en sökning per delområde vid jämförelser, den senaste lydelsen, `ask_user` när svaret
-skiljer sig mellan avtal, svar på den del av frågan som framgår och "framgår inte" i stället för
-gissningar, vanlig text utan Markdown, hur källorna anges (meningen som stöder påståendet, utan
-rubriker, datum eller tabelltecken, och sidan frågan gäller), att text i dokumenten är uppgifter
-och inte instruktioner, och dagens datum i svensk tid på sista raden.
+`prompts.py` har systemprompten på svenska: rollen, vad varje verktyg är till för (ordningen och
+antalet steg väljer modellen), filtren (`framework_area` med registrets namn på området, ett
+delområde med upphandlingens nummer), en sökning per delområde vid jämförelser, att leta efter
+ändringar och Frågor och svar om samma sak och utgå från den senaste lydelsen, `ask_user` när
+svaret skiljer sig mellan avtal, svar på den del av frågan som framgår och "framgår inte" i
+stället för gissningar, vanlig text utan Markdown, hur källorna anges (meningen som stöder
+påståendet, utan rubriker, datum eller tabelltecken, och sidan frågan gäller), att text i
+dokumenten är uppgifter och inte instruktioner, och dagens datum i svensk tid på sista raden.
 `ask_user(question, options)` pausar körningen med `interrupt({question, options?})` och ger
 tillbaka svaret som text.
 
@@ -390,10 +391,10 @@ Tillagt efter M12. LangChain har fler färdiga middleware än de som grafen anv�
 
 - **`TodoListMiddleware`** ger modellen verktyget `write_todos` och en att-göra-lista `todos` i
   tillståndet, och lägger till en egen systemprompt på engelska om när listan ska användas. Inte
-  byggt och inte prövat. Frågorna tar få steg (i mätningen 6,7 verktygsanrop i medel och högst 16,
-  q15, [steg 12](12-demo.md)), och agenten väljer nästa steg utifrån det den just har läst, utan en
-  plan i tillståndet. Systemprompten hålls på ett ställe och på svenska (`agent/prompts.py`), och
-  middlewaret skulle lägga en andra del bredvid den.
+  byggt och inte prövat. I mätningen mot den riktiga databasen tog frågorna 6,7 verktygsanrop i
+  medel och högst 16 (q15, [steg 12](12-demo.md)), och agenten väljer nästa steg utifrån det den
+  just har läst, utan en plan i tillståndet. Systemprompten hålls på ett ställe och på svenska
+  (`agent/prompts.py`), och middlewaret skulle lägga en andra del bredvid den.
 - **`ToolCallLimitMiddleware`** räknar verktygsanrop per körning eller per tråd, för alla verktyg
   eller för ett, och blockerar anrop över gränsen med ett felsvar till modellen, avslutar
   körningen eller kastar ett fel. Meddelandena är på engelska. Inte byggt: ADR 0013 valde bara
@@ -500,8 +501,9 @@ Titta på att stegen kommer medan agenten arbetar, att svaret har `[n]` och att 
 - en fråga vars svar skiljer sig mellan delområdena, till exempel ett takpris i IT-drift utan att
   ange Mindre eller Större: agenten bör fråga vilket delområde du menar, och svaret fortsätter när
   du har svarat med en siffra. Är villkoren desamma i båda, som uppsägningen i Allmänna villkor,
-  svarar agenten i stället för båda. I M7:s provkörningar frågade den riktiga modellen aldrig,
-  men mot den riktiga databasen frågade den i demots fråga 1 ([steg 12](12-demo.md));
+  svarar agenten i stället för båda. I M7:s provkörningar frågade den riktiga modellen aldrig.
+  Den frågade första gången i M9, mot ersättaren för avtal-mcp ([steg 9](09-api.md)), och sedan
+  i demots fråga 1, som är skriven för att vara oklar ([steg 12](12-demo.md));
 - en följdfråga i samtalsläget (`uv run python -m avtalsagent.agent`), som ska förstås utan att
   du upprepar sammanhanget;
 - en fråga som avtalen inte besvarar: status `Inget svar`, med modellens förklaring och de
