@@ -42,7 +42,8 @@ efter de nio godkända avvikelserna är mätt här för första gången (steg 4 
 
 `uv run pytest` på `023ed01`: 2 046 godkända på 162 sekunder, 1 854 enhetstester och 192
 integrationstester mot Postgres i testcontainers. På `main` efter PR #22 är det 2 047 (1 855 och
-192), alla godkända. Webbappen: 67 enhetstester godkända och produktionsbygget gick igenom.
+192), alla godkända, och efter PR #23–#25 2 059 (1 867 och 192). Webbappen på `023ed01`: 67
+enhetstester godkända och produktionsbygget gick igenom.
 
 ### Sökningen på det riktiga indexet
 
@@ -148,10 +149,10 @@ Andra iakttagelser från webbappen, som också lämnats vidare:
   fråga 1 börjar på sidan 26, som panelen visar, och slutar på sidan 27. I PDF.js ligger radslutet
   efter "enligt" i en egen tom textbit, så panelen godtar inte början som en del av citatet och
   visar "Citatet hittades inte i sidans text." bredvid "Kontrollerat mot avtalstexten". PR #23
-  (öppen) rättar det: panelen öppnar sidan 26, markerar början och säger att bara en del av
+  rättar det: panelen öppnar sidan 26, markerar början och säger att bara en del av
   citatet finns på sidan.
-- CopilotKit visar en engelsk rad, "Thought for a few seconds", mellan stegen. PR #23 (öppen) byter
-  den mot svensk text.
+- CopilotKit visar en engelsk rad, "Thought for a few seconds", mellan stegen. PR #23 bytte
+  den mot "Tänkte efter".
 - Webbappen visar inte när kontrollen skickar tillbaka ett utkast; terminalen gör det.
 
 ## Kommandon
@@ -209,7 +210,9 @@ länkarna pekar på repots filer.
   agenten ställer i fråga 1 och statusen för "framgår inte" i fråga 5.
 - **Webbappens tider för fråga 3–5** kommer från körningen med rättelsen provad lokalt, samma
   ändring som PR #22 men före dess test.
-- **Omrankning och spårning i Langfuse** ingår inte i M12; de görs i egna pull requests.
+- **Omrankning och spårning i Langfuse** ingår inte i M12. Omrankningen mättes och väntar
+  ([ADR 0020](../adr/0020-omrankning.md)), och spårningen byggdes i PR #24
+  ([ADR 0021](../adr/0021-sparning-med-langfuse.md)). Demofrågorna kördes utan spårning.
 - **Skärmbilderna och rapporterna ligger utanför repot.** `evals/reports/` och `data/` checkas
   aldrig in, och skärmbilderna och svarsrapporten innehåller citat ur avtalstexten.
 

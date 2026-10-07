@@ -43,6 +43,18 @@ ungefär tio minuter. Om `up` slutar med att en tjänst inte blev frisk, visar
 När allt är igång mäter `docker compose --profile eval run --rm eval` agentens svar på de 30
 testfrågorna mot facit. Rapporten hamnar i `evals/reports/` ([steg 11](docs/steg/11-utvardering.md)).
 
+### Spårning (valfritt)
+
+Med nycklar till ett projekt i Langfuse Cloud (EU) i `.env` (`LANGFUSE_PUBLIC_KEY`,
+`LANGFUSE_SECRET_KEY`) blir varje fråga en spårning: agentens modellanrop med tokens och tid, varje
+verktygsanrop till avtal-mcp, svarskontrollen och granskaren. Samtalet är spårningens session. Utan
+nycklarna är spårningen avstängd och allt fungerar som förut. Bygg om med
+`docker compose up -d --build` efter att ha lagt in nycklarna. Se
+[steg 7](docs/steg/07-agent.md#spårning-med-langfuse) och
+[ADR 0021](docs/adr/0021-sparning-med-langfuse.md).
+
+### Utan backend
+
 Webbappen går också att prova utan backend, mot en mock av agenten:
 `docker compose -f web/compose.mock.yaml up --build` ([`web/README.md`](web/README.md)).
 
@@ -171,6 +183,7 @@ En fråga från början till slut:
 | Kontrollen | `src/avtalsagent/validation/` | En regel per fil, granskaren i `agent/reviewer.py` | [0015](docs/adr/0015-valideringskedjan.md), [0017](docs/adr/0017-andringar.md) |
 | API:t | `src/avtalsagent/api/` | FastAPI över AG-UI, PDF-routen | [0014](docs/adr/0014-api-och-compose.md) |
 | Webbappen | `web/` | Next.js och CopilotKit | [0010](docs/adr/0010-webbapp-copilotkit-ag-ui.md) |
+| Spårningen | `src/avtalsagent/observability/` | Langfuse, avstängd utan nycklar | [0021](docs/adr/0021-sparning-med-langfuse.md) |
 | Mätningarna | `evals/` | Testsamlingen, mätningen av sökningen och av svaren | [0011](docs/adr/0011-hybridsokning.md), [0019](docs/adr/0019-matning-av-svaren.md) |
 
 ### Var agenten bestämmer och var koden bestämmer
@@ -197,7 +210,7 @@ som borde ha ställts.
 Kontrollerna ligger i sex lager, och varje lager fångar fel som de andra inte ser. Siffrorna kommer
 från den riktiga databasen 2026-10-07 ([steg 12](docs/steg/12-demo.md)).
 
-1. **Koden.** 2 047 tester: 1 855 utan databas och utan anrop till OpenAI, där en skriptad modell
+1. **Koden.** 2 059 tester: 1 867 utan databas och utan anrop till OpenAI, där en skriptad modell
    spelar agenten och granskaren, och 192 mot en riktig Postgres i testcontainers. Ruff, mypy i
    strikt läge och alla tester körs i CI vid varje push och pull request. CI bygger och startar också
    hela Docker Compose-stacken på både amd64 och arm64 och kör webbappens webbläsartester mot en mock
@@ -284,7 +297,7 @@ bland annat:
   ([ADR 0009](docs/adr/0009-extraktion-avstamning-och-karantan.md)); de nio som godkändes står i
   [`accepted_findings.toml`](accepted_findings.toml),
 - BM25 i Python i stället för Postgres fulltext, och ingen omrankare, på mätningar
-  ([ADR 0011](docs/adr/0011-hybridsokning.md)),
+  ([ADR 0011](docs/adr/0011-hybridsokning.md), [ADR 0020](docs/adr/0020-omrankning.md)),
 - agenten som en enda `create_agent`-graf med middleware i stället för en yttre graf, efter att
   båda byggts och provats ([ADR 0013](docs/adr/0013-agenten.md)).
 
@@ -315,9 +328,7 @@ prioritetsordning inför presentationen.
 - **Ingen omrankare.** bge-reranker-v2-m3 på de 30 första träffarna höjde andelen källor bland de
   tio första från 0,84 till 0,91, men på 22 frågor ryms skillnaden inom slumpen (95 % intervall
   −0,02 till +0,17), och den tog ungefär 30 sekunder per sökning på processorn. Qwen3-Reranker-0.6B
-  gjorde de första placeringarna sämre.
-- **Ingen spårning i Langfuse ännu.** Agentens steg syns i webbappen och terminalen, men tid och
-  tokens per anrop samlas bara i mätningen av svaren.
+  gjorde de första placeringarna sämre ([ADR 0020](docs/adr/0020-omrankning.md)).
 - **Villkoren för återanvändning** av avropa.se:s dokument är inte bekräftade. Repot innehåller
   därför inga PDF-, Word- eller Excel-filer, bara korta utdrag som testdata.
 
@@ -418,7 +429,7 @@ mäts med `evals/`.
 
 | Mapp | Innehåll |
 |---|---|
-| `src/avtalsagent/` | Koden, ett underpaket per lager: `register`, `ingestion`, `retrieval`, `mcp_server`, `agent`, `validation`, `api`, plus `domain` (datatyperna) och `db` (tabellerna och migreringarna) |
+| `src/avtalsagent/` | Koden, ett underpaket per lager: `register`, `ingestion`, `retrieval`, `mcp_server`, `agent`, `validation`, `api`, `observability` (spårningen), plus `domain` (datatyperna) och `db` (tabellerna och migreringarna) |
 | `tests/unit/` | Tester utan databas eller LLM, speglar `src/` |
 | `tests/integration/` | Tester mot riktig Postgres (testcontainers) |
 | `tests/fixtures/` | Små exempelfiler, t.ex. riktiga rader ur Excel-registret |
