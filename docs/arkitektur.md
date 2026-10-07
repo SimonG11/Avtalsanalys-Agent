@@ -43,6 +43,10 @@
 >   granskaren delar två nya försök (`VALIDATION_RETRIES`, ersätter `CITATION_RETRIES`), och ett
 >   svar ur registret kan bli `verified`. Svaret har `reservations` och `register_facts`
 >   ([M8](steg/08-validering.md)).
+> - [ADR 0016](adr/0016-datumrakning.md): `calculate_date` räknar datum i dagar, arbetsdagar
+>   (utan allmänna helgdagar), veckor, månader och år, och skriver uträkningen. Registerregeln
+>   räknar om den med samma funktioner (`domain/dates.py`) i stället för att lita på verktygets
+>   svar ([steg 6](steg/06-verktyg.md), avsnitt 8b).
 
 ---
 

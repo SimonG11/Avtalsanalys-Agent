@@ -173,9 +173,14 @@ till det avtalet; ett avsnitt eller användarens ord belägger inte ett värde s
 annat angivet avtal. Ett avtal nämns med sitt nummer, med kortformen efter ett helt nummer
 ("(-005)"), inom ett intervall ("-001 till -008"), med organisationsnumret eller med leverantörens
 namn, också i genitiv ("Telia Cygates"). Ett framräknat datum godtas när meningen skriver steget
-("tre månader före 2027-02-17", "tjugofyra (24) månader") och datumet stämmer med det; granskaren
-prövar uträkningen. Ett datum som ligger en dag från registrets datum för meningens avtal är
-däremot ett fel, inte en uträkning. Ett nummer med en siffra för mycket i löpnumret ("-0021") är
+("tre månader före 2027-02-17", "tjugofyra (24) månader", "tio (10) Arbetsdagar") och datumet
+stämmer med det, en dag (eller arbetsdag) hit eller dit; granskaren prövar uträkningen. Ett datum
+som ligger en dag från registrets datum för meningens avtal är däremot ett fel, inte en
+uträkning. Efter M8 räknar regeln också om uträkningar som `calculate_date` skriver dem
+("2027-02-17 minus 3 månader = 2026-11-17", fler steg efter ett kommatecken) med samma funktioner
+som verktyget ([ADR 0016](../adr/0016-datumrakning.md)): ett rätt steg från ett belagt datum
+belägger sitt resultat, också en dag från registrets datum, och ett fel steg är ett problem som
+säger vilket datum det blir. Ett nummer med en siffra för mycket i löpnumret ("-0021") är
 inget avtalsnummer. En mening slutar inte efter ett ensamt tal ("IT-konsulttjänster 3.
 IT-säkerhet"). Sektionsnummer och intervall av dem ("23.1.10–23.1.12"), priser, telefonnummer och
 årtal ensamma läses inte som värden.
@@ -282,7 +287,8 @@ uv run pytest tests/unit
   mening eller på nästa rad i en lista prövas mot alla angivna avtal, inte mot avtalet som
   meningen före nämner. Ett organisationsnummer eller datum med en siffra för mycket eller för lite
   läses inte alls; granskaren ser dem. Ett rätt framräknat datum som ligger en dag från registrets
-  ("dagen innan avtalet löper ut") underkänns, och agenten får skriva om det.
+  ("dagen innan avtalet löper ut") underkänns om inte uträkningen står i meningen som
+  `calculate_date` skriver den.
 - **Registerregeln bedömer värden, inte innebörd.** Ett datum som står i registret men på fel
   plats (slutdatum i stället för startdatum), fel delområde och leverantörsnamn i löptext bedömer
   granskaren, inte regeln.

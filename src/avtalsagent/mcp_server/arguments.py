@@ -5,7 +5,8 @@ What:
     `Offset`, which a tool requires or gives a default, and the optional
     `FrameworkArea`, `AgreementNumber`, `DocumentTypeArg`, `SectionNumber`,
     `SectionPosition`, `Reference`, `Supplier`, `SubAreaArg`, `OrgNumber` and
-    `ValidOn`.
+    `ValidOn`; and `StartDate`, `Amount`, `DateUnit`, `Direction` and
+    `IncludeStart` for `calculate_date`.
 
 Why:
     The MCP SDK builds each tool's JSON schema from its signature, and the
@@ -22,7 +23,8 @@ How:
     contract's where its point 5 has one: `query`, `framework_area`,
     `agreement_number`, `sha256`, `section_number`, `reference` and `limit`.
     `document_type`, `section_position`, `supplier`, `org_number`, `valid_on`,
-    `offset` and `sub_area` are new names, to be sent to the web-app thread.
+    `offset`, `sub_area`, `start`, `amount`, `unit`, `direction` and
+    `include_start` are new names, to be sent to the web-app thread.
     Descriptions are in Swedish because the questions and the documents are.
     An optional argument's type includes None (`framework_area:
     FrameworkArea = None`): Pydantic then puts the description on the
@@ -36,7 +38,7 @@ How:
 """
 
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, Field, StringConstraints, WithJsonSchema
 
@@ -183,4 +185,53 @@ OrgNumber = Annotated[
 ValidOn = Annotated[
     date | None,
     Field(description="Bara avtal som gäller detta datum (ÅÅÅÅ-MM-DD)."),
+]
+
+# calculate_date: dates the agreements can be about, so a typo such as 20270-01-01 or 0207-01-01
+# is refused before any arithmetic.
+StartDate = Annotated[
+    date,
+    Field(
+        ge=date(1990, 1, 1),
+        le=date(2100, 12, 31),
+        description=(
+            "Startdatumet (ÅÅÅÅ-MM-DD), ur registret, ett citerat avsnitt, användarens fråga "
+            "eller dagens datum."
+        ),
+    ),
+]
+Amount = Annotated[
+    int,
+    Field(
+        ge=1,
+        le=3650,
+        description="Hur många dagar, arbetsdagar, veckor, månader eller år (1–3650).",
+    ),
+]
+DateUnit = Annotated[
+    Literal["days", "working_days", "weeks", "months", "years"],
+    Field(
+        description=(
+            "Enheten: days (kalenderdagar), working_days (Arbetsdagar: måndag–fredag utom "
+            "allmänna helgdagar), weeks, months eller years."
+        )
+    ),
+]
+Direction = Annotated[
+    Literal["after", "before"],
+    Field(
+        description=(
+            "after: framåt i tiden (efter, från, inom); before: bakåt (före, innan, senast … före)."
+        )
+    ),
+]
+IncludeStart = Annotated[
+    bool,
+    Field(
+        description=(
+            "true när startdagen själv hör till perioden, som när ett avtal gäller i 48 månader "
+            "från och med 2024-11-14 till och med 2028-11-13: resultatet flyttas då en dag mot "
+            "startdatumet. Inte för working_days."
+        )
+    ),
 ]

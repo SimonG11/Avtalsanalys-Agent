@@ -55,13 +55,19 @@ How:
     organisationsnummer 556271-9129" is wrong although 556271-9129 is Nordlo
     Improve AB's, declared too, and a cited price list that has it does not
     make it right. A date nothing backs is still backed when it follows,
-    give or take a day, from a backed date in the text or from today by an
-    offset its sentence writes ("tre månader före 2027-02-17", "tjugofyra
-    (24) månader"): the calculation is shown, and the reviewer judges it.
+    give or take a day (a working day for working days), from a backed date
+    in the text or from today by an offset its sentence writes ("tre
+    månader före 2027-02-17", "tjugofyra (24) månader", "tio (10)
+    Arbetsdagar"): the calculation is shown, and the reviewer judges it.
     But a date a day off a date the register has for the agreements of its
     sentence (for all declared ones when it names none) is a near miss, not
     a calculation: "i fyra år, 2024-11-14–2028-11-14" where the register
-    says 2028-11-13. Each declared number must be an agreement number the
+    says 2028-11-13. A calculation as `calculate_date` writes it
+    ("2027-02-17 minus 3 månader = 2026-11-17", more steps after a comma)
+    is redone with `domain.dates`, the tool's own functions: a right one
+    from a backed date, or from a right one's result, backs its result,
+    near miss or not; a wrong one is a problem that gives the right date,
+    even when its date is backed. Each declared number must be an agreement number the
     register has (`entries` not None) and be used: the text has its number
     (in full, as a short form or within a range), its organisation number,
     or its supplier name or a former name, with or without the legal form
@@ -71,17 +77,18 @@ How:
     (a short form as the number it stands for).
 """
 
-import calendar
 import re
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
+from functools import lru_cache
 from typing import Literal
 
 from avtalsagent.agent.register_reader import RegisterEntry
 from avtalsagent.agent.schemas import FinalAnswer, RegisterFact
 from avtalsagent.agent.sections import CitedSection
+from avtalsagent.domain import dates
 from avtalsagent.domain.identifiers import (
     CASE_NUMBER_PATTERN,
     SEQUENCE_PATTERN,
@@ -145,39 +152,36 @@ _LONG_DATE = re.compile(
 # one character for one keeps the positions.
 _HYPHENS = str.maketrans(dict.fromkeys("\u2010\u2011\u2212", "-"))
 
-# An offset a computed date is written with: "tre (3) månader", "24 månaders", "30 dagar".
-# Digits in parentheses are the amount whatever word is before them: "tjugofyra (24)
-# månader", "fjorton (14) dagar".
-_NUMBER_WORDS = {
-    "en": 1,
-    "ett": 1,
-    "två": 2,
-    "tre": 3,
-    "fyra": 4,
-    "fem": 5,
-    "sex": 6,
-    "sju": 7,
-    "åtta": 8,
-    "nio": 9,
-    "tio": 10,
-    "elva": 11,
-    "tolv": 12,
-    "femton": 15,
-    "tjugo": 20,
-    "trettio": 30,
-    "fyrtio": 40,
-    "femtio": 50,
-    "sextio": 60,
-    "nittio": 90,
-}
+# An offset a computed date is written with: "tre (3) månader", "24 månaders", "30 dagar",
+# "tio (10) Arbetsdagar", "14 kalenderdagars". Digits in parentheses are the amount whatever
+# word is before them: "tjugofyra (24) månader". The number words go from one to 99.
+_ONES = {"en": 1, "ett": 1, "två": 2, "tre": 3, "fyra": 4, "fem": 5, "sex": 6, "sju": 7}
+_ONES |= {"åtta": 8, "nio": 9}
+_TEENS = {"tio": 10, "elva": 11, "tolv": 12, "tretton": 13, "fjorton": 14, "femton": 15}
+_TEENS |= {"sexton": 16, "sjutton": 17, "arton": 18, "nitton": 19}
+_TENS = {"tjugo": 20, "trettio": 30, "fyrtio": 40, "femtio": 50, "sextio": 60, "sjuttio": 70}
+_TENS |= {"åttio": 80, "nittio": 90}
+_NUMBER_WORDS = _ONES | _TEENS | _TENS
+_NUMBER_WORDS |= {tens + one: _TENS[tens] + _ONES[one] for tens in _TENS for one in _ONES}
 _OFFSET = re.compile(
-    rf"(?<![\w.,])(?:(?P<n>\d{{1,3}}|{'|'.join(_NUMBER_WORDS)})|[^\W\d_]+)"
-    r"(?:\s*\((?P<p>\d{1,3})\))?\s+"
-    r"(?P<unit>dag(?:ar|ars|s)?|veck(?:a|as|or|ors)|månad(?:er|ers|s)?|år(?:s)?)(?!\w)",
+    r"(?<![\w.,])(?:(?P<n>\d{1,3}|"
+    + "|".join(sorted(_NUMBER_WORDS, key=len, reverse=True))
+    + r")|[^\W\d_]+)(?:\s*\((?P<p>\d{1,3})\))?\s+"
+    r"(?P<unit>(?:arbets|kalender)?dag(?:ar|ars|s)?|veck(?:a|as|or|ors)|månad(?:er|ers|s)?|år(?:s)?)"
+    r"(?!\w)",
     re.IGNORECASE,
 )
-_UNITS = ("dag", "veck", "månad", "år")  # the stems `_shift` moves by
-_MONTHS_PER_YEAR = 12
+
+# A calculation as `calculate_date` writes it, "2027-02-17 minus 3 månader = 2026-11-17", and
+# each further step after a comma: ", minus 1 dag = 2028-11-13". The rule redoes it.
+_ISO_DAY = r"\d{4}-\d{2}-\d{2}"
+_MOVE = (
+    r"(?P<op>plus|minus|\+|-)\s*(?P<n>\d{1,4})\s+"
+    r"(?P<unit>(?:arbets|kalender)?dag(?:ar)?|veck(?:a|or)|månad(?:er)?|år)"
+    rf"\s*=\s*(?P<result>{_ISO_DAY})(?!\d)"
+)
+_STEP = re.compile(rf"(?<![\d-])(?P<base>{_ISO_DAY})\s+{_MOVE}", re.IGNORECASE)
+_NEXT_STEP = re.compile(rf"\s*,\s*{_MOVE}", re.IGNORECASE)
 
 # A sentence ends at . ! or ? before a capital letter, or at a line break. Not after a
 # number of one or two digits, which the register's sub-areas have ("IT-konsulttjänster 3.
@@ -297,11 +301,14 @@ def check_register_facts(
 
     elsewhere = _facts(_scan(part) for part in _section_parts(sections))
     elsewhere |= _facts(_scan(user_text) for user_text in user_texts)
-    for value, named in _unbacked(draft.text, values, agreements, elsewhere, today):
+    found, wrong = _unbacked(draft.text, values, agreements, elsewhere, today)
+    for value, named in found:
         if value.kind != "date" and value.key in lacking:
             continue  # a number the register lacks: its declaration's problem says so
-        problems[_problem(value, named, agreements)] = None
+        problems[wrong.pop(value.start, "") or _problem(value, named, agreements)] = None
         unbacked.setdefault(value.fact, value.raw)
+    for problem in wrong.values():  # a wrong calculation whose date something else backs
+        problems[problem] = None
 
     return RegisterReport(
         problems=list(problems),
@@ -512,12 +519,16 @@ def _unbacked(
     agreements: Sequence[_Agreement],
     elsewhere: set[Fact],
     today: date,
-) -> list[tuple[_Value, list[_Agreement]]]:
-    """The values of `text` nothing backs, each with the agreements its sentence names."""
+) -> tuple[list[tuple[_Value, list[_Agreement]]], dict[int, str]]:
+    """The values of `text` nothing backs, each with the agreements its sentence names.
+
+    Also the calculations (`_STEP`) that are wrong, by the position of the
+    date they give.
+    """
     registered = frozenset[Fact]().union(*(agreement.facts for agreement in agreements))
     # Each value with the agreements its sentence names, whether it is backed, whether it
     # may be computed, and the offsets its sentence writes.
-    judged: list[tuple[_Value, list[_Agreement], bool, bool, list[tuple[int, str]]]] = []
+    judged: list[tuple[_Value, list[_Agreement], bool, bool, list[tuple[int, dates.Unit]]]] = []
     positions = [value.start for value in values]  # in order, as `_scan` gives them
     for start, end in _sentences(text):
         inside = values[bisect_left(positions, start) : bisect_left(positions, end)]
@@ -546,12 +557,16 @@ def _unbacked(
     # A computed date starts from a date the text has and something backs, or from today.
     bases = {value.day for value, _, backed, _, _ in judged if backed and value.day is not None}
     bases.add(today)
-    return [
+    # A calculation written out and right backs its result, also a day off a register date.
+    stepped, wrong = _steps(text, bases)
+    unbacked = [
         (value, named)
         for value, named, backed, computable, offsets in judged
         if not backed
+        and value.day not in stepped
         and not (computable and value.day is not None and _computed(value.day, bases, offsets))
     ]
+    return unbacked, wrong
 
 
 def _backed(value: _Value, facts: frozenset[Fact] | set[Fact]) -> bool:
@@ -575,8 +590,8 @@ def _sentences(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-def _offsets(sentence: str) -> list[tuple[int, str]]:
-    """The offsets a sentence writes, as (amount, unit): (3, "månad") for "tre månader"."""
+def _offsets(sentence: str) -> list[tuple[int, dates.Unit]]:
+    """The offsets a sentence writes, as (amount, unit): (3, "months") for "tre månader"."""
     found = []
     for match in _OFFSET.finditer(sentence):
         if match["p"] is not None:  # "tjugofyra (24) månader"
@@ -586,31 +601,109 @@ def _offsets(sentence: str) -> list[tuple[int, str]]:
             amount = int(number) if number.isdigit() else _NUMBER_WORDS[number]
         else:
             continue  # a word that is no amount: "flera månader"
-        unit = next(unit for unit in _UNITS if match["unit"].lower().startswith(unit))
         if amount > 0:
-            found.append((amount, unit))
+            found.append((amount, _unit(match["unit"])))
     return found
 
 
-def _computed(day: date, bases: set[date], offsets: Sequence[tuple[int, str]]) -> bool:
-    """True when `day` is a base date moved by one of the offsets, give or take a day."""
+def _unit(word: str) -> dates.Unit:
+    """The unit a Swedish word counts: "Arbetsdagar" is working days, "kalenderdagar" days."""
+    word = word.lower()
+    if word.startswith("arbets"):
+        return "working_days"
+    if word.startswith(("dag", "kalender")):
+        return "days"
+    if word.startswith("veck"):
+        return "weeks"
+    return "months" if word.startswith("månad") else "years"
+
+
+def _computed(day: date, bases: set[date], offsets: Sequence[tuple[int, dates.Unit]]) -> bool:
+    """True when `day` is a base date moved by one of the offsets, give or take a day.
+
+    A working day off is one working day: the day after Friday's result is
+    Monday.
+    """
     for base in bases:
         for amount, unit in offsets:
             for sign in (1, -1):
-                if abs((day - _shift(base, sign * amount, unit)).days) <= 1:
+                if unit == "working_days":
+                    near = {
+                        _shifted(base, sign * n, unit) for n in (amount - 1, amount, amount + 1)
+                    }
+                    if day in near:
+                        return True
+                elif abs((day - _shifted(base, sign * amount, unit)).days) <= 1:
                     return True
     return False
 
 
-def _shift(day: date, amount: int, unit: str) -> date:
-    """`day` moved by `amount` units; a month's end where the month is shorter."""
-    if unit == "dag":
-        return day + timedelta(days=amount)
-    if unit == "veck":
-        return day + timedelta(weeks=amount)
-    months = day.month - 1 + amount * (_MONTHS_PER_YEAR if unit == "år" else 1)
-    year, month = day.year + months // _MONTHS_PER_YEAR, months % _MONTHS_PER_YEAR + 1
-    return date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
+@lru_cache(maxsize=4096)
+def _shifted(day: date, amount: int, unit: dates.Unit) -> date:
+    """`dates.shift`, remembered: each value of a sentence tries the same moves."""
+    return dates.shift(day, amount, unit)
+
+
+def _steps(text: str, bases: set[date]) -> tuple[set[date], dict[int, str]]:
+    """The dates that right calculations from `bases` give, and the wrong calculations.
+
+    A calculation from a date nothing backs is redone too, but backs
+    nothing: its start date is then a problem of its own. One that starts
+    from another's result is checked once that one is, wherever it stands.
+    """
+    text = text.translate(_HYPHENS)
+    chains: list[tuple[str, date, list[re.Match[str]]]] = []
+    for match in _STEP.finditer(text):
+        moves = [match]
+        while (more := _NEXT_STEP.match(text, moves[-1].end())) is not None:
+            moves.append(more)
+        if (base := _day(match["base"])) is not None:
+            chains.append((match["base"], base, moves))
+    results: set[date] = set()
+    wrong: dict[int, str] = {}
+    pending = chains
+    while True:
+        ready = [chain for chain in pending if chain[1] in bases or chain[1] in results]
+        if not ready:
+            break
+        pending = [chain for chain in pending if chain not in ready]
+        for _, base, moves in ready:
+            results |= _redo(base, moves, wrong)
+    for _, base, moves in pending:
+        _redo(base, moves, wrong)
+    return results, wrong
+
+
+def _redo(base: date, moves: Sequence[re.Match[str]], wrong: dict[int, str]) -> set[date]:
+    """The results of a chain of calculations from `base`, up to the first wrong one."""
+    results: set[date] = set()
+    day = base
+    for move in moves:
+        written = _day(move["result"])
+        if written is None:
+            break  # no day of the calendar: the scan's problem
+        sign = 1 if move["op"].lower() in ("plus", "+") else -1
+        try:
+            right = dates.shift(day, sign * int(move["n"]), _unit(move["unit"]))
+        except (ValueError, OverflowError):
+            break  # beyond the calendar's years
+        if right != written:
+            wrong[move.start("result")] = (
+                f"Uträkningen {day.isoformat()} {move['op']} {move['n']} {move['unit']} = "
+                f"{move['result']} stämmer inte: det blir {right.isoformat()}. Räkna med "
+                "calculate_date och skriv dess step i meningen."
+            )
+            break
+        results.add(right)
+        day = right
+    return results
+
+
+def _day(text: str) -> date | None:
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 def _problem(value: _Value, named: Sequence[_Agreement], agreements: Sequence[_Agreement]) -> str:
@@ -663,7 +756,7 @@ def _problem(value: _Value, named: Sequence[_Agreement], agreements: Sequence[_A
         where = ", ".join(f"{a.number} ({_periods(a.rows)})" for a in scope)
     return (
         f"Datumet {value.raw} står inte i registret för {where} och inte i något citerat "
-        "avsnitt. Rätta det, eller skriv hur ett beräknat datum räknas."
+        "avsnitt. Rätta det, eller räkna det med calculate_date och skriv dess step i meningen."
     )
 
 

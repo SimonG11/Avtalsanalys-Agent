@@ -58,6 +58,7 @@ CONTRACT_ORDER = [
     "resolve_reference",
     "list_documents",
     "search_register",
+    "calculate_date",
 ]
 # The argument names: the contract's (webbapp-kontrakt.md point 5) and the new ones to be sent
 # to the web-app thread (arguments.py).
@@ -76,6 +77,11 @@ CONTRACT_ARGUMENTS = {
     "valid_on",
     "limit",
     "offset",
+    "start",
+    "amount",
+    "unit",
+    "direction",
+    "include_start",
 }
 HOSTS = ["localhost:*", "127.0.0.1:*", "mcp:8001"]
 SHA = "a" * 64
@@ -171,11 +177,11 @@ async def call(server: FastMCP, name: str, arguments: dict[str, Any]) -> CallToo
         return await client.call_tool(name, arguments)
 
 
-# --- the six tools as the agent lists them ---
+# --- the seven tools as the agent lists them ---
 
 
 @pytest.mark.anyio
-async def test_the_six_tools_are_listed_in_the_contracts_order() -> None:
+async def test_the_seven_tools_are_listed_in_the_contracts_order() -> None:
     async with create_connected_server_and_client_session(
         build_server(NoSessions(), None, allowed_hosts=HOSTS)
     ) as client:
@@ -493,13 +499,39 @@ async def test_a_tool_runs_in_a_worker_thread() -> None:
     assert recorder.threads != [threading.get_ident()]
 
 
-def test_a_tool_must_take_the_session_first() -> None:
-    def no_session(query: Query) -> Echo:
-        """Saknar session."""
-        return Echo(text=query)
+@pytest.mark.parametrize(
+    "parameters",
+    [("query", "session"), ("embedder", "query"), ("session", "query", "embedder")],
+    ids=["session second", "embedder without session", "embedder third"],
+)
+def test_session_and_embedder_come_first_or_not_at_all(parameters: tuple[str, ...]) -> None:
+    # Anywhere else the model would see them as arguments.
+    def tool(**arguments: Any) -> Echo:
+        """Har session på fel plats."""
+        return Echo(text="")
 
-    with pytest.raises(TypeError, match="session"):
-        build_server(sessionmaker(), None, allowed_hosts=HOSTS, tools=[no_session])
+    tool.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+        [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in parameters],
+        return_annotation=Echo,
+    )
+    with pytest.raises(TypeError, match="`session` must be a tool's first parameter"):
+        build_server(sessionmaker(), None, allowed_hosts=HOSTS, tools=[tool])
+
+
+@pytest.mark.anyio
+async def test_a_tool_without_a_session_parameter_runs_without_a_session() -> None:
+    def pure(query: Query) -> Echo:
+        """Läser ingen databas och får ingen session."""
+        return Echo(text=query.upper())
+
+    sessions = NoSessions()
+    result = await call(
+        build_server(sessions, None, allowed_hosts=HOSTS, tools=[pure]), "pure", {"query": "vite"}
+    )
+
+    assert result.isError is False
+    assert result.structuredContent == {"text": "VITE"}
+    assert sessions.calls == 0
 
 
 def test_a_tool_must_have_a_description() -> None:

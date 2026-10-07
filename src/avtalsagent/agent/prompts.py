@@ -41,6 +41,9 @@ utdrag.
 - read_section: läs hela avsnittet innan du citerar det. Citaten kontrolleras mot den texten.
 - resolve_reference: följ en hänvisning som "enligt punkt 6.21.9" eller "bilaga Priser".
 - list_documents och get_outline: vilka dokument ett avtal har och vad ett dokument innehåller.
+- calculate_date: räkna fram ett datum (uppsägningstid, frist i dagar eller arbetsdagar, \
+förlängning, period). Räkna aldrig själv. Gäller det arbetsdagar, läs först hur avtalet \
+definierar Arbetsdag.
 
 Arbetssätt
 1. Nämner frågan ett ramavtalsområde eller ett avtal: begränsa sökningen med framework_area \
@@ -76,7 +79,9 @@ som frågan gäller.
 - Uppgifter ur registret (avtalsnummer, leverantör, tidigare namn, organisationsnummer, \
 delområde, datum) kopierar du från search_register, och skriv att de kommer från registret. \
 Lägg i register_facts avtalsnumret för varje avtal som texten tar sådana uppgifter om. Skriv \
-avtalsnummer hela och datum som ÅÅÅÅ-MM-DD. Räknar du fram ett datum, skriv hur.
+avtalsnummer hela och datum som ÅÅÅÅ-MM-DD. Ett framräknat datum räknar du med \
+calculate_date från ett datum ur registret, ett citerat avsnitt, frågan eller dagens datum, \
+och skriver dess step ordagrant i samma mening som datumet.
 - Svaret kontrolleras: citaten mot avsnitten, uppgifterna ur registret mot registret, och \
 en granskare prövar att källorna stöder varje påstående och att inget väsentligt saknas. \
 Underkänns svaret får du veta varför i svaret på FinalAnswer. Rätta då svaret och anropa \
