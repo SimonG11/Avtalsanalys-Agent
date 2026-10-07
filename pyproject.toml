@@ -39,6 +39,11 @@ dependencies = [
     "torchvision>=0.17",
     # Runs avtal-mcp over HTTP (M6), and the API later (M9).
     "uvicorn>=0.54",
+    # The agent (M7): create_agent and middleware, the MCP client, checkpoints in Postgres.
+    "langchain>=1.4.3",
+    "langgraph>=1.2.14",
+    "langchain-mcp-adapters>=0.3.2",
+    "langgraph-checkpoint-postgres>=3.1.2",
 ]
 
 [dependency-groups]

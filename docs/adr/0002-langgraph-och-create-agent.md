@@ -1,6 +1,9 @@
 # ADR 0002: LangGraph som yttre graf, `create_agent` som agentnod
 
-**Status:** Godkänt av Simon 2026-10-05 (arkitekturvalideringen, fas 3)
+**Status:** Godkänt av Simon 2026-10-05 (arkitekturvalideringen, fas 3). Punkten om den yttre
+grafen ersätts av [ADR 0013](0013-agenten.md): stegen runt agentloopen är middleware i en enda
+`create_agent`-graf, eftersom webbappen annars inte ser agentens steg medan den väntar på
+användaren.
 
 ## Kontext
 

@@ -34,6 +34,11 @@ ENV_VARS = (
     "FETCH_FILE_TYPES",
     "FETCH_DELAY_SECONDS",
     "ACCEPTED_FINDINGS_FILE",
+    "AGENT_REASONING_EFFORT",
+    "AGENT_MODEL_CALL_LIMIT",
+    "CITATION_RETRIES",
+    "MCP_TRANSPORT",
+    "CHECKPOINTER",
 )
 
 
@@ -84,6 +89,18 @@ def test_invalid_database_url_fails_at_start(monkeypatch: pytest.MonkeyPatch) ->
         Settings(_env_file=None)
 
 
+def test_an_invalid_database_url_is_named_without_its_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://agent:Hemligt-Losen1@db:5x/a")
+
+    with pytest.raises(ValidationError) as error:
+        Settings(_env_file=None)
+
+    assert "database_url" in str(error.value)
+    assert "Hemligt-Losen1" not in str(error.value)
+
+
 def test_openai_key_is_hidden(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
 
@@ -116,6 +133,46 @@ def test_reports_are_written_under_the_data_directory(monkeypatch: pytest.Monkey
     monkeypatch.setenv("DATA_DIR", "/srv/avtalsagent/data")
 
     assert Settings(_env_file=None).reports_dir == Path("/srv/avtalsagent/data/reports")
+
+
+def test_the_agents_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.agent_reasoning_effort == "low"
+    assert settings.agent_model_call_limit == 16
+    assert settings.citation_retries == 1
+    assert settings.mcp_transport == "stdio"
+    assert settings.checkpointer == "memory"
+
+
+def test_the_agents_settings_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_REASONING_EFFORT", "medium")
+    monkeypatch.setenv("AGENT_MODEL_CALL_LIMIT", "8")
+    monkeypatch.setenv("CITATION_RETRIES", "0")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.agent_reasoning_effort == "medium"
+    assert settings.agent_model_call_limit == 8
+    assert settings.citation_retries == 0
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        # The agent model takes four levels and refuses "none" (measured in the M7 spike).
+        ("AGENT_REASONING_EFFORT", "none"),
+        ("AGENT_MODEL_CALL_LIMIT", "0"),
+        ("CITATION_RETRIES", "-1"),
+    ],
+)
+def test_the_agents_settings_refuse_values_out_of_range(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
 
 
 def test_get_settings_returns_same_instance() -> None:
