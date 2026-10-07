@@ -256,7 +256,7 @@ misslyckad granskning, ändringar som inte kunde läsas eller inget att kontroll
 
 ### 7. `validation/latest_wording.py` – regeln om senaste lydelsen (efter M8)
 
-Kom med verktyget `find_amendments` ([ADR 0017](../adr/0017-andringar.md), punkt 6; verktyget i
+Kom med verktyget `find_amendments` ([ADR 0017](../adr/0017-andringar.md), punkt 5; verktyget i
 docs/steg/06-verktyg.md). `check_latest_wording(draft, citations, amendments) ->
 WordingReport(problems, reservations, unread)` är en ren funktion. `amendments` har, för varje
 citerat avsnitt vars citat godkändes, ändringarna som läsaren gav, eller `None` när de inte kunde
@@ -322,7 +322,7 @@ uv run pytest tests/unit
   visar dem och agenten avgör, och statusraden säger bara att ändringar som säkert gäller ett
   citerat avsnitt är citerade. Ändringar som hålls tillbaka räknar verktyget men regeln ser dem
   inte, och en ändring som steg 4 inte har hittat, eller har kopplat till fel avsnitt, finns inte
-  för regeln eller kontrolleras på fel ställe (ADR 0017). Regeln är provkörd med de riktiga
+  för regeln eller kontrolleras på fel ställe (ADR 0017 och 0018). Regeln är provkörd med de riktiga
   modellerna på q21–q23, mot den fristående ersättaren för avtal-mcp.
 - **Granskaren kan ta fel.** Den kan underkänna ett rätt svar (det kostar ett nytt försök och i
   värsta fall en reservation) eller godkänna ett svar som reglerna redan har godkänt. Hur ofta

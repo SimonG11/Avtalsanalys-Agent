@@ -1,6 +1,6 @@
 # ADR 0016: `calculate_date`: datumräkning med svenska helgdagar, och registerregeln räknar om steget
 
-**Status:** Föreslaget (PR för `calculate_date`, efter M8).
+**Status:** Godkänt av Simon 2026-10-07 (PR #16, till main med PR #17).
 Lägger till ett sjunde verktyg i avtal-mcp ([ADR 0012](0012-avtal-mcp.md)) och bygger ut
 registerregeln i [ADR 0015](0015-valideringskedjan.md), punkt 3. Resten av de besluten gäller.
 

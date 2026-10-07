@@ -1,6 +1,7 @@
 # ADR 0017: `find_amendments` och regeln om senaste lydelsen: ändringar ur steg 4:s hänvisningar
 
-**Status:** Föreslaget (PR för `find_amendments`, efter `calculate_date`).
+**Status:** Godkänt av Simon 2026-10-07 (PR #18). Kompletteras av
+[ADR 0018](0018-andringar-efter-granskningen.md).
 Lägger till ett åttonde verktyg i avtal-mcp ([ADR 0012](0012-avtal-mcp.md)), en regel i
 valideringskedjan ([ADR 0015](0015-valideringskedjan.md)) och bygger ut hur steg 4 läser
 ändringar ([ADR 0009](0009-extraktion-avstamning-och-karantan.md)). Resten av de besluten gäller.
@@ -20,13 +21,7 @@ dåligt (ADR 0015, Konsekvenser).
   och regeln missade många: den sökte bara ett ändringsverb i hänvisningens egen mening, så
   "Gällande avsnitt 4.2.4, bokstaven L: Kammarkollegiet ersätter härmed …" och "A. Punkt 2a. i
   Registreringen ersätts …" blev ingen ändring, och "Kammarkollegiet ändrar inte avtalsvillkoret
-  i 7.19.11" blev en. Kammarkollegiets egna meddelanden i loggarna (62 "Publikt
-  informationsmeddelande", utan fråga och svar) lästes inte alls: "Kammarkollegiet ersätter
-  avsnitt 7.19.1.3 till följande skrivning" (39d8c1efe373) var ingen ändring.
-- **En logg kan heta efter ett dokument som kom senare.** "Frågor och svar -
-  Upphandlingsdokument" (20c753d88340) har frågorna från mars 2022, om Ansökningsinbjudan, och
-  Upphandlingsdokumentet kom i juni. Steg 4 slog ändå upp loggens nummer i filen som titeln
-  anger, så tre svar som ändrar 4.2.4 i Ansökningsinbjudan ledde till ett annat 4.2.4.
+  i 7.19.11" blev en.
 - **Ett ändringsdokument pekar på bilagor som dess titel nämner** ("Bilaga 4 Tillägg och
   förtydliganden till bilaga 4.1"), men steg 4 sökte "Punkten "Övrigt"" i alla filer på sidan
   och fick fyra kandidater, och "Punkt 2a" i tilläggets egen fil.
@@ -40,36 +35,31 @@ dåligt (ADR 0015, Konsekvenser).
    eller ett svar i Frågor och svar, och `find_amendments` läser dem baklänges när det anropas:
    `document_reference` → `reference_target` → avsnittet eller filen som frågas om.
 2. **Steg 4 läser fler ändringar och färre felaktiga.** Fler ändringsord ("texten som gäller",
-   "gör följande tillägg", "strykas och ersättas", "justerar", "utgår" sist i en mening,
-   "Tillägg till" först i en); en nekad ändring ("ändrar inte", "utan ändringar") och ett villkor
-   ("om pris ändras") är ingen ändring; en punkt före en liten bokstav avslutar ingen mening
-   ("Punkt 2a. i Registreringen ersätts"); i ett svar räknas också nästa mening, fram till nästa
-   hänvisning ("Gällande avsnitt 4.2.4, bokstaven L: Kammarkollegiet ersätter …"); och ett
-   meddelande från Kammarkollegiet läses som ett svar. Mätt på pilotens 2 978 hänvisningar i
-   ändringsdokumenten och frågeloggarna: 33 nya ändringar och 6 som inte var några (60 i stället
-   för 33), alla lästa ([steg 4](../steg/04-extraktion.md), "Ändringar").
+   "gör följande tillägg", "strykas och ersättas"); en nekad ändring ("ändrar inte", "utan
+   ändringar") och ett villkor ("om pris ändras") är ingen ändring; en punkt före en liten bokstav
+   avslutar ingen mening ("Punkt 2a. i Registreringen ersätts"); och i ett svar räknas också nästa
+   mening, fram till nästa hänvisning ("Gällande avsnitt 4.2.4, bokstaven L: Kammarkollegiet
+   ersätter …"). Mätt på pilotens 2 977 hänvisningar i ändringsdokumenten och frågeloggarna: 12
+   nya ändringar och 6 som inte var några (39 i stället för 33), alla lästa
+   ([steg 4](../steg/04-extraktion.md), "Ändringar").
 3. **Ett ändringsdokument söker först i bilagorna som dess titel nämner** (regel R1a för ett
    nummer, R4a för en rubrik), bara på samma ramavtalssida: "Punkten "Övrigt"" i Bilaga 4 är
    4.1 §10, och "Punkt 2a" i Bilaga 5 är §2 i 5.1, 5.2, 5.3 eller 5.4 (tvetydig). Sju
-   hänvisningar får ett annat utfall, alla i Microsofts tillägg.
-4. **En fråga gäller inget dokument som publicerades efter den.** R1q och R4q hoppar över filen
-   som loggens titel anger när den publicerades efter frågans datum (den tidigaste stämpeln), och
-   söker då bland sidans upphandlingsdokument, där frågans datum redan avgör (`settle_by_date`). 28
-   hänvisningar i 20c753d88340 leder nu till Ansökningsinbjudan. Tillsammans med besluten 2 och 3
-   går andelen som reglerna löser från 73,48 till 73,51 procent.
-5. **Verktyget** tar `sha256` och ett avsnitt (`section_number` eller `section_position`), eller
+   hänvisningar får ett annat utfall, alla i Microsofts tillägg, och andelen som reglerna löser
+   går från 73,48 till 73,51 procent.
+4. **Verktyget** tar `sha256` och ett avsnitt (`section_number` eller `section_position`), eller
    bara filen. Svaret har `target` (det som frågades om), `amendments` och `held_back`. Varje
    ändring har `amending` (avsnittet som ändrar, med citatfälten), `amended` (avsnittet eller
    hela filen som ändras), `raw`, `status` (`resolved`, eller `ambiguous` när ändringen kan gälla
    en annan fil), `dated` (svarets datum i loggen, eller ändringsdokumentets) och `excerpt`.
    Nyaste först. Ett ändrande avsnitt som verktygen inte får visa räknas i `held_back`.
-6. **Regeln om senaste lydelsen** (`validation/latest_wording.py`) kör efter citaten och
+5. **Regeln om senaste lydelsen** (`validation/latest_wording.py`) kör efter citaten och
    registeruppgifterna, före granskaren. Ett citerat avsnitt med en ändring som är `resolved` och
    gäller just det avsnittet godkänns bara om svaret också citerar ändringen. Annars är det ett
    problem som säger vilken ändring det gäller, och efter försöken en reservation. Kan ändringarna
    inte läsas, blir det en reservation. Regeln läser ändringarna genom avtal-mcp, aldrig ur
    historiken.
-7. **Prompten** säger åt agenten att köra `find_amendments` på varje avsnitt den citerar, bygga
+6. **Prompten** säger åt agenten att köra `find_amendments` på varje avsnitt den citerar, bygga
    på den senaste lydelsen och citera både avsnittet och ändringen.
 
 ## Konsekvenser
@@ -80,9 +70,6 @@ dåligt (ADR 0015, Konsekvenser).
 - Regeln kräver att en ändring citeras, inte just den senaste, när flera ändrar samma avsnitt.
 - Tvetydiga ändringar och ändringar av en hel fil kontrolleras inte; verktyget visar dem och
   agenten avgör. Ett tillägg som ändrar "Registreringen" kan gälla tre filer.
-- En fråga utan tidsstämpel (36 avsnitt i loggarna) kan inte dateras. Svaret i 20c753d88340
-  §21 ändrar 4.2.4 bokstaven L i Ansökningsinbjudan men leder fortfarande till 4.2.4 i
-  Upphandlingsdokumentet, så verktyget visar ändringen på fel avsnitt och regeln kräver den där.
 - Steg 4 hittar bara det som står med ändringsord. En ändring som inte säger vad den ändrar, eller
   som ändrar en fil som aldrig publicerats, syns inte.
 - Ett svar i Frågor och svar som ändrar ett upphandlingsdokument följer inte med till kopiorna av

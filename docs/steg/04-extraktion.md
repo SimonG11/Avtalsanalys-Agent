@@ -180,7 +180,8 @@ med 2 500 SEK"). En punkt före liten bokstav eller citattecken avslutar ett num
 ("Punkt 2a. i Registreringen ersätts"). I ett svar eller meddelande räknas också nästa mening, fram
 till nästa hänvisning, eftersom Kammarkollegiet ofta först anger avsnittet och sedan ändringen. Av
 de 2 978 hänvisningarna i urvalets tillägg och frågeloggar (utom lagar) markeras 60: 16 i tillägg,
-27 i svar och 17 i meddelanden. Alla 60 lästes.
+27 i svar och 17 i meddelanden. Alla 60 lästes ([ADR 0017](../adr/0017-andringar.md) och
+[ADR 0018](../adr/0018-andringar-efter-granskningen.md)).
 
 Microsofts tillägg anger i titeln vilka bilagor de ändrar ("Bilaga 5 Tillägg och förtydligande till
 bilagorna 5.1-5.4"), och bara filerna på samma avtalssida räknas. Ett avsnittsnummer i ett sådant
