@@ -138,8 +138,8 @@ def make_judge_model(settings: Settings, model: str, effort: ReasoningEffort) ->
     """The judge's chat model; raises `MissingApiKeyError` without an OpenAI key."""
     if settings.openai_api_key is None:
         raise MissingApiKeyError(
-            "OPENAI_API_KEY saknas: bedömningen av svaren behöver en nyckel till OpenAI. Sätt "
-            "den i .env eller som miljövariabel, eller kör med --no-judge."
+            "OPENAI_API_KEY saknas: agenten, granskaren och domaren behöver en nyckel till "
+            "OpenAI. Sätt den i .env eller som miljövariabel."
         )
     return ChatOpenAI(
         model=model,

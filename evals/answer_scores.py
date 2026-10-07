@@ -6,7 +6,7 @@ What:
     gold's document sources the answer cites with a checked quote
     (`sources_found`), how many of the gold's agreements its register facts
     cover (`register_score`), and the verdict. `rule_judgement` judges an
-    answer that needs no judge. `summarize` gives the `Summary` of any group
+    answer that needs no judge (`no_draft`). `summarize` gives the `Summary` of any group
     of results, and `by_category` the groups by category.
 
 Why:
@@ -163,9 +163,14 @@ def register_score(question: GoldQuestion, answer: Answer | None) -> tuple[int, 
     return len(required), len(required & declared), len(declared - required)
 
 
+def no_draft(run: QuestionRun) -> bool:
+    """Whether the run ended without a draft, within the limit on model calls."""
+    return run.answer is not None and run.answer.text == NO_DRAFT_TEXT and not run.answer.citations
+
+
 def rule_judgement(run: QuestionRun) -> Judgement | None:
     """The verdict for an answer that needs no judge: a run that ended without a draft."""
-    if run.answer is not None and run.answer.text == NO_DRAFT_TEXT and not run.answer.citations:
+    if no_draft(run):
         return Judgement(verdict="incorrect", missing=[], wrong=[], reason=NO_DRAFT_REASON)
     return None
 
@@ -212,9 +217,11 @@ class Summary:
     verdicts: Mapping[str, int]  # by verdict, and "unjudged"
     statuses: Mapping[str, int]  # by status, and "error" for a run without an answer
     unanswerable: int
+    unanswerable_judged: int
     unanswerable_correct: int  # judged correct: the answer says it does not follow
     answerable: int
-    answerable_no_answer: int  # status no_answer although the gold answers the question
+    answerable_no_answer: int  # the agent found no answer although the gold has one
+    no_draft: int  # runs that ended without a draft
     citations: int
     verified_citations: int
     answers_with_citations: int
@@ -254,9 +261,13 @@ def summarize(results: Sequence[QuestionResult]) -> Summary:
         verdicts=verdicts,
         statuses=statuses,
         unanswerable=sum(1 for r in results if not r.answerable),
+        unanswerable_judged=sum(1 for r in results if not r.answerable and r.verdict is not None),
         unanswerable_correct=sum(1 for r in results if not r.answerable and r.verdict == "correct"),
         answerable=sum(1 for r in results if r.answerable),
-        answerable_no_answer=sum(1 for r in results if r.answerable and r.status == "no_answer"),
+        answerable_no_answer=sum(
+            1 for r in results if r.answerable and r.status == "no_answer" and not no_draft(r.run)
+        ),
+        no_draft=sum(1 for r in results if no_draft(r.run)),
         citations=sum(r.citations for r in results),
         verified_citations=sum(r.verified_citations for r in results),
         answers_with_citations=len(answered),

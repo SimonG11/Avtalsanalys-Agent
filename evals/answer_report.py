@@ -27,6 +27,7 @@ How:
 import json
 import re
 import statistics
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -198,7 +199,7 @@ def render_markdown(report: AnswerReport) -> str:
     lines += _md_categories(report.results)
     lines += _md_questions(report.results)
     lines += _md_usage(report)
-    lines += _md_judgements(report.results)
+    lines += _md_judgements(report)
     lines += _md_answers(report.results)
     return "\n".join(lines).rstrip("\n") + "\n"
 
@@ -207,9 +208,10 @@ def _md_summary(report: AnswerReport) -> list[str]:
     s = summarize(report.results)
     n = s.questions
     v = s.verdicts
-    judged = n - v[_UNJUDGED]
     lines = ["## Sammanfattning", ""]
-    if judged:
+    if report.info.judge_model is None:
+        lines.append("- **Rätt enligt domaren:** ingen bedömning (körd utan domare).")
+    else:
         line = (
             f"- **Rätt enligt domaren:** {v['correct']} av {n} ({_percent(v['correct'], n)}); "
             f"delvis rätt {v['partly_correct']}, fel {v['incorrect']}"
@@ -217,19 +219,29 @@ def _md_summary(report: AnswerReport) -> list[str]:
         if v[_UNJUDGED]:
             line += f", ej bedömda {v[_UNJUDGED]}"
         lines.append(line + ".")
-    else:
-        lines.append("- **Rätt enligt domaren:** ingen bedömning (körd utan domare).")
+        if failed := sum(1 for r in report.results if _judge_failed(r)):
+            lines.append(
+                f"- **Domaren svarade inte** för {failed} av {n} svar; varför står i loggen."
+            )
     statuses = ", ".join(f"{STATUS_NAMES[status]} {s.statuses[status]}" for status in STATUSES)
     lines.append(f"- **Status:** {statuses}; fel i körningen {s.statuses['error']}.")
-    if s.unanswerable and judged:
-        lines.append(
+    if s.unanswerable_judged:
+        line = (
             f"- **Frågor som avtalen inte besvarar:** {s.unanswerable_correct} av "
-            f"{s.unanswerable} fick ett rätt ”framgår inte”."
+            f"{s.unanswerable_judged} fick ett rätt ”framgår inte”"
         )
+        if unjudged := s.unanswerable - s.unanswerable_judged:
+            line += f" ({unjudged} ej bedömda)"
+        lines.append(line + ".")
     if s.answerable:
         lines.append(
-            f"- **Frågor som avtalen besvarar men där agenten svarade ”framgår inte”:** "
+            f"- **Frågor som avtalen besvarar men där agenten svarade att det inte framgår:** "
             f"{s.answerable_no_answer} av {s.answerable}."
+        )
+    if s.no_draft:
+        lines.append(
+            f"- **Utan svar inom gränsen för modellanrop:** {s.no_draft} av {n} frågor "
+            f"({report.info.model_call_limit} anrop)."
         )
     if s.citations:
         lines.append(
@@ -307,7 +319,8 @@ def _md_method(report: AnswerReport) -> list[str]:
         "- **Status** är den användaren ser: *Kontrollerat* när varje citat står ordagrant i "
         "sitt avsnitt, registeruppgifterna och ändringarna stämmer och granskaren fann stöd för "
         "svaret; *Med reservation* när något av det inte gick att kontrollera efter de nya "
-        "försöken; *Inget svar* när agenten fann att avtalen inte besvarar frågan.",
+        "försöken; *Inget svar* när agenten fann att avtalen inte besvarar frågan, eller inte "
+        "kom fram till ett svar inom gränsen för modellanrop.",
         "- **Facits källor citerade:** en källa i facit räknas som citerad när svaret har ett "
         "citat som kontrollen godkände i samma fil och på samma plats i den (avsnittets "
         "position, eller dess nummer). Samma text i en fil som facit inte anger räknas inte, "
@@ -430,10 +443,9 @@ def _md_usage(report: AnswerReport) -> list[str]:
     for role, usage in (("agent och granskare", summary.usage), ("domare", judge)):
         for model, tokens in usage.items():
             name = role
-            if role != "domare":
-                name = {info.agent_model: "agent", info.reviewer_model: "granskare"}.get(
-                    model, role
-                )
+            if role != "domare":  # one model can be both
+                roles = ((info.agent_model, "agent"), (info.reviewer_model, "granskare"))
+                name = " och ".join(label for m, label in roles if m == model) or role
             dollars = cost_range({model: tokens})
             lines.append(
                 _row(
@@ -463,9 +475,14 @@ def _md_usage(report: AnswerReport) -> list[str]:
     return lines
 
 
-def _md_judgements(results: Sequence[QuestionResult]) -> list[str]:
+def _judge_failed(result: QuestionResult) -> bool:
+    """Whether the judge was asked about the answer but gave no verdict."""
+    return result.run.answer is not None and result.judgement is None
+
+
+def _md_judgements(report: AnswerReport) -> list[str]:
     lines = ["## Bedömningar", ""]
-    for r in results:
+    for r in report.results:
         line = f"- **{_md(r.id)} {_verdict_name(r)}.**"
         if r.judgement is not None:
             line += f" {_md(r.judgement.reason)}"
@@ -477,6 +494,8 @@ def _md_judgements(results: Sequence[QuestionResult]) -> list[str]:
                 line += " (Bedömd utan domare.)"
         elif r.run.error:
             line += " Körningen gav inget svar att bedöma."
+        elif report.info.judge_model is not None and _judge_failed(r):
+            line += " Domaren svarade inte; varför står i loggen."
         if r.run.answer is not None and r.run.answer.reservations:
             line += f" Reservationer: {_listed(r.run.answer.reservations)}"
         lines.append(line)
@@ -589,7 +608,9 @@ def overall_lines(report: AnswerReport) -> list[str]:
         f"Answer evaluation, {report.info.agent_model} ({report.info.agent_effort}): "
         f"{n} questions in {report.seconds:.0f} s",
         f"judge: correct {v['correct']}, partly {v['partly_correct']}, incorrect "
-        f"{v['incorrect']}, unjudged {v[_UNJUDGED]}",
+        f"{v['incorrect']}, unjudged {v[_UNJUDGED]}"
+        if report.info.judge_model is not None
+        else "judge: none (--no-judge)",
         f"status: {statuses}",
         f"citations verified {s.verified_citations}/{s.citations}; gold sources cited "
         f"{s.sources_found}/{s.document_sources}; register agreements "
@@ -600,6 +621,22 @@ def overall_lines(report: AnswerReport) -> list[str]:
     if s.cost is not None:
         lines.append(f"cost: ${s.cost[0]:.2f}-{s.cost[1]:.2f} (agent and reviewer)")
     return lines
+
+
+def check_writable(out_dir: Path) -> None:
+    """Stop with a CommandError unless reports can be written to `out_dir`.
+
+    Run before the questions, so a folder the user may not write to (the
+    Compose service runs as uid 1000) does not lose a run that has been paid for.
+    """
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=out_dir, prefix=".write-check-"):
+            pass
+    except OSError as error:
+        raise CommandError(
+            f"Rapporterna gick inte att skriva till {out_dir}: {error.strerror}"
+        ) from None
 
 
 def write_reports(report: AnswerReport, out_dir: Path) -> tuple[Path, Path]:

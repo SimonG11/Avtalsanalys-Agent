@@ -11,10 +11,12 @@ from pathlib import Path
 import pytest
 
 from avtalsagent.agent.__main__ import CommandError
+from avtalsagent.agent.middleware import NO_DRAFT_TEXT
 from avtalsagent.agent.schemas import Answer, Citation
 from evals.answer_report import (
     AnswerReport,
     RunInfo,
+    check_writable,
     overall_lines,
     render_markdown,
     report_json,
@@ -22,7 +24,7 @@ from evals.answer_report import (
     write_reports,
 )
 from evals.answer_run import ASK_USER_REPLY, QuestionRun, TokenUse
-from evals.answer_scores import score
+from evals.answer_scores import rule_judgement, score
 from evals.gold import Alternative, DocumentSource, GoldQuestion, GoldScope
 from evals.judge import Judgement
 
@@ -204,6 +206,49 @@ def test_the_markdown_without_a_judge_says_so() -> None:
 
     assert "- **Rätt enligt domaren:** ingen bedömning (körd utan domare)." in markdown
     assert "- **Domare:** ingen (--no-judge)" in markdown
+    assert "Frågor som avtalen inte besvarar" not in markdown
+    assert "Domaren svarade inte" not in markdown
+    assert overall_lines(unjudged)[1] == "judge: none (--no-judge)"
+
+
+def test_a_judge_that_gave_no_verdict_is_named_and_left_out_of_the_shares() -> None:
+    plain = report()
+    first, second, unanswered = plain.results
+    failed = AnswerReport(
+        **{
+            **plain.__dict__,
+            "results": (first, second, score(gold("q27", False), unanswered.run, None, None)),
+        }
+    )
+
+    markdown = render_markdown(failed)
+
+    assert "- **Domaren svarade inte** för 1 av 3 svar; varför står i loggen." in markdown
+    assert "- **q27 Ej bedömd.** Domaren svarade inte; varför står i loggen." in markdown
+    # q02's run failed, so the judge was never asked about it.
+    assert "- **q02 Ej bedömd.** Körningen gav inget svar att bedöma." in markdown
+    assert "Frågor som avtalen inte besvarar" not in markdown
+
+
+def test_a_run_without_a_draft_is_counted_apart_from_no_answer() -> None:
+    plain = report()
+    no_draft = run(Answer(text=NO_DRAFT_TEXT, status="no_answer", citations=[]))
+    results = (*plain.results, score(gold("q03"), no_draft, rule_judgement(no_draft), "rule"))
+
+    markdown = render_markdown(AnswerReport(**{**plain.__dict__, "results": results}))
+
+    assert "- **Utan svar inom gränsen för modellanrop:** 1 av 4 frågor (16 anrop)." in markdown
+    assert "där agenten svarade att det inte framgår:** 0 av 3." in markdown
+    assert "- **q03 Fel.** Agenten kom inte fram till ett svar" in markdown
+
+
+def test_one_model_as_agent_and_reviewer_is_named_as_both() -> None:
+    plain = report()
+    same = AnswerReport(
+        **{**plain.__dict__, "info": RunInfo(**{**INFO.__dict__, "reviewer_model": "gpt-6.1-sol"})}
+    )
+
+    assert "| gpt-6.1-sol | agent och granskare | 6 |" in render_markdown(same)
 
 
 def test_the_json_holds_the_run_the_summary_and_every_answer() -> None:
@@ -256,6 +301,14 @@ def test_a_report_that_cannot_be_written_stops_with_a_clear_error(tmp_path: Path
 
     with pytest.raises(CommandError, match="Rapporterna gick inte att skriva"):
         write_reports(report(), blocked / "reports")
+    with pytest.raises(CommandError, match="Rapporterna gick inte att skriva"):
+        check_writable(blocked / "reports")
+
+
+def test_the_check_before_the_run_makes_the_folder_and_leaves_it_empty(tmp_path: Path) -> None:
+    check_writable(tmp_path / "reports")
+
+    assert list((tmp_path / "reports").iterdir()) == []
 
 
 def test_what_is_missing_and_wrong_is_one_sentence_each() -> None:

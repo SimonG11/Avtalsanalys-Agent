@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import httpx2
+import openai
 import pytest
 from pydantic import SecretStr
 
@@ -147,7 +149,7 @@ def test_the_options_have_their_defaults() -> None:
 
 
 @pytest.mark.anyio
-async def test_the_verdict_is_by_rule_by_the_judge_or_none() -> None:
+async def test_the_verdict_is_by_rule_by_the_judge_or_none_without_a_judge() -> None:
     judge = FakeJudge()
     question = gold("q01")
     no_draft = run(Answer(text=NO_DRAFT_TEXT, status="no_answer", citations=[]))
@@ -156,6 +158,7 @@ async def test_the_verdict_is_by_rule_by_the_judge_or_none() -> None:
     verdict, by, usage = await judge_answer(judge, question, no_draft)
     assert (verdict and verdict.verdict, by, usage) == ("incorrect", "rule", {})
     assert await judge_answer(None, question, ANSWERED) == (None, None, {})
+    assert await judge_answer(None, question, no_draft) == (None, None, {})  # --no-judge
     assert await judge_answer(judge, question, ANSWERED) == (
         CORRECT,
         "judge",
@@ -205,6 +208,31 @@ async def test_a_question_whose_session_fails_is_recorded(
     assert result.answer is None
     assert result.error is not None and result.error.startswith("avtal-mcp: ConnectionError")
     assert SECRET not in result.error
+
+
+def refused_key() -> openai.AuthenticationError:
+    request = httpx2.Request("POST", "https://api.openai.com/v1/responses")
+    return openai.AuthenticationError(
+        "Incorrect API key provided: sk-proj-****...WXYZ.",
+        response=httpx2.Response(401, request=request),
+        body=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_a_refused_key_is_not_recorded_as_the_questions_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @asynccontextmanager
+    async def refusing(settings: Settings) -> AsyncIterator[McpTools]:
+        raise ExceptionGroup("unhandled errors in a TaskGroup", [refused_key()])
+        yield
+
+    monkeypatch.setattr(runner, "open_mcp_tools", refusing)
+    settings = Settings(_env_file=None, openai_api_key=SecretStr(SECRET))
+
+    with pytest.raises(ExceptionGroup):
+        await ask_question(settings, None, None, None, gold("q01"), 10)  # type: ignore[arg-type]
 
 
 # --- the run ----------------------------------------------------------------------------------
@@ -342,6 +370,44 @@ def test_without_a_key_the_command_stops_before_any_question(
 
     assert end.value.code == 1
     assert "OPENAI_API_KEY saknas" in capsys.readouterr().err
+
+
+def test_a_refused_key_ends_the_command_without_showing_the_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setattr(runner, "get_settings", lambda: Settings(_env_file=None))
+
+    async def refused(*args: Any, **kwargs: Any) -> Any:
+        raise ExceptionGroup("unhandled errors in a TaskGroup", [refused_key()])
+
+    monkeypatch.setattr(runner, "evaluate", refused)
+
+    with pytest.raises(SystemExit) as end:
+        runner.main(["--only", "q01", "--no-judge", "--out", str(tmp_path)])
+
+    assert end.value.code == 1
+    err = capsys.readouterr().err
+    assert "OpenAI tog inte emot nyckeln" in err and "WXYZ" not in err
+
+
+def test_a_folder_that_cannot_be_written_stops_the_command_before_any_question(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setattr(runner, "get_settings", lambda: Settings(_env_file=None))
+
+    async def never(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("no question may be asked when the reports cannot be written")
+
+    monkeypatch.setattr(runner, "evaluate", never)
+    blocked = tmp_path / "file"
+    blocked.write_text("")
+
+    with pytest.raises(SystemExit) as end:
+        runner.main(["--only", "q01", "--no-judge", "--out", str(blocked / "reports")])
+
+    assert end.value.code == 1
+    assert "Rapporterna gick inte att skriva" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == [blocked]
 
 
 def test_the_judges_model_needs_the_judge() -> None:

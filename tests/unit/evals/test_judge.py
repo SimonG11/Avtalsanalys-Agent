@@ -56,8 +56,10 @@ def test_without_a_key_the_judge_is_refused_with_a_clear_error(
 ) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    with pytest.raises(MissingApiKeyError, match="--no-judge"):
+    with pytest.raises(MissingApiKeyError, match="OPENAI_API_KEY saknas") as raised:
         make_judge_model(Settings(_env_file=None), "the-judge-model", "medium")
+    # Leaving out the judge would not help: the agent needs the key too.
+    assert "--no-judge" not in str(raised.value)
 
 
 def test_the_request_has_the_question_both_answers_and_whether_it_is_answered() -> None:

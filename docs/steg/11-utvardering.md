@@ -35,7 +35,7 @@ utvecklingsmiljön), fyra frågor åt gången:
 | Domarens kostnad | 0,42 USD för alla 30 | 0,43 USD |
 | Hela körningen | 6 minuter | 6 minuter |
 
-Körning 1 per kategori (körning 2 skilde sig bara i q26, som blev rätt):
+Körning 1 per kategori (körning 2 hade samma bedömningar utom q26, som blev rätt):
 
 | Kategori | Frågor | Rätt | Delvis | Fel | Tid (median) |
 |---|---:|---:|---:|---:|---:|
@@ -133,7 +133,8 @@ fel eller ett svar som inte går att läsa ger `None`, och loggen visar bara fel
 sista `FinalAnswer`-anropet som går att läsa), verktygen, verktygsfelen, frågorna till
 användaren, utkasten som kontrollen skickade tillbaka och de som hade fel form. Ett fel eller en
 fråga som passerar tidsgränsen sparas som text, utan nyckel och lösenord, och nästa fråga ställs
-ändå. `UsageCounter` räknar varje modellanrop per modell (`ls_model_name`) med tokens ur
+ändå. Bara en nyckel som OpenAI inte tar emot stoppar körningen (`stops_the_run`), eftersom varje
+fråga skulle få samma fel och felets text visar en del av nyckeln. `UsageCounter` räknar varje modellanrop per modell (`ls_model_name`) med tokens ur
 `usage_metadata`; `cost` och `cost_range` räknar dollar med arkitekturvalideringens priser.
 
 ### 3. `evals/answer_scores.py` – poängen
@@ -160,17 +161,20 @@ rapporterna. Fel som stoppar körningen ger en rad och slutkod 1, som agentens k
 
 Profilen `eval`, samma image som API:t, `MCP_TRANSPORT=streamable_http` mot `mcp` och
 kontrollpunkter i minnet. `./evals` monteras, eftersom imagen bara har `src/`, så rapporterna
-hamnar i `evals/reports/` på datorn.
+hamnar i `evals/reports/` på datorn. Containern skriver som uid 1000, som inläsningen i `./data`
+([steg 9](09-api.md)); på Docker Desktop för Mac spelar det ingen roll, men på Linux måste
+`./evals` vara skrivbar för den. Mätningen prövar att mappen går att skriva i innan första frågan
+ställs, så en körning som har kostat pengar inte går förlorad på slutet.
 
 ## Tester
 
 | Fil | Tester | Vad |
 |---|---:|---|
-| `tests/unit/evals/test_answer_run.py` | 14 | En fråga genom agentens riktiga graf med en skriptad modell: svar, utkast, verktyg och tokens; `ask_user` får det fasta svaret; ett utkast som skickas tillbaka; ett verktygsfel; ett fel med en hemlighet som döljs; tidsgränsen; gränsen för modellanrop; tokens, kostnad och felgrupper |
-| `tests/unit/evals/test_answer_scores.py` | 17 | Citatens positioner ur utkastet, källor på plats (position eller nummer), bara godkända citat, avtal med samma nyckel, regeln för svar utan utkast, sammanfattningen, kategorierna och percentilen |
-| `tests/unit/evals/test_answer_report.py` | 9 | Rapporternas namn, Markdown med svenska tal, skäl, fel och svar som citat, utan domare, JSON, utskriften och fel vid skrivning |
+| `tests/unit/evals/test_answer_run.py` | 15 | En fråga genom agentens riktiga graf med en skriptad modell: svar, utkast, verktyg och tokens; `ask_user` får det fasta svaret; ett utkast som skickas tillbaka; ett verktygsfel; ett fel med en hemlighet som döljs; en nyckel som OpenAI inte tar emot stoppar körningen; tidsgränsen; gränsen för modellanrop; tokens, kostnad och felgrupper |
+| `tests/unit/evals/test_answer_scores.py` | 18 | Citatens positioner ur utkastet, källor på plats (position eller nummer), bara godkända citat, avtal med samma nyckel, regeln för svar utan utkast, sammanfattningen (där ett svar utan utkast inte räknas som "framgår inte"), kategorierna och percentilen |
+| `tests/unit/evals/test_answer_report.py` | 13 | Rapporternas namn, Markdown med svenska tal, skäl, fel och svar som citat, utan domare, en domare som inte svarade, svar utan utkast, samma modell som agent och granskare, JSON, utskriften, och mappen som prövas före körningen och vid skrivning |
 | `tests/unit/evals/test_judge.py` | 8 | Domarens klient, frågan med båda svaren, att ingen text kan avsluta sitt element, det strikta schemat, ett lyckat och två misslyckade anrop |
-| `tests/unit/evals/test_run_answer_eval.py` | 12 | Urvalet av frågor, inställningarna, bedömningen, avtal-mcp som inte svarar, frågor åt gången i facits ordning och kommandoradens utskrift och fel |
+| `tests/unit/evals/test_run_answer_eval.py` | 15 | Urvalet av frågor, inställningarna, bedömningen (ingen utan domare), avtal-mcp som inte svarar, en nyckel som OpenAI inte tar emot, frågor åt gången i facits ordning, kommandoradens utskrift och fel, och en mapp som inte går att skriva i stoppar före första frågan |
 
 ## Kända begränsningar
 

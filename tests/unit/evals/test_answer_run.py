@@ -10,6 +10,8 @@ from datetime import date
 from typing import Any
 
 import anyio
+import httpx2
+import openai
 import pytest
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
@@ -91,6 +93,24 @@ class BrokenModel(NamedModel):
         **kwargs: Any,
     ) -> ChatResult:
         raise ConnectionError(f"failed with {SECRET}")
+
+
+class RefusedKeyModel(NamedModel):
+    """A model whose key OpenAI refuses; its message shows the key's last characters."""
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        request = httpx2.Request("POST", "https://api.openai.com/v1/responses")
+        raise openai.AuthenticationError(
+            "Incorrect API key provided: sk-proj-****...WXYZ.",
+            response=httpx2.Response(401, request=request),
+            body=None,
+        )
 
 
 class SlowModel(NamedModel):
@@ -234,6 +254,13 @@ async def test_a_failed_run_is_recorded_with_its_error_redacted() -> None:
     assert run.error is not None and "ConnectionError" in run.error
     assert SECRET not in run.error and "***" in run.error
     assert run.usage == {"the-agent-model": TokenUse(calls=1)}
+
+
+@pytest.mark.anyio
+async def test_a_refused_key_stops_the_run_instead_of_being_recorded() -> None:
+    # Every question would fail the same way, and the message shows part of the key.
+    with pytest.raises(openai.AuthenticationError):
+        await ask(build(RefusedKeyModel(script=[])))
 
 
 @pytest.mark.anyio

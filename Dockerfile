@@ -1,5 +1,6 @@
-# The backend as one container image. docker-compose.yml runs it three ways: avtal-mcp (mcp),
-# the API (api) and the ingestion (ingest), each with its own command. Two stages:
+# The backend as one container image. docker-compose.yml runs it four ways: avtal-mcp (mcp),
+# the API (api), the ingestion (ingest) and the measurement of the answers (eval), each with
+# its own command. Two stages:
 #   build    installs the locked dependencies with uv, then the project itself
 #   runtime  the environment and the code, run as an unprivileged user
 # The Python image is multi-architecture, so the same file builds for a Mac with Apple silicon

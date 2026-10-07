@@ -307,8 +307,12 @@ def test_the_summary_counts_verdicts_statuses_sources_and_register_rows() -> Non
     assert summary.errors == 1
     assert summary.verdicts == {"correct": 2, "partly_correct": 1, "incorrect": 1, "unjudged": 1}
     assert summary.statuses == {"verified": 1, "with_reservation": 1, "no_answer": 2, "error": 1}
-    assert (summary.unanswerable, summary.unanswerable_correct) == (1, 1)
-    assert (summary.answerable, summary.answerable_no_answer) == (4, 1)
+    assert (summary.unanswerable, summary.unanswerable_judged, summary.unanswerable_correct) == (
+        1,
+        1,
+        1,
+    )
+    assert (summary.answerable, summary.answerable_no_answer, summary.no_draft) == (4, 1, 0)
     assert (summary.citations, summary.verified_citations) == (2, 1)
     assert (summary.answers_with_citations, summary.answers_all_verified) == (2, 1)
     assert (summary.document_sources, summary.sources_found) == (2, 1)
@@ -318,6 +322,20 @@ def test_the_summary_counts_verdicts_statuses_sources_and_register_rows() -> Non
     assert summary.tool_calls == (1, 1, 0, 1, 1)
     assert summary.seconds == (10, 30, 20, 40, 600)
     assert summary.cost == (0.0, 0.0)
+
+
+def test_a_run_without_a_draft_is_not_counted_as_finding_no_answer() -> None:
+    no_draft = run(Answer(text=NO_DRAFT_TEXT, status="no_answer", citations=[]))
+    unanswerable = gold(id="q28", category="fråga utan svar i avtalen", answerable=False)
+    group = [
+        score(gold(id="q05"), no_draft, rule_judgement(no_draft), "rule"),
+        score(unanswerable, run(answer(status="no_answer")), None, None),
+    ]
+
+    summary = summarize(group)
+
+    assert (summary.answerable_no_answer, summary.no_draft) == (0, 1)
+    assert (summary.unanswerable, summary.unanswerable_judged) == (1, 0)
 
 
 def test_an_empty_summary_has_zeros() -> None:

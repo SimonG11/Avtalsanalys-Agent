@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import anyio
+import openai
 from langchain.agents.middleware import InputAgentState
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
@@ -235,6 +236,8 @@ async def run_question(
     except TimeoutError:
         error = f"tidsgränsen på {timeout:g} s nåddes"
     except Exception as failure:  # recorded; the next question is asked all the same
+        if stops_the_run(failure):
+            raise
         error = redact(error_text(failure))
     seconds = time.monotonic() - started
     values: Mapping[str, Any] = {}
@@ -298,6 +301,18 @@ def last_draft(messages: Sequence[BaseMessage]) -> FinalAnswer | None:
             except ValidationError:
                 continue
     return None
+
+
+def stops_the_run(error: BaseException) -> bool:
+    """Whether OpenAI refused the key, which every other question would hit too.
+
+    Such an error ends the run instead of being recorded: its message shows
+    part of the key, and the command's own message says what to do.
+    """
+    return any(
+        isinstance(leaf, openai.AuthenticationError | openai.PermissionDeniedError)
+        for leaf in _leaves(error)
+    )
 
 
 def error_text(error: BaseException) -> str:

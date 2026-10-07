@@ -71,7 +71,13 @@ from avtalsagent.agent.schemas import Answer
 from avtalsagent.config import Settings, get_settings
 from avtalsagent.ingestion.__main__ import configure_logging, positive_int
 from avtalsagent.validation.review import AnswerReviewer
-from evals.answer_report import AnswerReport, RunInfo, overall_lines, write_reports
+from evals.answer_report import (
+    AnswerReport,
+    RunInfo,
+    check_writable,
+    overall_lines,
+    write_reports,
+)
 from evals.answer_run import (
     ERROR_CHARS,
     QuestionRun,
@@ -79,6 +85,7 @@ from evals.answer_run import (
     UsageCounter,
     error_text,
     run_question,
+    stops_the_run,
 )
 from evals.answer_scores import JudgedBy, QuestionResult, rule_judgement, score
 from evals.gold import GoldError, GoldFile, GoldQuestion, load_gold
@@ -137,6 +144,8 @@ async def ask_question(
                 redact=settings.redact,
             )
     except Exception as error:  # the session to avtal-mcp failed; the run goes on
+        if stops_the_run(error):
+            raise
         message = settings.redact(f"avtal-mcp: {error_text(error)}")
         return QuestionRun(
             answer=None,
@@ -155,13 +164,11 @@ async def ask_question(
 async def judge_answer(
     judge: Judge | None, question: GoldQuestion, run: QuestionRun
 ) -> tuple[Judgement | None, JudgedBy | None, Mapping[str, TokenUse]]:
-    """The verdict on the run's answer: by rule, by the judge, or none."""
-    if run.answer is None:
+    """The verdict on the run's answer: by rule, by the judge, or none without a judge."""
+    if run.answer is None or judge is None:
         return None, None, {}
     if (by_rule := rule_judgement(run)) is not None:
         return by_rule, "rule", {}
-    if judge is None:
-        return None, None, {}
     judgement, usage = await judge.judge(question, run.answer)
     return judgement, "judge", usage
 
@@ -357,6 +364,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             if judge_model
             else None
         )
+        check_writable(args.out)  # before the questions are paid for
         report = asyncio.run(
             evaluate(
                 settings,

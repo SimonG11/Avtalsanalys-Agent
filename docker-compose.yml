@@ -8,7 +8,8 @@
 # defaults below are for local use only. Each published port is bound to 127.0.0.1, so only
 # this machine reaches it.
 
-# The backend image (Dockerfile), which avtal-mcp, the API and the ingestion run from.
+# The backend image (Dockerfile), which avtal-mcp, the API, the ingestion and the measurement
+# of the answers run from.
 x-backend: &backend
   build: .
   image: avtalsagent-backend:local
