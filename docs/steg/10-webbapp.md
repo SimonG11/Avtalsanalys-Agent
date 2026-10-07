@@ -20,7 +20,7 @@ sida med citatet markerat. När agenten behöver veta mer frågar den i en dialo
 | Del | Vad den visar |
 |---|---|
 | Chatten | Frågorna och svaren. Innan första frågan finns tre exempelfrågor att klicka på. |
-| Agentens steg | Ett kort per verktygsanrop, live medan agenten arbetar: "Söker i dokumenten" blir "Sökte i dokumenten" när verktyget har svarat. Kortet visar huvudargumentet ("uppsägningstid") och de andra argumenten med svenska namn. Verktygets svar går att fälla ut. Agentens fråga till dig är också ett steg, "Frågar dig". När agenten lämnar in sitt svar (`FinalAnswer`) står det "Kontrollerar svaret …" tills svaret är klart. Granskningen tar i median 9 sekunder. |
+| Agentens steg | Ett kort per verktygsanrop, live medan agenten arbetar: "Söker i dokumenten" blir "Sökte i dokumenten" när verktyget har svarat. Kortet visar huvudargumentet ("uppsägningstid") och de andra argumenten med svenska namn. En datumuträkning visar uträkningen ("2027-02-17 minus 3 månader = 2026-11-17 (tisdag)") och en sökning efter ändringar antalet ändringar. Verktygets hela svar går att fälla ut. Agentens fråga till dig är också ett steg, "Frågar dig". När agenten lämnar in sitt svar (`FinalAnswer`) står det "Kontrollerar svaret …" tills svaret är klart. Granskningen tar i median 9 sekunder. |
 | Svarskortet | Status (**Verifierat**, **Med reservation** eller **Inget svar**) med en rad om vad som kontrollerades, svarstexten där `[1]` och `[2]` är knappar, reservationerna, avtalen ur registret som svaret bygger på, och en lista med källorna: dokument, avsnitt, sida och citat. Ett citat som inte kunde kontrolleras mot avtalstexten får en varning. Svarstextens stycken och listor behåller sina radbrytningar. |
 | Källpanelen | Öppnas till höger när man klickar på en källa. PDF:en visas på den citerade sidan och citatet är markerat i gult. Om citatet inte finns på sidan står det i panelen. En Word-fil har ingen PDF, och då visar panelen bara citatet. |
 | Frågedialogen | När agenten anropar `ask_user` öppnas en dialog med frågan och svarsalternativen som knappar. Man kan också skriva ett eget svar. Agenten fortsätter med svaret. |
@@ -91,9 +91,17 @@ svenska namn från planen:
 | `calculate_date` | `berakna_datum` | Räknar ut datum |
 | `ask_user` | `fraga_anvandaren` | Frågar dig, och frågedialogen |
 
-Argumenten `query`, `agreement_number`, `framework_area`, `document_type`, `sha256`,
+Argumenten `query`, `agreement_number`, `framework_area`, `sub_area`, `document_type`, `sha256`,
 `section_number`, `section_position`, `reference`, `supplier`, `org_number`, `valid_on`, `limit`,
-`offset` och `options` får svenska namn i stegen. Andra argument visas under sina egna namn.
+`offset`, `options` och `calculate_date`s `start`, `amount`, `unit`, `direction` och
+`include_start` får svenska namn i stegen. Värdena för `unit` (`days`, `working_days`, `weeks`,
+`months`, `years`) och `direction` (`after`, `before`) skrivs på svenska, och `include_start`
+som ja eller nej. Andra argument visas under sina egna namn. `find_amendments` har bara argument
+som redan har namn.
+
+Svaret från `calculate_date` har `result`, `weekday`, `step`, `skipped` och `notes`. Steget visar
+`step` och veckodagen på en rad. Svaret från `find_amendments` har `target`, `amendments` och
+`held_back`, och steget visar hur många ändringar det fann.
 
 Agenten lämnar in sitt svar genom att anropa verktyget `FinalAnswer`. Kontrollen läser då varje
 citerat avsnitt och registret, och en andra modell granskar att källorna stöder svaret. Under
@@ -216,7 +224,10 @@ argument som är huvudsaken för varje verktyg. `describeToolCall` gör ett verk
 huvudargument och övriga argument. SHA-256 kortas till åtta tecken. Ett verktyg eller argument som
 inte finns i tabellen visas med sitt eget namn, så ett nytt verktyg i backend syns direkt.
 `ANSWER_TOOL` är namnet på anropet som inte är ett steg, `FinalAnswer`. Argument som inte säger
-något visas inte: `offset` när det är 0, och avsnittets plats i filen när avsnittets nummer finns.
+något visas inte: `offset` när det är 0, `include_start` när det är falskt, och avsnittets plats
+i filen när avsnittets nummer finns. `summarizeResult` ger steget en rad om vad verktyget fann,
+för de verktyg vars svar har en sådan: uträkningen från `calculate_date` och antalet ändringar
+från `find_amendments`. Ett felmeddelande från verktyget ger ingen rad.
 
 ### 3. `src/lib/answerText.ts` och `src/lib/citation.ts` – källorna
 
@@ -285,7 +296,7 @@ vidare. Om API:t inte svarar blir det `502`, och en fil som saknas blir `404`.
 | `AgentApp.tsx` | Sidan: CopilotKit, rubriken, chatten och källpanelen bredvid varandra (under varandra på smala skärmar). |
 | `Chat.tsx` | CopilotKits chatt med svenska texter, exempelfrågorna och `useRenderTool` som ritar varje verktygsanrop som ett steg, utom `FinalAnswer`. |
 | `AnswerCheck.tsx` | Raden "Kontrollerar svaret …" för ett `FinalAnswer`-anrop. CopilotKit ger ett verktyg i backend samma status medan argumenten strömmar och medan det väntar på svar, så raden kan inte skilja på att agenten skriver och att svaret kontrolleras. |
-| `AgentSteps.tsx` | Ett steg: etikett, argument, en snurra medan verktyget arbetar och verktygets svar. |
+| `AgentSteps.tsx` | Ett steg: etikett, argument, en snurra medan verktyget arbetar, en rad om vad verktyget fann och verktygets hela svar. |
 | `Answers.tsx` | Sparar varje frågas svar när körningen är klar och placerar svarskortet i chatten. Svaret sparas bara om körningen lyckades och skickade tillstånd, annars skulle en misslyckad fråga få förra frågans svar. En misslyckad körning får ett felmeddelande. |
 | `AnswerCard.tsx` | Svarskortet: status med en förklarande rad, text med hänvisningar, reservationerna, avtalen ur registret och källistan. |
 | `SourcePanel.tsx` | Källpanelen: källans uppgifter, citatet och PDF:en. |
@@ -301,7 +312,7 @@ samma ordning som `ag-ui-langgraph` skickar händelserna:
 
 | Fråga som innehåller | Vad mocken gör |
 |---|---|
-| uppsägning och ett område (IT-drift, Programvaror, Bemanningstjänster) | Söker, läser avsnittet och svarar **Verifierat** med två källor. |
+| uppsägning och ett område (IT-drift, Programvaror, Bemanningstjänster) | Söker, läser avsnittet och svarar **Verifierat** med två källor. Med ett datum i frågan (2027-02-17) räknar mocken också ut sista dagen för uppsägning med `calculate_date`. |
 | uppsägning utan område | Söker och anropar `ask_user`, som frågar vilket ramavtalsområde som menas, med båda händelserna. Fortsätter sedan med svaret. Med `[legacy]` i frågan kommer bara den äldre händelsen, med `[outcome]` bara standardformen. |
 | vite | Kontrollen underkänner första utkastet, och skälet kommer först med meddelandehistoriken i slutet. Mocken läser avsnittet och svarar **Med reservation** med två reservationer. Den andra källans citat finns inte i PDF:en. |
 | bilaga | Svarar **Inget svar** med en källa i en Word-fil: utan sida, utan avsnittsnummer och utan PDF. Texten har stycken och en lista. |
@@ -360,9 +371,9 @@ Två nya jobb i `.github/workflows/ci.yml`:
 
 | Var | Vad | Antal |
 |---|---|---|
-| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null` och svar utan M8:s fält), verktygens etiketter, hänvisningarna i texten, källornas namn, var korten hamnar, raden under statusen, registerraderna per avtal och markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan) | 49 |
-| `mock/scenarios.test.ts` | Mockens händelser: ordningen, att svaren följer kontraktet, att bara det inlämnade `FinalAnswer` saknar svar, pausen för granskningen, det underkända utkastet, att varje verifierat citat finns på sin sida i test-PDF:en, de tre formerna av interrupt, att `ask_user` får svaret som resultat, båda sätten att svara och en körning som misslyckas | 12 |
-| `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, steg, "Kontrollerar svaret …", svarskort, källpanel med markerat citat över två rader, dialogen i alla tre formerna, att Escape inte stänger den, eget svar, reservationer och ett dolt underkänt utkast, flera frågor efter varandra, en fråga vars körning misslyckas, en källa i en Word-fil utan sida och PDF, och ett svar ur registret med en rad per avtal | 11 |
+| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null` och svar utan M8:s fält), verktygens etiketter och raden om vad de fann, hänvisningarna i texten, källornas namn, var korten hamnar, raden under statusen, registerraderna per avtal och markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan) | 54 |
+| `mock/scenarios.test.ts` | Mockens händelser: ordningen, att svaren följer kontraktet, att bara det inlämnade `FinalAnswer` saknar svar, pausen för granskningen, det underkända utkastet, att varje verifierat citat finns på sin sida i test-PDF:en, de tre formerna av interrupt, att `ask_user` får svaret som resultat, båda sätten att svara, datumuträkningen och en körning som misslyckas | 13 |
+| `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, steg, en datumuträkning, "Kontrollerar svaret …", svarskort, källpanel med markerat citat över två rader, dialogen i alla tre formerna, att Escape inte stänger den, eget svar, reservationer och ett dolt underkänt utkast, flera frågor efter varandra, en fråga vars körning misslyckas, en källa i en Word-fil utan sida och PDF, och ett svar ur registret med en rad per avtal | 12 |
 
 ## Så verifierar du M10 själv
 
@@ -386,6 +397,8 @@ docker compose -f web/compose.mock.yaml up --build
    är en Word-fil, så panelen visar citatet utan PDF.
 5. Skriv *Vilket avtalsnummer har IT-drift?* Ett verifierat svar ur registret utan citat, med två
    avtal under "Ur registret". Det första har två delområden.
+6. Skriv *Kontraktet inom IT-drift ska upphöra 2027-02-17. När måste kunden säga upp det?* Ett
+   tredje steg räknar ut datumet och visar uträkningen.
 
 Med Node 22.18 eller senare:
 

@@ -1,7 +1,8 @@
 "use client";
 /**
  * What: one line in the chat for each tool the agent calls, updated live: what the agent is
- * doing in Swedish, the arguments it chose, and the tool's raw answer behind a disclosure.
+ * doing in Swedish, the arguments it chose, what the tool found when that fits on a line (a
+ * date calculation, a number of amendments), and the tool's raw answer behind a disclosure.
  *
  * Why: the agent decides itself which tools to use and in which order. Showing each step as it
  * happens makes that visible, which is the point of an agent rather than a fixed workflow, and
@@ -11,7 +12,7 @@
  * every tool call in the AG-UI stream. CopilotKit passes the tool name, the (partly streamed)
  * arguments, the status and, once the tool has answered, the result.
  */
-import { describeToolCall } from "@/lib/tools";
+import { describeToolCall, summarizeResult } from "@/lib/tools";
 
 import styles from "./AgentSteps.module.css";
 
@@ -26,6 +27,7 @@ export interface AgentStepProps {
 export function AgentStep({ name, parameters, status, result }: AgentStepProps) {
   const { title, subject, details } = describeToolCall(name, parameters, status);
   const done = status === "complete";
+  const outcome = done ? summarizeResult(name, result) : null;
 
   return (
     <div className={styles.step} data-testid="agent-step" data-tool={name} data-status={status}>
@@ -44,6 +46,11 @@ export function AgentStep({ name, parameters, status, result }: AgentStepProps) 
                 {label}: <code>{value}</code>
               </span>
             ))}
+          </div>
+        )}
+        {outcome && (
+          <div className={styles.outcome} data-testid="step-outcome">
+            {outcome}
           </div>
         )}
         {done && result && (

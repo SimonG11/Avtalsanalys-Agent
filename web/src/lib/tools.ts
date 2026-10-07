@@ -7,7 +7,8 @@
  *
  * How: AgentSteps calls `describeToolCall` for every tool call event. Unknown tools still get
  * a step, with the raw tool name, so a tool added to avtal-mcp later shows up without a code
- * change here.
+ * change here. `summarizeResult` gives the step a line with what the tool found, for the tools
+ * whose answer has one.
  */
 
 export interface ToolLabel {
@@ -45,6 +46,7 @@ const ARGUMENT_LABELS: Record<string, string> = {
   query: "sökord",
   agreement_number: "avtal",
   framework_area: "område",
+  sub_area: "delområde",
   document_type: "dokumenttyp",
   sha256: "dokument",
   section_number: "avsnitt",
@@ -55,7 +57,24 @@ const ARGUMENT_LABELS: Record<string, string> = {
   valid_on: "gäller den",
   limit: "antal",
   offset: "hoppar över",
+  start: "från",
+  amount: "antal",
+  unit: "enhet",
+  direction: "riktning",
+  include_start: "startdagen ingår",
   options: "alternativ",
+};
+
+/** Swedish words for arguments whose value is one of a few English words (calculate_date). */
+const VALUE_LABELS: Record<string, Record<string, string>> = {
+  unit: {
+    days: "dagar",
+    working_days: "arbetsdagar",
+    weeks: "veckor",
+    months: "månader",
+    years: "år",
+  },
+  direction: { after: "efter", before: "före" },
 };
 
 /** The arguments that best say what a call is about, shown first and without a label. */
@@ -63,6 +82,7 @@ const MAIN_ARGUMENT: Record<string, string> = {
   search_documents: "query",
   search_register: "supplier",
   read_section: "section_number",
+  find_amendments: "section_number",
   resolve_reference: "reference",
   ask_user: "question",
 };
@@ -99,27 +119,66 @@ export function describeToolCall(
 }
 
 /**
- * Arguments that add nothing to the step. The model often sends `offset: 0`, the default, and
- * both a section's number and its place in the file, where the number says it already.
+ * Arguments that add nothing to the step. The model often sends the defaults `offset: 0` and
+ * `include_start: false`, and both a section's number and its place in the file, where the
+ * number says it already.
  */
 function isRedundant(key: string, value: unknown, args: unknown): boolean {
   if (key === "offset") return value === 0;
+  if (key === "include_start") return value === false;
   if (key === "section_position") {
     return isRecord(args) && typeof args.section_number === "string" && args.section_number !== "";
   }
   return false;
 }
 
-/** Long hashes are shortened, lists of words joined; other objects are written compactly. */
+/**
+ * Long hashes are shortened, English words get their Swedish name, yes and no are written out
+ * and lists of words joined; other objects are written compactly.
+ */
 function formatValue(key: string, value: unknown): string {
   if (typeof value === "string") {
-    return key === "sha256" && value.length > 12 ? `${value.slice(0, 8)}…` : value;
+    if (key === "sha256" && value.length > 12) return `${value.slice(0, 8)}…`;
+    return VALUE_LABELS[key]?.[value] ?? value;
   }
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "boolean") return value ? "ja" : "nej";
+  if (typeof value === "number") return String(value);
   if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
     return value.join(", ");
   }
   return JSON.stringify(value);
+}
+
+/**
+ * A line that says what a tool found, for the tools whose answer has one: the calculation
+ * calculate_date made ("2027-02-17 minus 3 månader = 2026-11-17 (tisdag)") and the number of
+ * amendments find_amendments found. Other answers, and a tool's error text, have none; they are
+ * shown raw behind the disclosure.
+ */
+export function summarizeResult(name: string, result: string | undefined): string | null {
+  const answer = parseJson(result);
+  if (!isRecord(answer)) return null;
+  if (name === "calculate_date" && typeof answer.step === "string") {
+    return typeof answer.weekday === "string" ? `${answer.step} (${answer.weekday})` : answer.step;
+  }
+  if (name === "find_amendments" && Array.isArray(answer.amendments)) {
+    const count = answer.amendments.length;
+    let line = count === 0 ? "Inga ändringar" : count === 1 ? "1 ändring" : `${count} ändringar`;
+    const held = answer.held_back;
+    // Amending sections the tools may not show are only counted.
+    if (typeof held === "number" && held > 0) line += `, ${held} till som inte kan visas`;
+    return line;
+  }
+  return null;
+}
+
+function parseJson(text: string | undefined): unknown {
+  if (text === undefined) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { splitAnswerText } from "./answerText.ts";
-import { describeToolCall } from "./tools.ts";
+import { describeToolCall, summarizeResult } from "./tools.ts";
 
 describe("describeToolCall", () => {
   it("gives a Swedish title and puts the main argument first", () => {
@@ -81,6 +81,81 @@ describe("describeToolCall", () => {
 
   it("copes with arguments that are still streaming", () => {
     assert.deepEqual(describeToolCall("get_outline", undefined, "inProgress").details, []);
+  });
+
+  it("names the sub-area and the date calculation's arguments and values in Swedish", () => {
+    assert.deepEqual(
+      describeToolCall("search_register", { sub_area: "IT-tjänster / Övre Norrland" }, "complete")
+        .details,
+      [["delområde", "IT-tjänster / Övre Norrland"]],
+    );
+    const args = { start: "2027-02-17", amount: 3, unit: "months", direction: "before" };
+    assert.deepEqual(describeToolCall("calculate_date", args, "complete"), {
+      title: "Räknade ut datum",
+      subject: null,
+      details: [
+        ["från", "2027-02-17"],
+        ["antal", "3"],
+        ["enhet", "månader"],
+        ["riktning", "före"],
+      ],
+    });
+    // include_start is shown only when the start day belongs to the period.
+    const withStart = { ...args, unit: "working_days", direction: "after", include_start: true };
+    assert.deepEqual(describeToolCall("calculate_date", withStart, "complete").details.slice(2), [
+      ["enhet", "arbetsdagar"],
+      ["riktning", "efter"],
+      ["startdagen ingår", "ja"],
+    ]);
+    assert.equal(
+      describeToolCall("calculate_date", { ...args, include_start: false }, "complete").details
+        .length,
+      4,
+    );
+  });
+
+  it("puts the section first for find_amendments", () => {
+    const sha256 = "0123456789abcdef".repeat(4);
+    const description = describeToolCall(
+      "find_amendments",
+      { sha256, section_number: "3.2" },
+      "inProgress",
+    );
+    assert.equal(description.title, "Letar efter ändringar");
+    assert.equal(description.subject, "3.2");
+  });
+});
+
+describe("summarizeResult", () => {
+  it("gives the calculation of calculate_date with its weekday", () => {
+    const result = JSON.stringify({
+      result: "2026-11-17",
+      weekday: "tisdag",
+      step: "2027-02-17 minus 3 månader = 2026-11-17",
+      skipped: [],
+      notes: [],
+    });
+    assert.equal(
+      summarizeResult("calculate_date", result),
+      "2027-02-17 minus 3 månader = 2026-11-17 (tisdag)",
+    );
+  });
+
+  it("counts the amendments find_amendments found, and those it may not show", () => {
+    const answer = (amendments: number, held_back: number) =>
+      JSON.stringify({ target: {}, amendments: Array(amendments).fill({}), held_back });
+    assert.equal(summarizeResult("find_amendments", answer(0, 0)), "Inga ändringar");
+    assert.equal(summarizeResult("find_amendments", answer(1, 0)), "1 ändring");
+    assert.equal(
+      summarizeResult("find_amendments", answer(2, 1)),
+      "2 ändringar, 1 till som inte kan visas",
+    );
+  });
+
+  it("gives nothing for other tools, an error text or a missing result", () => {
+    assert.equal(summarizeResult("search_documents", JSON.stringify({ hits: [] })), null);
+    assert.equal(summarizeResult("calculate_date", "Startdatumet är inte ett datum."), null);
+    assert.equal(summarizeResult("calculate_date", undefined), null);
   });
 });
 
