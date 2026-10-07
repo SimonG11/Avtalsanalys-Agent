@@ -82,19 +82,35 @@ interface Haystack {
   text: string;
   /** For every character of `text`: [item index, offset in that item's str, source length]. */
   origin: [number, number, number][];
+  /** For every item: whether its line ends after it (see `lineEndsAfter`). */
+  lineEnds: boolean[];
+}
+
+/**
+ * For every item: whether its line ends after it. PDF.js puts `hasEOL` either on the line's last
+ * text item or on a separate empty item after it (common in PDFs that split words into many
+ * items), so an empty item's line end belongs to the text before it.
+ */
+function lineEndsAfter(items: readonly TextItemLike[]): boolean[] {
+  const lineEnds = items.map((item) => textOf(item).hasEOL);
+  for (let i = items.length - 2; i >= 0; i--) {
+    if (textOf(items[i + 1]).str.trim() === "" && lineEnds[i + 1]) lineEnds[i] = true;
+  }
+  return lineEnds;
 }
 
 function buildHaystack(items: readonly TextItemLike[], dropLineEndHyphens: boolean): Haystack {
   let text = "";
   const origin: [number, number, number][] = [];
+  const lineEnds = lineEndsAfter(items);
   items.forEach((item, itemIndex) => {
-    const { str, hasEOL } = textOf(item);
+    const { str } = textOf(item);
     const lastVisible = str.trimEnd().length - 1;
     // Offsets are counted in UTF-16 code units, the same unit PdfViewer slices item.str with.
     let offset = 0;
     for (const char of str) {
       const isLineEndHyphen =
-        dropLineEndHyphens && hasEOL && offset === lastVisible && fold(char) === "-";
+        dropLineEndHyphens && lineEnds[itemIndex] && offset === lastVisible && fold(char) === "-";
       const folded = isLineEndHyphen ? "" : fold(char);
       for (const out of folded) {
         text += out;
@@ -103,7 +119,7 @@ function buildHaystack(items: readonly TextItemLike[], dropLineEndHyphens: boole
       offset += char.length;
     }
   });
-  return { text, origin };
+  return { text, origin, lineEnds };
 }
 
 function rangesFor(haystack: Haystack, start: number, end: number): ItemRanges {
@@ -120,12 +136,13 @@ function rangesFor(haystack: Haystack, start: number, end: number): ItemRanges {
 /** Whether the source character behind folded character `k` is the last one on its line. */
 function endsLine(items: readonly TextItemLike[], haystack: Haystack, k: number): boolean {
   const [itemIndex, offset, length] = haystack.origin[k];
-  const { str, hasEOL } = textOf(items[itemIndex]);
+  const { str } = textOf(items[itemIndex]);
+  const lineEnds = haystack.lineEnds[itemIndex];
   const rest = str.trimEnd().slice(offset + length);
   // A hyphen the second pass dropped may still follow at the line end.
-  if (rest !== "" && !(hasEOL && foldText(rest) === "-")) return false;
+  if (rest !== "" && !(lineEnds && foldText(rest) === "-")) return false;
   const laterText = items.slice(itemIndex + 1).some((item) => textOf(item).str.trim() !== "");
-  return hasEOL || !laterText;
+  return lineEnds || !laterText;
 }
 
 /** Whether the source character behind folded character `k` is the first one on its line. */
@@ -134,8 +151,7 @@ function startsLine(items: readonly TextItemLike[], haystack: Haystack, k: numbe
   const { str } = textOf(items[itemIndex]);
   if (str.slice(0, offset).trim() !== "") return false;
   for (let i = itemIndex - 1; i >= 0; i--) {
-    const previous = textOf(items[i]);
-    if (previous.str.trim() !== "") return previous.hasEOL;
+    if (textOf(items[i]).str.trim() !== "") return haystack.lineEnds[i];
   }
   return true;
 }

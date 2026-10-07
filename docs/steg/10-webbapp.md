@@ -22,7 +22,7 @@ sida med citatet markerat. När agenten behöver veta mer frågar den i en dialo
 | Chatten | Frågorna och svaren. Innan första frågan finns tre exempelfrågor att klicka på. |
 | Agentens steg | Ett kort per verktygsanrop, live medan agenten arbetar: "Söker i dokumenten" blir "Sökte i dokumenten" när verktyget har svarat. Kortet visar huvudargumentet ("uppsägningstid") och de andra argumenten med svenska namn. En datumuträkning visar uträkningen ("2027-02-17 minus 3 månader = 2026-11-17 (tisdag)") och en sökning efter ändringar antalet ändringar. Verktygets hela svar går att fälla ut. Agentens fråga till dig är också ett steg, "Frågar dig". När agenten lämnar in sitt svar (`FinalAnswer`) står det "Kontrollerar svaret …" tills svaret är klart. Granskningen tar i median 9 sekunder. Medan modellen resonerar mellan stegen står det "Tänker …", och sedan "Tänkte efter". |
 | Svarskortet | Status (**Verifierat**, **Med reservation** eller **Inget svar**) med en rad om vad som kontrollerades, svarstexten där `[1]` och `[2]` är knappar, reservationerna, avtalen ur registret som svaret bygger på, och en lista med källorna: dokument, avsnitt, sida och citat. Ett citat som inte kunde kontrolleras mot avtalstexten får en varning. Svarstextens stycken och listor behåller sina radbrytningar. |
-| Källpanelen | Öppnas till höger när man klickar på en källa. PDF:en visas på sidan med citatet och citatet är markerat i gult. Källans sida är sidan där avsnittet börjar, så ett citat längre ner i ett avsnitt över flera sidor kan stå på en senare sida. Då visar panelen den sidan och säger det ("Citatet står på sida 27. Avsnittet börjar på sida 26."). Om citatet inte finns på någon av sidorna står det i panelen. En Word-fil har ingen PDF, och då visar panelen bara citatet. |
+| Källpanelen | Öppnas till höger när man klickar på en källa. PDF:en visas på sidan med citatet och citatet är markerat i gult. Källans sida är sidan där avsnittet börjar, så ett citat längre ner i ett avsnitt över flera sidor kan stå på en senare sida. Då visar panelen den sidan och säger det ("Citatet står på sida 4. Avsnittet börjar på sida 3."). Om citatet inte finns på någon av sidorna står det i panelen. En Word-fil har ingen PDF, och då visar panelen bara citatet. |
 | Frågedialogen | När agenten anropar `ask_user` öppnas en dialog med frågan och svarsalternativen som knappar. Man kan också skriva ett eget svar. Agenten fortsätter med svaret. |
 | Fel | Om agenten inte kan svara, till exempel när API:t inte svarar, står det under frågan i stället för ett svarskort. |
 
@@ -256,7 +256,10 @@ citat sträcker sig oftast över flera. Därför:
    Då markeras den längsta början av citatet som slutar en rad nära sidans slut, eller det längsta
    slutet som börjar en rad nära sidans början, minst 24 tecken. Panelen säger att bara en del av
    citatet finns på sidan. En början eller ett slut mitt på sidan markeras inte. Det skulle få ett
-   felcitat ("sex månader" där avtalet säger "tre") att se delvis bekräftat ut.
+   felcitat ("sex månader" där avtalet säger "tre") att se delvis bekräftat ut. En rad slutar där
+   PDF.js satt `hasEOL`, på radens sista bit eller på en tom bit efter den. Den tomma biten är
+   vanlig i PDF:er som delar orden i många bitar, som de allmänna villkoren för IT-drift, där
+   varje å, ä och ö är en egen bit.
 5. Positionerna räknas tillbaka till textbitarna, och `markItem` gör varje bit till HTML med
    `<mark>` runt de träffade tecknen.
 
@@ -377,7 +380,7 @@ Två nya jobb i `.github/workflows/ci.yml`:
 
 | Var | Vad | Antal |
 |---|---|---|
-| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null` och svar utan M8:s fält), verktygens etiketter och raden om vad de fann, hänvisningarna i texten, källornas namn, var korten hamnar, raden under statusen, registerraderna per avtal, markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan) och sidan med citatet | 59 |
+| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null` och svar utan M8:s fält), verktygens etiketter och raden om vad de fann, hänvisningarna i texten, källornas namn, var korten hamnar, raden under statusen, registerraderna per avtal, markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan, radslut i en tom bit) och sidan med citatet | 60 |
 | `mock/scenarios.test.ts` | Mockens händelser: ordningen, att svaren följer kontraktet, att bara det inlämnade `FinalAnswer` saknar svar, pausen för granskningen, det underkända utkastet, att varje verifierat citat finns i test-PDF:en från sin sida och framåt, de tre formerna av interrupt, att `ask_user` får svaret som resultat, båda sätten att svara, datumuträkningen och en körning som misslyckas | 13 |
 | `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, steg, "Tänkte efter", en datumuträkning, "Kontrollerar svaret …", svarskort, källpanel med markerat citat över två rader, dialogen i alla tre formerna, att Escape inte stänger den, eget svar, reservationer och ett dolt underkänt utkast, flera frågor efter varandra, en fråga vars körning misslyckas, ett citat på sidan efter avsnittets första, en källa i en Word-fil utan sida och PDF, och ett svar ur registret med en rad per avtal | 13 |
 
