@@ -15,6 +15,15 @@
 >   kontextrubriken byggs i steg 3. Simon beslutade 2026-10-06 att vänta med OCR (M3b). De 37
 >   skannade sidorna i fyra filer markeras som att de behöver OCR, och OCR kan läggas till senare
 >   bakom gränssnittet `DocumentParser`.
+> - [ADR 0009](adr/0009-extraktion-avstamning-och-karantan.md): dokumenttypen sätts med regler
+>   (14 typer i tre grupper i stället för fem), och språkmodellen väljer bara rubrik bland ett
+>   dokuments egna rubriker. Ett dokument hålls i karantän när dess egen identitet strider mot
+>   registret; andra avvikelser rapporteras eller noteras, och en person kan godkänna en
+>   avvikelse i `accepted_findings.toml` ([M4](steg/04-extraktion.md)).
+> - [ADR 0011](adr/0011-hybridsokning.md): sökningen är exakt vektorsökning med
+>   `text-embedding-3-large` (1 536 dimensioner) och BM25 som räknas i Python och lagras som
+>   pgvector `sparsevec`, sammanslagna med RRF över avsnitt med samma text. Postgres fulltext och
+>   omrankningen används inte i MVP:n; valen bygger på mätningen i [M5](steg/05-sokning.md).
 
 ---
 

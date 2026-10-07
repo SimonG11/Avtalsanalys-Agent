@@ -13,6 +13,8 @@ How:
     `Settings(_env_file=None)` so a developer's local .env cannot affect the result.
 """
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -31,6 +33,7 @@ ENV_VARS = (
     "FETCH_AREAS",
     "FETCH_FILE_TYPES",
     "FETCH_DELAY_SECONDS",
+    "ACCEPTED_FINDINGS_FILE",
 )
 
 
@@ -90,6 +93,29 @@ def test_openai_key_is_hidden(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.openai_api_key.get_secret_value() == "sk-test-not-a-real-key"
     assert "sk-test-not-a-real-key" not in repr(settings)
     assert "sk-test-not-a-real-key" not in str(settings.model_dump())
+
+
+def test_accepted_findings_are_read_relative_to_the_working_directory_by_default() -> None:
+    # The commands are run from the repository root, where the file is.
+    path = Settings(_env_file=None).accepted_findings_file
+    assert path == Path("accepted_findings.toml")
+    assert not path.is_absolute()
+
+
+def test_accepted_findings_file_is_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ACCEPTED_FINDINGS_FILE", "/srv/avtalsagent/accepted_findings.toml")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.accepted_findings_file == Path("/srv/avtalsagent/accepted_findings.toml")
+
+
+def test_reports_are_written_under_the_data_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert Settings(_env_file=None).reports_dir == Path("data/reports")
+
+    monkeypatch.setenv("DATA_DIR", "/srv/avtalsagent/data")
+
+    assert Settings(_env_file=None).reports_dir == Path("/srv/avtalsagent/data/reports")
 
 
 def test_get_settings_returns_same_instance() -> None:

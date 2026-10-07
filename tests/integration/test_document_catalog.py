@@ -2,7 +2,8 @@
 
 What:
     Loads the sample register, then saves fetch results twice and checks the
-    rows in agreement_page, source_document and agreement_page_document.
+    rows in agreement_page, source_document and agreement_page_document, and
+    that a page the index no longer lists is marked as missing.
 
 Why:
     The upserts and the replacement of a page's links are SQL that unit tests
@@ -34,6 +35,7 @@ from avtalsagent.register.normalize import normalize_rows
 from avtalsagent.register.read_excel import read_register
 
 PAGE = "https://www.avropa.se/ramavtal/ramavtalsomraden/x/bemanningstjanster/"
+OTHER_PAGE = "https://www.avropa.se/ramavtal/ramavtalsomraden/x/it-drift/"
 DOC = "https://www.avropa.se/globalassets/bilagor/ramavtalets-huvuddokument.pdf"
 
 
@@ -75,9 +77,9 @@ def empty_catalog(engine: Engine) -> Engine:
 def test_saving_twice_updates_instead_of_duplicating(empty_catalog: Engine) -> None:
     factory = session_factory(empty_catalog)
     with factory.begin() as session:
-        save_fetch(session, [page(link())], [result(link())])
+        save_fetch(session, [page(link())], [result(link())], [PAGE])
     with factory.begin() as session:
-        save_fetch(session, [page(link())], [result(link(), sha256="b" * 64)])
+        save_fetch(session, [page(link())], [result(link(), sha256="b" * 64)], [PAGE])
 
     with factory() as session:
         stored = load_stored_documents(session)
@@ -94,9 +96,11 @@ def test_link_removed_from_page_is_removed_from_catalog(empty_catalog: Engine) -
     other = link(f"{DOC}.old", "Gammal bilaga")
     factory = session_factory(empty_catalog)
     with factory.begin() as session:
-        save_fetch(session, [page(link(), other)], [result(link()), result(other, "c" * 64)])
+        save_fetch(
+            session, [page(link(), other)], [result(link()), result(other, "c" * 64)], [PAGE]
+        )
     with factory.begin() as session:
-        save_fetch(session, [page(link())], [result(link())])
+        save_fetch(session, [page(link())], [result(link())], [PAGE])
 
     with factory() as session:
         linked = session.scalars(select(models.AgreementPageDocument.document_url)).all()
@@ -110,7 +114,7 @@ def test_failed_document_is_not_linked(empty_catalog: Engine) -> None:
     factory = session_factory(empty_catalog)
     failed = FetchResult(link(), FetchStatus.FAILED, None, "download failed")
     with factory.begin() as session:
-        save_fetch(session, [page(link())], [failed])
+        save_fetch(session, [page(link())], [failed], [PAGE])
 
     with factory() as session:
         assert session.scalars(select(models.AgreementPageDocument)).all() == []
@@ -121,7 +125,7 @@ def test_failed_download_keeps_the_stored_document_and_its_link(empty_catalog: E
     factory = session_factory(empty_catalog)
     first = result(link())
     with factory.begin() as session:
-        save_fetch(session, [page(link())], [first])
+        save_fetch(session, [page(link())], [first], [PAGE])
     document = select(models.SourceDocument.version, models.SourceDocument.downloaded_at)
     with factory() as session:
         before = tuple(session.execute(document).one())
@@ -129,7 +133,7 @@ def test_failed_download_keeps_the_stored_document_and_its_link(empty_catalog: E
     # A later run cannot download the file; the result carries the one already stored.
     failed = FetchResult(link(), FetchStatus.FAILED, first.stored, "download failed")
     with factory.begin() as session:
-        save_fetch(session, [page(link())], [failed])
+        save_fetch(session, [page(link())], [failed], [PAGE])
 
     with factory() as session:
         after = tuple(session.execute(document).one())
@@ -137,6 +141,38 @@ def test_failed_download_keeps_the_stored_document_and_its_link(empty_catalog: E
 
     assert after == before  # same version, and downloaded_at is not moved to this run
     assert linked == [DOC]
+
+
+def test_page_no_longer_listed_is_marked_until_it_is_listed_again(
+    empty_catalog: Engine,
+) -> None:
+    factory = session_factory(empty_catalog)
+    missing_since = select(models.AgreementPage.missing_since)
+    with factory.begin() as session:
+        save_fetch(session, [page(link())], [result(link())], [PAGE, OTHER_PAGE])
+    with factory() as session:
+        assert session.scalar(missing_since) is None
+
+    # The index lists only another page: the stored page is marked, its links are kept.
+    with factory.begin() as session:
+        save_fetch(session, [], [], [OTHER_PAGE])
+    with factory() as session:
+        first_missed = session.scalar(missing_since)
+        linked = session.scalars(select(models.AgreementPageDocument.document_url)).all()
+    assert first_missed is not None
+    assert linked == [DOC]
+
+    # A later run that misses it too keeps the date of the first run that missed it.
+    with factory.begin() as session:
+        save_fetch(session, [], [], [OTHER_PAGE])
+    with factory() as session:
+        assert session.scalar(missing_since) == first_missed
+
+    # Listed again, even though the page could not be read in this run: cleared.
+    with factory.begin() as session:
+        save_fetch(session, [], [], [PAGE, OTHER_PAGE])
+    with factory() as session:
+        assert session.scalar(missing_since) is None
 
 
 def test_areas_are_turned_into_procurement_numbers(

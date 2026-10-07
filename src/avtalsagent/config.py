@@ -71,12 +71,37 @@ class Settings(BaseSettings):
     # Pause between requests, so the site is not loaded more than a person browsing.
     fetch_delay_seconds: float = 0.5
 
+    # Checking the documents against the register (M4, step 5). Deviations a person has
+    # looked at and accepted, each named by its key in the ingestion report; an accepted
+    # deviation no longer holds the document back. The file is in git and reviewed like code.
+    # A relative path is read from the working directory: the repository root, where the
+    # commands are run. A missing file accepts nothing, and `process` logs a warning for it.
+    accepted_findings_file: Path = Path("accepted_findings.toml")
+
+    # The search (M5, step 6 and retrieval/; ADR 0011). The embedding model, shortened
+    # by the API to `embedding_dimensions`. Changing either needs a new index (`index`).
+    embedding_model: str = "text-embedding-3-large"
+    embedding_dimensions: int = Field(default=1536, gt=0)
+    # Texts per embedding request; the API takes at most 2,048.
+    embedding_batch_size: int = Field(default=100, gt=0, le=2048)
+    # Chunks each branch of the hybrid search (vector and BM25) passes to the fusion.
+    search_candidates: int = Field(default=100, gt=0)
+    # The constant k of reciprocal rank fusion; 60 as in Cormack, Clarke and Büttcher (2009).
+    rrf_k: int = Field(default=60, gt=0)
+    # Sections a search returns when the caller sets no limit.
+    search_limit: int = Field(default=8, gt=0)
+
     log_level: str = "INFO"
 
     @property
     def parsed_dir(self) -> Path:
         """Where step 2 stores each parsed file as JSON (M3)."""
         return self.data_dir / "parsed"
+
+    @property
+    def reports_dir(self) -> Path:
+        """Where each run of steps 3-5 writes its ingestion report, markdown and JSON (M4)."""
+        return self.data_dir / "reports"
 
 
 @lru_cache(maxsize=1)

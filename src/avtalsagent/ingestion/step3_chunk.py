@@ -27,7 +27,9 @@ How:
        counter, since the model sometimes gives that label to agreement text.
        A list number the model put at the end of its item is moved to the front,
        and a numbered heading the model ran into a paragraph, or whose title it
-       read at the end of the next paragraph, gets a block of its own.
+       read at the end of the next paragraph, gets a block of its own. The
+       certificate an e-signature service adds after a signed agreement is
+       removed too, since it names the signers.
     2. `ingestion/headings.py` finds the numbered headings. A questions-and-
        answers log is split per question instead. If a document has no usable
        numbered outline, the parser's own headings are used without numbers
@@ -147,6 +149,22 @@ _QUESTION = re.compile(
 )
 _MIN_QUESTIONS = 3
 _MIN_CONTENTS_ENTRIES = 3  # fewer numbered entries are not a table of contents to check
+# The certificate an e-signature service adds after the last page of a signed agreement
+# lists the signers by name, so it must not end up in a section (it would be indexed as
+# agreement text). Visma Addo writes it in Swedish (185872a6bb90 p18: "Signaturerna i
+# detta dokument är juridiskt bindande. ... Dokumentet är skyddat med ett Adobe
+# CDS-certifikat") or Danish (a09791e460a4 p27: "Underskrifterne i dette dokument er
+# juridisk bindende. ... Dokumentet er beskyttet med Adobe CDS certifikat"). Both
+# sentences must be on the page: "Visma Addo ID-nummer" is in the page header of every
+# page of a signed card, and words such as "verifierar" also occur in agreement text.
+_CERTIFICATE = re.compile(r"Adobe CDS", re.IGNORECASE)
+_LEGALLY_BINDING = re.compile(r"juridiskt? bind[ae]nde", re.IGNORECASE)
+# The page must also say when someone signed: "<signer id> 2023-02-22 15:14" (185872a6bb90
+# p18), "2022-11-25 10:43" (a09791e460a4 p27), on the first certificate page in all 25
+# signed cards of the pilot. Agreement text that names both markers ("Signaturerna är
+# juridiskt bindande ... Adobe CDS-certifikat") is then not taken for the certificate,
+# which would remove that page and every page after it.
+_SIGNED_AT = re.compile(r"(?<![\d.-])(?:19|20)\d{2}-\d{2}-\d{2} \d{2}:\d{2}(?!\d)")
 _CONTENTS_TITLES = {"innehåll", "innehållsförteckning", "table of contents", "contents"}
 
 
@@ -252,10 +270,15 @@ def clean_blocks(document: ParsedDocument) -> list[Block]:
 
 
 def body_blocks(document: ParsedDocument) -> list[Block]:
-    """The parsed blocks step 3 keeps, unchanged: all but page furniture and the contents."""
+    """The parsed blocks step 3 keeps, unchanged.
+
+    That is all but page furniture, the contents and an e-signature certificate
+    (`signature_certificate_page`).
+    """
     page_count = max((block.page or 0 for block in document.blocks), default=0)
     repeated = _repeated_lines(document.blocks, page_count)
     running = _running_headers(document.blocks)
+    certificate = signature_certificate_page(document.blocks)
     kept = [
         block
         for block in document.blocks
@@ -265,9 +288,35 @@ def body_blocks(document: ParsedDocument) -> list[Block]:
         and _normalise(block.text) not in repeated
         and not (block.kind in _HEADER_KINDS and _is_running_header(block, running))
         and _normalise(block.text) not in _CONTENTS_TITLES
+        and not (certificate is not None and block.page is not None and block.page >= certificate)
     ]
     toc = toc_entries(kept)
     return [block for index, block in enumerate(kept) if index not in toc]
+
+
+def signature_certificate_page(blocks: Sequence[Block]) -> int | None:
+    """The first page of an e-signature certificate, or None (see `_CERTIFICATE`).
+
+    It is the first PDF page on which blocks that are not page headers or footers
+    mention the "Adobe CDS" certificate, say the signatures are legally binding
+    and give the date and time of a signature (`_SIGNED_AT`). The certificate runs
+    to the end of the file: in the IT-konsulttjänster 2020 cards its list of
+    documents goes on to the next page. Word files have no pages and no
+    certificate.
+    """
+    certificate: set[int] = set()
+    binding: set[int] = set()
+    signed: set[int] = set()
+    for block in blocks:
+        if block.page is None or block.kind in _HEADER_KINDS:
+            continue
+        if _CERTIFICATE.search(block.text):
+            certificate.add(block.page)
+        if _LEGALLY_BINDING.search(block.text):
+            binding.add(block.page)
+        if _SIGNED_AT.search(block.text):
+            signed.add(block.page)
+    return min(certificate & binding & signed, default=None)
 
 
 def _run_in_headings(blocks: Sequence[Block]) -> list[Block]:

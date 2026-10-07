@@ -10,11 +10,13 @@ from avtalsagent.ingestion.step3_chunk import (
     DocumentContext,
     LinkInfo,
     OutlineKind,
+    body_blocks,
     chunk_document,
     chunk_sections,
     clean_blocks,
     context_header,
     document_context,
+    signature_certificate_page,
     split_sections,
 )
 
@@ -179,6 +181,111 @@ class TestCleanBlocks:
         blocks = [block("Ramavtalsleverantören ska ha en försäkring.", page) for page in (1, 2)]
         blocks += [block(f"Text på sidan {page}", page) for page in range(3, 11)]
         assert len(clean_blocks(document(*blocks))) == 10
+
+
+def signed_card(certificate: list[str]) -> list[Block]:
+    """The last two pages of a signed supplier card, then its e-signature certificate.
+
+    From 185872a6bb90 p16-18 (Programvaror och tjänster - Informationsförsörjning);
+    the signer's name and id and the envelope id are made up.
+    """
+    header = "Addo Sign ID-nummer : 00000000-1111-2222-3333-444444444444"
+    return [
+        block(header, 16, BlockKind.PAGE_HEADER),
+        heading("1.18 Konsekvenser av Ramavtalets upphörande", 16),
+        block("Ramavtalets upphörande påverkar inte redan tecknade Kontrakt.", 16),
+        block(header, 17, BlockKind.PAGE_HEADER),
+        heading("1.19 Tillämplig lag och tvistelösning", 17),
+        block(
+            "Rättigheter och skyldigheter enligt Ramavtalet regleras av svensk rätt med undantag "
+            "av dess lagvalsregler.",
+            17,
+        ),
+        *(block(line, 18) for line in certificate),
+    ]
+
+
+SWEDISH_CERTIFICATE = [  # 185872a6bb90 p18
+    "Signaturerna i detta dokument är juridiskt bindande. Dokumentet är signerat med Addo Sign "
+    "säkra digitala signatur. Undertecknarens identitet registreras fysiskt i det elektroniska "
+    "PDF-dokumentet och visas nedan.",
+    "Undertecknare",
+    "ERIK EXEMPELSSON",
+    "AbCdEfGhIjKlMnOpQrStUv 2023-02-22 15:14",
+    "Hur man verifierar dokumentets äkthet",
+    "Dokumentet är skyddat med ett Adobe CDS-certifikat. När dokumentet öppnas i Adobe Reader "
+    "ser det ut att vara signerat genom Addo Sign signeringstjänst.",
+]
+DANISH_CERTIFICATE = [  # a09791e460a4 p27, an IT-konsulttjänster 2020 card
+    "Underskrifterne i dette dokument er juridisk bindende. Dokumentet er underskrevet med Visma "
+    "Addo sikker digital underskrift. Underskrivers identitet er fysisk registreret i det "
+    "elektroniske PDF dokument og listet herunder.",
+    "Signers",
+    "ERIK EXEMPELSSON",
+    "2022-11-25 10:43",
+    "Sådan verificeres dokumentets ægthed",
+    "Dokumentet er beskyttet med Adobe CDS certifikat. Når dokumentet åbnes i Adobe Reader, vil "
+    "det fremstå som være underskrevet med Visma Addo signeringsservice.",
+]
+
+
+class TestSignatureCertificate:
+    @pytest.mark.parametrize("certificate", [SWEDISH_CERTIFICATE, DANISH_CERTIFICATE])
+    def test_the_certificate_page_is_not_in_any_section(self, certificate: list[str]) -> None:
+        blocks = signed_card(certificate)
+        _, sections = split_sections(document(*blocks))
+
+        assert signature_certificate_page(blocks) == 18
+        assert sections[-1].heading == "1.19 Tillämplig lag och tvistelösning"
+        assert sections[-1].text.endswith("med undantag av dess lagvalsregler.")
+        assert not any("EXEMPELSSON" in section.text for section in sections)
+
+    def test_the_pages_after_the_certificate_go_too(self) -> None:
+        # 14aa1cc8ee3d p28: the list of documents in the envelope goes on to the next page.
+        blocks = signed_card(SWEDISH_CERTIFICATE)
+        blocks += [
+            heading("Dokument i försändelsen", 19),
+            block("Ramavtal Arkitektur och utveckling Exempel AB.pdf", 19),
+        ]
+        kept = [b.text for b in body_blocks(document(*blocks))]
+        assert kept[-1].startswith("Rättigheter och skyldigheter")
+
+    def test_one_marker_alone_is_no_certificate(self) -> None:
+        # e3a24695fe04 p19 names the signing service; the page header "Addo Sign ID-nummer"
+        # is on every page of a signed card; "juridiskt bindande" without "Adobe CDS".
+        lines = [
+            "Ramavtalet signeras av Kammarkollegiet och Ramavtalsleverantören genom elektronisk "
+            "signatur via tjänsten Visma Addo, som hanterar svenskt, danskt och norskt Bank-ID.",
+            *SWEDISH_CERTIFICATE[:4],
+        ]
+        blocks = signed_card(lines)
+
+        assert signature_certificate_page(blocks) is None
+        assert len(body_blocks(document(*blocks))) == 4 + len(lines)
+
+    def test_agreement_text_naming_both_markers_is_no_certificate(self) -> None:
+        # Without the date and time of a signature the page is agreement text, and it and
+        # the pages after it are kept (made up: no agreement in the pilot says this).
+        lines = [
+            "Signaturerna är juridiskt bindande och dokumentet skyddas med ett Adobe "
+            "CDS-certifikat när det undertecknas elektroniskt.",
+            "Ramavtalsleverantören ska signera Ramavtalet inom fem arbetsdagar.",
+        ]
+        blocks = signed_card(lines)
+
+        assert signature_certificate_page(blocks) is None
+        assert len(body_blocks(document(*blocks))) == 4 + len(lines)
+
+    def test_the_markers_count_only_outside_page_headers_and_footers(self) -> None:
+        blocks = [
+            block(text, 18, BlockKind.PAGE_FOOTER) if "Adobe CDS" in text else block(text, 18)
+            for text in SWEDISH_CERTIFICATE
+        ]
+        assert signature_certificate_page(blocks) is None
+
+    def test_a_word_file_has_no_certificate_pages(self) -> None:
+        blocks = [block(text, None) for text in SWEDISH_CERTIFICATE]
+        assert signature_certificate_page(blocks) is None
 
 
 def questions_log(first: str = "1 Publik fråga", second: str = "2 Publik fråga") -> ParsedDocument:

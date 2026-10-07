@@ -6,7 +6,12 @@ What:
     between agreements and sub-areas. The document tables (M2): the agreement
     pages on avropa.se, the files downloaded from them and which page links to
     which file. The section tables (M3): each parsed file, its numbered
-    sections and the chunks they are cut into for search.
+    sections and the chunks they are cut into for search. The extraction
+    tables (M4): what step 4 found in each file (metadata, facts, references
+    and their targets) and the findings of step 5. The search tables (M5):
+    each indexed chunk with its embedding and BM25 weights, the words of the
+    BM25 index, each file's scope, the current index's settings, and a cache
+    of embeddings that outlives the index.
 
 Why:
     The Excel list has one row per supplier and sub-area. Splitting it into
@@ -18,19 +23,30 @@ Why:
 
 How:
     Each class is one table. Alembic migrations in `db/migrations/` create
-    the tables; `register/load.py`, `ingestion/catalog.py` and
-    `ingestion/section_store.py` fill them. The register tables mirror the
-    most recently loaded list; `register_version` records every load.
+    the tables; `register/load.py`, `ingestion/catalog.py`,
+    `ingestion/section_store.py`, `ingestion/extraction_store.py` and
+    `ingestion/index_store.py` fill them. The register tables mirror the most
+    recently loaded list; `register_version` records every load. The search
+    index's chunk rows and file scopes are deleted with their chunk or file
+    (ON DELETE CASCADE), and `process` empties its words and build row in the
+    same transaction, so a new run of steps 3-5 empties the index until step
+    6 builds it again: a chunk that is changed or newly held back is never
+    searchable by mistake. The embedding cache is kept.
 """
 
 from datetime import date, datetime
 
+from pgvector.sparsevec import SparseVector
+from pgvector.sqlalchemy import SPARSEVEC, Vector
 from sqlalchemy import (
     ARRAY,
+    Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
@@ -141,6 +157,9 @@ class AgreementPage(Base):
     procurement_numbers: Mapped[list[str]] = mapped_column(ARRAY(String(32)))
     agreement_period: Mapped[str | None] = mapped_column(Text)  # as written on the page
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # The first fetch whose index on avropa.se no longer listed the page; None while it is
+    # listed. Step 5 holds back a file when every page that links to it is missing.
+    missing_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SourceDocument(Base):
@@ -193,7 +212,7 @@ class ParsedFile(Base):
 
 
 class DocumentSection(Base):
-    """A numbered section of a file, or the text before its first heading."""
+    """A section: the text under a heading or before the first, a question, or a whole file."""
 
     __tablename__ = "document_section"
 
@@ -228,3 +247,257 @@ class SectionChunk(Base):
     position: Mapped[int] = mapped_column(Integer, primary_key=True)  # order within the section
     context_header: Mapped[str] = mapped_column(Text)  # "ramavtal › dokument › rubrikstig"
     text: Mapped[str] = mapped_column(Text)
+
+
+class DocumentMetadata(Base):
+    """What step 4 found out about a file as a whole (`domain.extracted.DocumentMetadata`)."""
+
+    __tablename__ = "document_metadata"
+
+    sha256: Mapped[str] = mapped_column(
+        ForeignKey("parsed_file.sha256", ondelete="CASCADE"), primary_key=True
+    )
+    title: Mapped[str] = mapped_column(Text)  # the link text used most often
+    document_type: Mapped[str] = mapped_column(String(32))  # DocumentType, e.g. "general_terms"
+    type_rule: Mapped[str] = mapped_column(String(32))  # e.g. "R07"; "none" when no rule matched
+    # Both follow from document_type and are stored for queries: the group (agreement,
+    # procurement or support) and whether the document is part of the agreement or the
+    # procurement rather than only support.
+    document_group: Mapped[str] = mapped_column(String(16))
+    binding: Mapped[bool] = mapped_column(Boolean)
+    # Set for a file in a supplier's card, from the link.
+    agreement_number: Mapped[str | None] = mapped_column(String(40), index=True)
+    annex_number: Mapped[str | None] = mapped_column(String(32))  # "4.1"
+    first_chapter: Mapped[int | None] = mapped_column(Integer)  # "6" for a printed chapter 6
+    tendsign_cover: Mapped[str | None] = mapped_column(String(32))  # "Upphandlingsdokument"
+    is_template: Mapped[bool] = mapped_column(Boolean)
+    version_date: Mapped[date | None] = mapped_column(Date)
+    version_rule: Mapped[str | None] = mapped_column(String(32))  # e.g. "file_name"
+    published_on: Mapped[date | None] = mapped_column(Date)
+    site_updated: Mapped[date | None] = mapped_column(Date)  # latest "Senast uppdaterad"
+
+
+class DocumentFact(Base):
+    """One thing a file states, with the block it states it in (`domain.extracted.Fact`)."""
+
+    __tablename__ = "document_fact"
+
+    # Each run numbers the rows 1, 2, ... and replaces all of them, so an id is not
+    # stable across runs.
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    sha256: Mapped[str] = mapped_column(
+        ForeignKey("parsed_file.sha256", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(32))  # FactKind, e.g. "org_number"
+    # Normalised: "23.3-2940-20" (in the register's spelling when the register has the
+    # number), "556866-4444", "2024-11-14", "48"; for a placeholder, its kind ("date").
+    value: Mapped[str] = mapped_column(Text)
+    raw: Mapped[str] = mapped_column(Text)  # the text it was read from, as written
+    rule: Mapped[str] = mapped_column(String(32))  # e.g. "P3" (ingestion/extract/)
+    # Facts are also read from page headers and footers, which belong to no section,
+    # so a fact points at its block in ParsedDocument.blocks, not at a section.
+    block_index: Mapped[int] = mapped_column(Integer)
+    page: Mapped[int | None] = mapped_column(Integer)  # 1-based; None for Word files
+    role: Mapped[str | None] = mapped_column(String(16))  # FactRole: "self" or "citation"
+    name: Mapped[str | None] = mapped_column(Text)  # a party's name as written
+    scope: Mapped[str | None] = mapped_column(Text)  # the sub-area of a period: "AO3"
+    statement: Mapped[int | None] = mapped_column(Integer)  # shared by a start and its end
+
+
+class DocumentReference(Base):
+    """A reference in a section's text and what it resolved to (`domain.extracted.Reference`)."""
+
+    __tablename__ = "document_reference"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["sha256", "section_position"],
+            ["document_section.sha256", "document_section.position"],
+            ondelete="CASCADE",
+        ),
+        # Without it, deleting the sections of a run scans this table once per section.
+        Index("ix_document_reference_section", "sha256", "section_position"),
+    )
+
+    # Numbered 1, 2, ... by each run, like document_fact; reference_target points to it.
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    sha256: Mapped[str] = mapped_column(String(64))  # the file the reference is in
+    section_position: Mapped[int] = mapped_column(Integer)
+    char_start: Mapped[int] = mapped_column(Integer)  # offsets in document_section.text
+    char_end: Mapped[int] = mapped_column(Integer)
+    raw: Mapped[str] = mapped_column(Text)  # e.g. "punkt 6.21.9"
+    kind: Mapped[str] = mapped_column(String(32))  # ReferenceKind, e.g. "section_number"
+    target_key: Mapped[str] = mapped_column(Text)  # the number, title or name pointed to
+    document_name: Mapped[str | None] = mapped_column(Text)  # "p. 6.19.7 i Allmänna villkor"
+    topic: Mapped[str | None] = mapped_column(Text)  # "Allmänna villkor gällande viten"
+    replaces: Mapped[bool] = mapped_column(Boolean)  # "ersätter avsnitt 7.19.1.3"
+    # Two steps, two rules and two statuses. Finding the mention: the pattern (never
+    # empty) and the status the text alone decides (law, placeholder, list item).
+    # Resolving it: the status, and the rule that resolved it (empty when unresolved).
+    pattern_rule: Mapped[str] = mapped_column(String(32))  # e.g. "R1"
+    mention_status: Mapped[str | None] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32))  # ReferenceStatus, e.g. "resolved"
+    resolve_rule: Mapped[str | None] = mapped_column(String(32))  # e.g. "R4-llm"
+
+
+class ReferenceTarget(Base):
+    """A file, or a section of it, that a reference points to.
+
+    One per page when the reference is resolved, one per candidate when it is
+    ambiguous, and the file that was searched when a number or title is missing.
+    """
+
+    __tablename__ = "reference_target"
+    __table_args__ = (
+        # MATCH SIMPLE, Postgres' default: a target without a section (the whole
+        # document) is checked only against parsed_file, through target_sha256.
+        ForeignKeyConstraint(
+            ["target_sha256", "target_section_position"],
+            ["document_section.sha256", "document_section.position"],
+            ondelete="CASCADE",
+        ),
+        Index("ix_reference_target_section", "target_sha256", "target_section_position"),
+    )
+
+    reference_id: Mapped[int] = mapped_column(
+        ForeignKey("document_reference.id", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)  # order in the targets
+    target_sha256: Mapped[str] = mapped_column(ForeignKey("parsed_file.sha256", ondelete="CASCADE"))
+    target_section_position: Mapped[int | None] = mapped_column(Integer)
+    # The agreement page through which the target was found; None when every page
+    # that links to the referring file gives the same target.
+    page_url: Mapped[str | None] = mapped_column(Text)
+
+
+class ValidationFinding(Base):
+    """A result of a step-5 check (`domain.extracted.Finding`)."""
+
+    __tablename__ = "validation_finding"
+    __table_args__ = (
+        # A quarantine holds back a file or a section of it, so it must name the file;
+        # without this a finding could quarantine nothing and fail open.
+        CheckConstraint(
+            "severity <> 'quarantine' OR sha256 IS NOT NULL", name="quarantine_names_a_file"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    check_name: Mapped[str] = mapped_column(String(32))  # e.g. "org_numbers" (ingestion/checks/)
+    severity: Mapped[str] = mapped_column(String(16))  # Severity: quarantine, report or note
+    subject: Mapped[str] = mapped_column(Text)  # what deviates, e.g. "556866-4444"
+    message: Mapped[str] = mapped_column(Text)  # in Swedish, as in the ingestion report
+    # Not a foreign key: a finding can be about a file that has no parsed_file row (its
+    # parse failed), and a cascade from parsed_file would delete findings unseen.
+    sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    section_position: Mapped[int | None] = mapped_column(Integer)
+    agreement_number: Mapped[str | None] = mapped_column(String(40))
+    page_url: Mapped[str | None] = mapped_column(Text)
+    evidence: Mapped[str | None] = mapped_column(Text)  # the text the finding rests on
+    # Set when a person has accepted the deviation in accepted_findings.toml; an
+    # accepted finding does not quarantine.
+    accepted_reason: Mapped[str | None] = mapped_column(Text)
+
+
+class DocumentScope(Base):
+    """Where a file belongs: the areas, procurements, agreements and pages that link to it (M5).
+
+    Step 6 writes one row per indexed file, from the catalog and the register, so
+    the search can be limited to a framework agreement and `list_documents` (M6)
+    can list one's files. The arrays hold every value: a file can be linked from
+    several pages and procurements.
+    """
+
+    __tablename__ = "document_scope"
+    __table_args__ = (
+        Index("ix_document_scope_framework_areas", "framework_areas", postgresql_using="gin"),
+        Index(
+            "ix_document_scope_procurement_numbers", "procurement_numbers", postgresql_using="gin"
+        ),
+        Index("ix_document_scope_agreement_numbers", "agreement_numbers", postgresql_using="gin"),
+    )
+
+    sha256: Mapped[str] = mapped_column(
+        ForeignKey("parsed_file.sha256", ondelete="CASCADE"), primary_key=True
+    )
+    framework_areas: Mapped[list[str]] = mapped_column(ARRAY(Text))  # as the register spells them
+    procurement_numbers: Mapped[list[str]] = mapped_column(ARRAY(String(32)))
+    # The supplier-card agreement numbers of the file's links and its own metadata.
+    agreement_numbers: Mapped[list[str]] = mapped_column(ARRAY(String(40)))
+    page_titles: Mapped[list[str]] = mapped_column(ARRAY(Text))  # "IT-drift Större, ..."
+    # The file's DocumentType from step 4 ("general_terms"); NULL for a file it has not typed.
+    document_type: Mapped[str | None] = mapped_column(String(32), index=True)
+
+
+class SearchChunk(Base):
+    """A chunk in the search index, with its embedding and its BM25 weights (M5, step 6).
+
+    Only chunks the quarantine does not hold back get a row. Deleted with the
+    chunk (ON DELETE CASCADE).
+    """
+
+    __tablename__ = "search_chunk"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["sha256", "section_position", "position"],
+            ["section_chunk.sha256", "section_chunk.section_position", "section_chunk.position"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    section_position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # sha256 of the section's text with whitespace normalised: sections with the same
+    # hash are copies of one text (general terms repeated in a procurement document).
+    section_hash: Mapped[str] = mapped_column(String(64), index=True)
+    # L2-normalised; the dimension is the model's (index_build.embedding_model), so the
+    # column has none, which an exact search does not need.
+    embedding: Mapped[list[float]] = mapped_column(Vector())
+    # BM25 weight per word, indexed by search_term.id; dimension index_build.term_count.
+    term_weights: Mapped[SparseVector] = mapped_column(SPARSEVEC())
+
+
+class SearchTerm(Base):
+    """A word of the BM25 index: a stem from `retrieval/swedish_text.py` (M5)."""
+
+    __tablename__ = "search_term"
+
+    term: Mapped[str] = mapped_column(Text, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, unique=True)  # 0-based index in term_weights
+    chunk_count: Mapped[int] = mapped_column(Integer)  # indexed chunks that contain it
+
+
+class IndexBuild(Base):
+    """How the current search index was built (M5): one row, written with the index.
+
+    The search compares it with its own embedding model and text analyser and
+    refuses to search an index built with others, whose vectors and stems would
+    not match the question's.
+    """
+
+    __tablename__ = "index_build"
+    __table_args__ = (CheckConstraint("id = 1", name="one_index_build"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    embedding_model: Mapped[str] = mapped_column(Text)  # e.g. "text-embedding-3-large:1536"
+    analyser: Mapped[str] = mapped_column(Text)  # e.g. "sv-1 snowballstemmer 3.1.1"
+    term_count: Mapped[int] = mapped_column(Integer)  # the dimension of term_weights
+    chunk_count: Mapped[int] = mapped_column(Integer)
+    held_back_count: Mapped[int] = mapped_column(Integer)  # chunks the quarantine left out
+    document_count: Mapped[int] = mapped_column(Integer)
+    built_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EmbeddingCache(Base):
+    """Embeddings already computed, by model and text (M5).
+
+    Kept when the index is rebuilt (no foreign key), so a new run embeds only
+    texts it has not seen: the pilot's 13,000 chunks are about 4 million tokens.
+    """
+
+    __tablename__ = "embedding_cache"
+
+    model: Mapped[str] = mapped_column(Text, primary_key=True)  # as index_build.embedding_model
+    text_hash: Mapped[str] = mapped_column(String(64), primary_key=True)  # sha256 of the text
+    embedding: Mapped[list[float]] = mapped_column(Vector())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
