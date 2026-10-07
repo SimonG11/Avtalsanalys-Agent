@@ -1171,12 +1171,50 @@ def test_r1q_the_document_the_logs_title_names_comes_first() -> None:
         "R1",
         title="Frågor och svar - Ansökningsinbjudan",
     )
-    application = tender("ansokan", "Ansökningsinbjudan", date(2024, 9, 1), "7.8.1")
+    # Both out before the question (2024-05-30); by date alone the Anbudsinbjudan would win.
+    application = tender("ansokan", "Ansökningsinbjudan", date(2024, 5, 1), "7.8.1")
     offer = tender("anbud", "Anbudsinbjudan", date(2024, 5, 2), "7.8.1")
 
     reference = resolved(log, application, offer)
 
     assert reference.targets == (target("ansokan", 0),)
+
+
+@pytest.mark.parametrize("published_on", [date(2024, 9, 1), None])
+def test_r1q_the_document_the_logs_title_names_counts_only_if_out_by_the_question(
+    published_on: date | None,
+) -> None:
+    # 20c753d88340 §15, "Frågor och svar - Upphandlingsdokument": the question of 2022-03-08
+    # is about the Ansökningsinbjudan; the Upphandlingsdokument came out on 2022-06-14.
+    log = log_with(UTBYTE, "avsnitt 7.8.1", K.SECTION_NUMBER, "7.8.1", "R1")
+    application = tender("ansokan", "Ansökningsinbjudan", date(2024, 5, 2), "7.8.1")
+    named = tender("upphandling", "Upphandlingsdokument", published_on, "7.8.1")
+
+    reference = resolved(log, application, named)
+
+    # A file with no first date (a later version) is never left out by date.
+    expected = "ansokan" if published_on else "upphandling"
+    assert (reference.status, reference.targets) == (S.RESOLVED, (target(expected, 0),))
+
+
+@pytest.mark.parametrize(
+    ("published_on", "searched"),
+    [
+        (date(2024, 5, 1), (target("upphandling"),)),
+        # Out after the question: both procurement documents of the page were searched.
+        (date(2024, 9, 1), ()),
+    ],
+)
+def test_r1q_a_missing_number_names_the_logs_file_only_if_out_by_the_question(
+    published_on: date, searched: tuple[ReferenceTarget, ...]
+) -> None:
+    log = log_with(UTBYTE, "avsnitt 7.8.1", K.SECTION_NUMBER, "7.8.1", "R1")
+    application = tender("ansokan", "Ansökningsinbjudan", date(2024, 5, 2), "7.8.2")
+    named = tender("upphandling", "Upphandlingsdokument", published_on, "7.8.2")
+
+    reference = resolved(log, application, named)
+
+    assert (reference.status, reference.targets) == (S.NUMBER_MISSING, searched)
 
 
 @pytest.mark.parametrize(

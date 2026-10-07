@@ -1,6 +1,6 @@
 # ADR 0015: Valideringskedjan: registeruppgifter mot registret, en granskarmodell och två nya försök
 
-**Status:** Föreslaget (PR för M8).
+**Status:** Godkänt av Simon 2026-10-07 (PR #13).
 Bygger ut [ADR 0013](0013-agenten.md): citatkontrollen blir det första steget i en kedja, ett nytt
 försök blir två (punkt 9 där), och ett svar ur registret kan bli `verified` (konsekvenserna där).
 Resten av ADR 0013 gäller. Lägger till en femte ändring i AG-UI-adaptern till de fyra i

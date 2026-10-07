@@ -1,6 +1,7 @@
 # ADR 0017: `find_amendments` och regeln om senaste lydelsen: ändringar ur steg 4:s hänvisningar
 
-**Status:** Föreslaget (PR för `find_amendments`, efter `calculate_date`).
+**Status:** Godkänt av Simon 2026-10-07 (PR #18). Kompletteras av
+[ADR 0018](0018-andringar-efter-granskningen.md).
 Lägger till ett åttonde verktyg i avtal-mcp ([ADR 0012](0012-avtal-mcp.md)), en regel i
 valideringskedjan ([ADR 0015](0015-valideringskedjan.md)) och bygger ut hur steg 4 läser
 ändringar ([ADR 0009](0009-extraktion-avstamning-och-karantan.md)). Resten av de besluten gäller.

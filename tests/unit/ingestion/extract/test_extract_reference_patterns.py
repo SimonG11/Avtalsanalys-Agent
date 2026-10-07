@@ -708,6 +708,80 @@ def test_a_condition_or_a_possibility_is_no_change(
     assert replaced(ANSWER + text, DocumentType.QUESTIONS_AND_ANSWERS) == expected
 
 
+# The head of a message Kammarkollegiet posts in a log, as in 39d8c1efe373 §pos3.
+NOTICE = (
+    "Publikt informationsmeddelande\n\nFrån: Statens inköpscentral vid Kammarkollegiet "
+    "Datum:\n\nTill:\n\n2025-02-20 13:20\n\nAlla\n\n"
+)
+
+
+def test_a_message_from_kammarkollegiet_in_a_log_changes_without_an_answer() -> None:
+    # 39d8c1efe373 §pos3: the message has no "Publikt svar"; all of it is Kammarkollegiet's.
+    text = (
+        NOTICE + "Kammarkollegiet ersätter avsnitt 7.19.1.3 till följande skrivning:\n\n"
+        '"Om inte annat framgår av Kontraktet gäller följande för vite vid Försening."'
+    )
+    found = mentions(
+        text,
+        DocumentType.QUESTIONS_AND_ANSWERS,
+        questions_log=True,
+        title="Publikt informationsmeddelande",
+    )
+    assert [(m.raw, m.replaces) for m in found] == [("avsnitt 7.19.1.3", True)]
+    # A supplier's question with no answer yet changes nothing (made up around §pos3).
+    asked = text.replace(NOTICE, "Publik fråga 4\n\nFrån:\n\nDold\n\n")
+    found = mentions(
+        asked, DocumentType.QUESTIONS_AND_ANSWERS, questions_log=True, title="Publik fråga"
+    )
+    assert [(m.raw, m.replaces) for m in found] == [("avsnitt 7.19.1.3", False)]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # bdf58b81d100 §120: "utgår" that ends a sentence.
+        ("Tredje stycket i avsnitt 6.6 utgår.", [("avsnitt 6.6", True)]),
+        # 39d8c1efe373 §pos3: a penalty that is due (shortened).
+        (
+            "Om Resultatet inte har levererats enligt avsnitt 7.19.1.3 utgår vite med 2 500 SEK.",
+            [("avsnitt 7.19.1.3", False)],
+        ),
+        # 20ddb9ebf9cc §28: "Tillägg till" first in the sentence.
+        (
+            'Tillägg till avsnitt 5.15 andra stycket:\n\n"Den tredje parten ska inte vara en '
+            'konkurrent till Ramavtalsleverantören"',
+            [("avsnitt 5.15", True)],
+        ),
+        # 7a765d649e25 §pos2: after a bullet.
+        (
+            '· Tillägg till avsnitt 5.15 andra stycket: "Den tredje parten ska inte vara en '
+            'konkurrent"',
+            [("avsnitt 5.15", True)],
+        ),
+        # Inside a sentence it is no change (made up).
+        (
+            "Avtalet om Säkerhetsskydd är ett tillägg till avsnitt 5.15 och gäller som det står.",
+            [("avsnitt 5.15", False)],
+        ),
+        # 20c753d88340 §70: "justerar" before a bare number.
+        (
+            "Kammarkollegiet justerar 4.1.2, punkt 9, enligt följande:",
+            [("justerar 4.1.2", True), ("punkt 9", True)],
+        ),
+        # Made up: "justerar" with a negation, or after a condition.
+        ("Kammarkollegiet justerar inte avsnitt 4.1.2.", [("avsnitt 4.1.2", False)]),
+        (
+            "Om Ramavtalsleverantören justerar priset enligt avsnitt 6.21 ska det anmälas.",
+            [("avsnitt 6.21", False)],
+        ),
+    ],
+)
+def test_utgar_tillagg_and_justerar_change_only_where_they_say_so(
+    text: str, expected: list[tuple[str, bool]]
+) -> None:
+    assert replaced(ANSWER + text, DocumentType.QUESTIONS_AND_ANSWERS) == expected
+
+
 # --- Everything together -------------------------------------------------------------------
 
 

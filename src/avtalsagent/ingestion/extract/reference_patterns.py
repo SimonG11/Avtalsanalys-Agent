@@ -53,16 +53,19 @@ How:
        status SELF.
     8. RQ: "fråga N", only in a questions-and-answers log.
     `replaces` is set on a mention in a sentence that changes its target, in an
-    AMENDMENT, or in a questions-and-answers log after "Publikt svar", where
-    Kammarkollegiet answers. The sentence has a word of change ("ersätter",
-    "utgår", "strykas", "gör följande tillägg", "texten som gäller") and no
-    negation ("ändrar inte", "gäller utan ändringar"); "ändras" after "om" is a
-    condition, and "tas bort" after "kan" a possibility. A full stop before a
-    small letter or a quote ends a number ("Punkt 2a. i Registreringen ersätts"),
-    not the sentence. In an answer the next sentence counts too, up to the next
-    mention: the answer names the section, then says what changes. Of the 2,977
-    mentions in the pilot's amendments and logs (laws left out) 39 are marked,
-    and each was read by hand.
+    AMENDMENT, or in a questions-and-answers log where Kammarkollegiet writes:
+    after "Publikt svar", or in a "Publikt informationsmeddelande", which has no
+    question. The sentence has a word of change ("ersätter", "utgår i sin
+    helhet", a sentence that ends in "utgår", "strykas", "justerar", "gör
+    följande tillägg", "texten som gäller", or "Tillägg till" first in a
+    sentence) and no negation ("ändrar inte", "gäller utan ändringar"); "ändras"
+    after "om" is a condition, and "tas bort" after "kan" a possibility. A full
+    stop before a small letter or a quote ends a number ("Punkt 2a. i
+    Registreringen ersätts"), not the sentence. In an answer or a message the next
+    sentence counts too, up to the next mention: Kammarkollegiet names the
+    section, then says what changes. Of the 2,978 mentions in the pilot's
+    amendments and logs (laws left out) 60 are marked, and each was read by
+    hand.
 
     `key` is what the resolver looks up: a number in lower case ("6.21.9",
     "3a"), a title or annex name with its spaces normalised, or a document's
@@ -184,10 +187,11 @@ _KEYWORD_NUMBERS = re.compile(
 # "0 p. 0 p.": "p." after a number is poäng (points), not punkt (c59dbfeeb576 §3.3.2.2).
 _POINTS = re.compile(r"\d\s*$")
 # R1, bare number. 0486216326ec §4.2: "I samband med revision enligt 10.4 svarar den
-# personuppgiftsansvarige för kostnaden". Only numbers with a dot: "enligt 4" is not a
-# section. 524 of the 567 in the pilot are in questions-and-answers logs.
+# personuppgiftsansvarige för kostnaden"; 20c753d88340 §70: "Kammarkollegiet justerar 4.1.2,
+# punkt 9, enligt följande". Only numbers with a dot: "enligt 4" is not a section. 524 of
+# the 567 in the pilot are in questions-and-answers logs.
 _BARE_NUMBERS = re.compile(
-    r"(?<![\w.])(?P<keyword>enligt|se|jfr|jämför|under|i|av|från)\s+"
+    r"(?<![\w.])(?P<keyword>enligt|se|jfr|jämför|under|i|av|från|justerar)\s+"
     rf"(?P<numbers>\d{{1,3}}\.\d{{1,3}}(?:\.\d{{1,3}})*"
     rf"(?:(?:{_LIST_SEPARATOR})\d{{1,3}}(?:\.\d{{1,3}})+)*)"
     r"(?![\w%]|\.\d|\s*\|)",
@@ -309,13 +313,17 @@ _QUESTION = re.compile(
 # School-avtal ändras härmed enligt följande', "Punkt 8.a skall i sin helhet strykas och
 # ersättas med följande ordalydelse"; 7a765d649e25 §9: "Rättelse. Texten som gäller är
 # följande för punkt 3.2:"; 20c753d88340 §15: "Kammarkollegiet gör följande tillägg till
-# andra stycket i 4.2.4:", §60: "Kammarkollegiet gör följande justering i avsnitt 4.1.2".
+# andra stycket i 4.2.4:", §60: "Kammarkollegiet gör följande justering i avsnitt 4.1.2",
+# §70: "Kammarkollegiet justerar 4.1.2, punkt 9"; bdf58b81d100 §120: "Tredje stycket i
+# avsnitt 6.6 utgår."; 20ddb9ebf9cc §28: "Tillägg till avsnitt 5.15 andra stycket:". "utgår"
+# inside a sentence is mostly a penalty that is due ("utgår vite med 2 500 SEK").
 _REPLACEMENT = re.compile(
     r"\b(?:ersätter|ersätts(?:\s+(?:av|med))?|upphör att gälla"
     r"|ändras(?:\s+(?:till|härmed|enligt följande))|får följande lydelse|ny lydelse|stryks"
-    r"|strykas|ersättas med|utgår(?=\s+(?:och|ur|i sin helhet|helt))|tas bort|läggs till"
-    r"|ska läggas till|skall läggas till|ändrar|justeras till|korrigeras|rättas"
-    r"|texten som gäller|gör följande (?:tillägg|ändring|justering)(?:ar)?)\b",
+    r"|strykas|ersättas med|utgår(?=\s+(?:och|ur|i sin helhet|helt)|\s*(?:[.;]|$))"
+    r"|tas bort|läggs till|ska läggas till|skall läggas till|ändrar|justerar|justeras till"
+    r"|korrigeras|rättas|texten som gäller|gör följande (?:tillägg|ändring|justering)(?:ar)?"
+    r"|tillägg till)\b",
     re.IGNORECASE,
 )
 # A negation means nothing changes: 39d8c1efe373 §51: "Nej, Kammarkollegiet ändrar inte
@@ -323,14 +331,16 @@ _REPLACEMENT = re.compile(
 # "Definitionen av Koncernbolag i punkt 1 i Microsoft Business and Services Agreement gäller
 # utan ändringar", §pos6: "Avseende Microsoft gäller punkt oförändrad."
 _NO_CHANGE = re.compile(
-    r"\b(?:ändrar inte|ändras inte|inte ändras|inte ändrar|kvarstår(?: därmed)? oförändrad"
-    r"|gäller(?: \w+)? oförändrad|ingen ändring|utan ändringar?)\b",
+    r"\b(?:(?:ändrar|ändras|justerar|justeras) inte|inte (?:ändras|ändrar|justeras|justerar)"
+    r"|kvarstår(?: därmed)? oförändrad|gäller(?: \w+)? oförändrad|ingen ändring"
+    r"|utan ändringar?)\b",
     re.IGNORECASE,
 )
-# "ändrar" or "ändras" after "om", "när" or "oavsett om" is a condition: 3a316e27aadf §135:
-# "I avsnitt 6.21.1 andra stycket framgår att om pris ändras till följd av begärd ändring";
-# 50edddbad6c7 §433: "Om avropsberättigad använder egna mallar ... eller ändrar de förkryssade
-# alternativen i personuppgiftsbiträdesavtalet gäller inte angivna takpriser."
+# "ändrar", "ändras" or "justerar" after "om", "när" or "oavsett om" is a condition:
+# 3a316e27aadf §135: "I avsnitt 6.21.1 andra stycket framgår att om pris ändras till följd av
+# begärd ändring"; 50edddbad6c7 §433: "Om avropsberättigad använder egna mallar ... eller
+# ändrar de förkryssade alternativen i personuppgiftsbiträdesavtalet gäller inte angivna
+# takpriser."
 _CONDITION = re.compile(r"\b(?:[Oo]m|[Nn]är|[Oo]avsett om)\b")
 # "tas bort" or "läggs till" at most three words after "kan", "får", "kunna" or "inte" is
 # what may be done, and before "genom" how it is done; neither is a change. 50edddbad6c7
@@ -340,6 +350,8 @@ _CONDITION = re.compile(r"\b(?:[Oo]m|[Nn]är|[Oo]avsett om)\b")
 _MAY_BEFORE = re.compile(r"\b(?:kan|får|kunna|inte)\b(?:\s+\S+){0,3}\s+$")
 _HOW_AFTER = re.compile(r" genom")
 _MAY_OR_HOW = ("tas bort", "läggs till")
+# The end of a sentence, a line or a bullet right before a word: "Tillägg till" starts there.
+_STARTS_SENTENCE = re.compile(r"(?:[.!?;:]\s+|\n\s*|[·•]\s*)$")
 # For `replaces`, a sentence ends as by `_SENTENCE_END`, except that a full stop before a
 # small letter or a quote ends a number or a list letter, not the sentence: 5aab54c5a4b1
 # §pos0: "A. Punkt 2a. i Registreringen ersätts med följande", 'B. Punkten 3.b. "Exemplar för
@@ -348,8 +360,12 @@ _MAY_OR_HOW = ("tas bort", "läggs till")
 _CHANGE_SENTENCE_END = re.compile(
     r"\.(?=\s+[^a-zåäö\s\"”“']|\s*$)|[!?;:](?=\s|$)|\s*[|·•]|\n(?=\s*[·•\-–A-ZÅÄÖ0-9(])"
 )
-# Where Kammarkollegiet's answer starts in a TendSign questions log.
+# Where Kammarkollegiet's answer starts in a TendSign questions log. A message that
+# Kammarkollegiet posts in the log has no question: all of it is theirs (39d8c1efe373 §pos3,
+# "Publikt informationsmeddelande": "Kammarkollegiet ersätter avsnitt 7.19.1.3 till följande
+# skrivning").
 _ANSWER = "Publikt svar"
+_NOTICE = "Publikt informationsmeddelande"
 
 # A sentence ends at a full stop, question mark, exclamation mark, colon or semicolon
 # before a space, at a table cell or bullet, or at a line break before a bullet, a digit or
@@ -431,6 +447,8 @@ def _section_mentions(
     if questions_log:
         found.extend(_questions(text))
     answer = section.text.find(_ANSWER, text.start)
+    if answer < 0 and section.title.startswith(_NOTICE):
+        answer = text.start
     ordered = sorted(found, key=lambda item: (item.start, item.end))
     starts = [item.start for item in ordered]
     mentions = []
@@ -795,7 +813,8 @@ def _replaces(
         start: Where the mention starts in it.
         end: Where the mention ends.
         document_type: Only an AMENDMENT or a questions-and-answers log changes anything.
-        answer: Where "Publikt svar" starts in a log's section, -1 when it has none.
+        answer: Where Kammarkollegiet's text starts in a log's section: "Publikt svar",
+            or the body of a "Publikt informationsmeddelande"; -1 when it has neither.
         next_start: Where the next mention of the section starts (`len(text)` after the
             last); in an answer the sentence after the mention's is read up to there.
     """
@@ -840,13 +859,17 @@ def _window_end(text: str, end: int, next_start: int, *, in_answer: bool) -> int
 def _is_change(window: str, found: re.Match[str]) -> bool:
     """Whether a word of change in the text read for `replaces` changes something.
 
-    Not "ändrar" or "ändras" after a condition ("om pris ändras"), nor "tas bort" or "läggs
-    till" after "kan" or before "genom".
+    Not "ändrar", "ändras" or "justerar" after a condition ("om pris ändras"), nor "tas
+    bort" or "läggs till" after "kan" or before "genom". "Tillägg till" only first in a
+    sentence: "Tillägg till avsnitt 5.15", not "ett tillägg till Kontraktet".
     """
     word = found.group().lower()
     before = window[: found.start()]
-    if (word == "ändrar" or word.startswith("ändras")) and _CONDITION.search(before):
+    conditional = word in ("ändrar", "justerar") or word.startswith("ändras")
+    if conditional and _CONDITION.search(before):
         return False
+    if word == "tillägg till":
+        return not before.strip() or _STARTS_SENTENCE.search(before) is not None
     return not (
         word in _MAY_OR_HOW
         and (_MAY_BEFORE.search(before) or _HOW_AFTER.match(window, found.end()))
