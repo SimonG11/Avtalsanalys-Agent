@@ -1,15 +1,16 @@
 # Demoskript
 
-Fem frågor som visar vad agenten gör: den frågar när frågan är oklar, väljer registret i stället
-för dokumenten, följer hänvisningar i flera steg, hittar en rättelse som ersätter klausulen och
-säger "framgår inte" i stället för att gissa. Fråga 3 och 4 visar det som ett fast workflow inte
-klarar, eftersom nästa steg beror på vad agenten just har läst. Fyra
+Fem frågor som visar vad agenten gör: den frågar med alternativ när frågan passar för många fall,
+väljer registret i stället för dokumenten, följer hänvisningar i flera steg, hittar en rättelse
+som ersätter klausulen och säger "framgår inte" i stället för att gissa. Fråga 3 och 4 visar det
+som ett fast workflow inte klarar, eftersom nästa steg beror på vad agenten just har läst. Fyra
 av frågorna kommer ur testsamlingen ([`evals/datasets/gold_sv.jsonl`](../evals/datasets/gold_sv.jsonl)),
 så de har ett facit och en mätning bakom sig. Den första är en öppnare variant av q04, gjord för
 att agenten ska behöva fråga.
 
 Alla fem kördes mot den riktiga databasen 2026-10-07, både i terminalen och i webbappen, och
-reservfrågan i terminalen. Resultaten står i [steg 12](steg/12-demo.md). Körningen hittade ett fel:
+reservfrågan i terminalen. Fråga 1 kördes då med den tidigare regel 4 i systemprompten.
+Resultaten står i [steg 12](steg/12-demo.md). Körningen hittade ett fel:
 i webbappen föll fråga 3 första gången, eftersom API:ts AG-UI-adapter stoppade körningen efter 25
 steg i grafen, ungefär sex modellanrop. Webbappens första körningar av fråga 3–5 gjordes med
 rättelsen provad lokalt. En andra körning av alla fem i webbappen gjordes med `main` efter PR #22
@@ -20,15 +21,20 @@ och webbappen från PR #23. Hämta `main` före demot. Beslutet bakom urvalet st
 
 | # | Fråga | Visar | Status | Tid i webbappen | Tid i terminalen |
 |---|---|---|---|---|---|
-| 1 | Uppsägningstiden i IT-drift | Agenten frågar när frågan är oklar | Verifierat | 52–55 s med dialogen | 54 s med dialogen |
+| 1 | Uppsägningstiden i IT-drift | Agenten frågar med alternativ när fallen är för många | Verifierat | 37–46 s utan din tid att svara, mot ersättaren | – |
 | 2 | q10 Nordlo Advance | Registret i stället för dokumenten | Verifierat | 12–14 s | 19 s |
 | 3 | q14 Lördagsarbete | Flera steg genom hänvisningar | Verifierat | 39–62 s | 50 s |
 | 4 | q21 Antal anbud | En rättelse ersätter klausulen | Verifierat | 32–45 s | 36 s |
 | 5 | q27 Rangordnad etta | Agenten gissar inte | Inget svar eller Verifierat | 35–48 s | 31 s |
 | R | q24 Lägsta takpris | Jämförelse mellan leverantörer | Verifierat | – | 42 s |
 
-Tiderna kommer från körningarna mot den riktiga databasen, två i webbappen (q14 tre) och en i
-terminalen; terminalens tider räknar med att programmet startar. Räkna med upp till en minut per
+Tiderna för fråga 2–5 och reservfrågan kommer från körningarna mot den riktiga databasen, två i
+webbappen (q14 tre) och en i terminalen; terminalens tider räknar med att programmet startar.
+Fråga 1 ändrades med den nya regel 4 i systemprompten
+([ADR 0025](adr/0025-tankar-och-farre-motfragor.md)). Dess tid kommer från tre körningar genom
+API:t (`POST /agui`) med `low` 2026-10-07 mot en tillfällig ersättare för avtal-mcp med pilotens
+data, inte mot databasen, och räknar inte med tiden du tar på dig att svara. Den är inte körd om i
+terminalen. Räkna med upp till en minut per
 fråga. En fråga kan ta längre tid om
 kontrollen skickar tillbaka ett utkast, och svaret kan formuleras olika mellan körningar.
 Fakta och källor ska vara desamma.
@@ -58,43 +64,67 @@ En halvtimme före:
 3. Ha en terminal öppen i repot för nivå B, och mappen med skärmbilder redo.
 4. Stäng aviseringar och andra flikar. Zooma webbläsaren så att svaret syns på projektorn.
 
-## Fråga 1: agenten frågar när frågan är oklar
+## Fråga 1: agenten frågar när fallen är för många
 
 **Fråga:** `Vad är uppsägningstiden i IT-driftavtalet?`
 
-**Vad som händer:** agenten söker i registret och i dokumenten, och ser att svaret beror på vem
-som säger upp och vad som sägs upp. Den pausar och frågar dig (`ask_user`). Frågan varierar
-mellan körningar. I webbappen kom den 2026-10-07 som "Menar du er organisations avropade
-kontrakt med leverantören eller själva ramavtalet …? Gäller frågan er egen uppsägning eller
-leverantörens?", i terminalen som fyra val om vem som säger upp och varför. Ibland frågar den
-också om IT-drift Mindre eller Större.
+**Vad som händer:** agenten söker i registret och i dokumenten och ser att svaret beror på vem
+som säger upp och vad som sägs upp: ert avropade kontrakt eller själva ramavtalet, i två
+delområden. Regel 4 i systemprompten säger att den ska svara för varje fall när fallen är få och
+svaren korta, och annars fråga med 2–5 alternativ. Här räknar den fallen som för många och frågar
+(`ask_user`) efter den första sökningen, 8–13 sekunder in och innan den har läst något avsnitt.
+Webbappen visar frågan i chatten med en knapp per alternativ och ett fält för eget svar. Mot
+ersättaren 2026-10-07 frågade den i alla tre körningarna med `low`, som demot kör med, och varje
+gång likadant: "Menar du uppsägning av ert avropade kontrakt eller av själva ramavtalet, och vem
+ska säga upp det?" Alternativen var fyra: "Vi vill säga upp vårt kontrakt utan särskilt skäl",
+samma uppsägning på grund av leverantörens avtalsbrott, "Leverantören vill säga upp vårt
+kontrakt" och "Uppsägning av själva ramavtalet".
 
-**Välj:** "Vårt avropade kontrakt – vi vill säga upp det", eller valet "utan att ange skäl".
-Frågar den om delområdet, välj Mindre. Efter svaret läser agenten 6.21.8 i Allmänna villkor och
-letar efter ändringar. I terminalen läste den också 6.21.7 och 6.21.9; i webbappen läste den 6.21.8
-för både IT-drift Mindre och IT-drift Större.
+**Välj:** "Vi vill säga upp vårt kontrakt utan särskilt skäl", det första alternativet. Är
+alternativen formulerade annorlunda, välj det om er egen uppsägning av det avropade kontraktet
+utan skäl. Frågar den om delområdet, välj Mindre. Efter svaret läser agenten 6.21.8 i Allmänna
+villkor för både IT-drift Mindre och IT-drift Större, letar efter ändringar och söker i Frågor
+och svar.
 
 **Visa:**
-- Dialogen. Körningen står still i grafen tills du svarar, och fortsätter sedan från samma
-  checkpoint i Postgres.
-- Stegen ovanför svaret: varje verktyg agenten valde, med argumenten. "Visa svaret från
+- Agentens fråga i chatten. Körningen står still i grafen tills du svarar, och fortsätter sedan
+  från samma checkpoint i Postgres.
+- Stegen ovanför svaret: varje verktyg agenten valde, med argumenten. När svaret har kommit är
+  de ihopfällda till raden "Arbetade i … s · N steg"; klicka på den. "Visa svaret från
   verktyget" visar vad den fick tillbaka.
+- Agentens tankar, om de kommer: raden "Tänker …" och sedan "Tänkte efter" i tidslinjen, med
+  OpenAI:s sammanfattning av modellens resonemang. Etiketten är svensk och texten engelsk. Med
+  `low` kom en tanke i 1 av 8 demokörningar mot ersättaren (1 av 47 modellanrop), i fråga 1, så
+  lova den inte.
 - Statusen "Verifierat" och citatet i källkortet under svaret. Källpanelen med PDF-sidan visar du
   hellre i fråga 3 (se "Om det går fel" nedan).
 
-**Säg:** "Ett workflow hade valt en tolkning och svarat på den. Agenten ser att frågan kan betyda
-olika saker och frågar. Det är en av anledningarna till att frågorna är en agent och inläsningen
-ett workflow."
+**Säg:** "Ett fast workflow kan inte fråga: det väljer en tolkning eller räknar upp alla fall.
+Agenten ser att svaret beror på vem som säger upp och vad som sägs upp. När fallen är få svarar
+den för vart och ett och säger vad som avgör. Här är de för många, så den frågar och ger några
+alternativ att välja mellan. Det är en av anledningarna till att frågorna är en agent och
+inläsningen ett workflow."
 
-**Rätt svar:** utan angivande av skäl får ni säga upp efter halva kontraktstiden, dock tidigast
-efter tre år, om kontraktet inte säger annat (6.21.8). Vid uppsägning enligt 6.21.7, till exempel
+**Rätt svar:** 6.21.8 anger ingen fast uppsägningstid. Utan angivande av skäl får ni säga upp
+efter halva kontraktstiden, dock tidigast efter tre år, om kontraktet inte säger annat (6.21.8).
+Vid uppsägning enligt 6.21.7, till exempel
 vid leverantörens väsentliga avtalsbrott, sker uppsägningen skriftligen, med omedelbar verkan eller senast nio månader efter uppsägningen (6.21.7).
 Leverantören har minst sex månaders uppsägningstid om ni inte rättar ett väsentligt avtalsbrott
-inom 30 dagar (6.21.9). Vilka av punkterna svaret tar med beror på vad du svarade i dialogen.
+inom 30 dagar (6.21.9). Vilka av punkterna svaret tar med beror på vad du svarade på agentens fråga.
 
 **Om det går fel:**
-- Agenten frågar inte utan svarar för alla fall direkt: det är också ett rimligt svar. Säg att
-  den här gången valde agenten att täcka alla fall, och gå vidare.
+- Agenten frågar inte utan svarar för alla fall direkt: det är vad regel 4 säger när fallen är
+  få, och ett rimligt svar. Med `medium` gjorde den så i 1 av 3 körningar mot ersättaren och tog
+  med 6.21.7, 6.21.8 och 6.21.9, alla rätt; med `low` hände det inte. Visa att svaret säger vad
+  som avgör, säg att agenten den här gången räknade fallen som få nog, och gå vidare.
+- Svaret slutar med en fråga i texten ("Menar du ert avropade kontrakt eller själva ramavtalet
+  …?") och inga knappar: agenten skrev frågan i svaret i stället för att fråga med `ask_user`. Så
+  blev det i körningen ovan. Svaret är ändå färdigt och kontrollerat; gå vidare.
+- Frågan har tre alternativ i stället för fyra, eller andra ord: välj det som gäller er egen
+  uppsägning av det avropade kontraktet.
+- En tanke läser fel eller låter pratig: sammanfattningen skrivs av OpenAI, inte av agenten, och
+  kontrolleras inte. En gång läste den 6.21 som "the Sixth Amendment". Säg det och peka på svaret,
+  som är kontrollerat.
 - Panelen säger "Citatet hittades inte i sidans text": så blev det för källa 1 i webbappen
   2026-10-07, före PR #23. Citatet ur 6.21.8 börjar på sidan 26 och slutar på sidan 27, och
   panelen godtog inte början på sidan 26. Med PR #23 öppnar panelen sidan 26, markerar början och

@@ -79,10 +79,13 @@ riktiga databasen (q-numren är frågor i testsamlingen):
 - **Rätt källa för frågan (q10):** leverantörens avtalsnummer och tidigare namn står bara i
   Excel-registret, och registret är facit för organisationsnumret. Agenten frågar registret och
   söker inte alls i dokumenten.
-- **En oklar fråga (en öppnare variant av q04):** "Vad är uppsägningstiden i IT-driftavtalet?"
-  beror på vem som säger upp och varför. Agenten frågade användaren i stället för att välja en
-  tolkning i alla tre körningarna av frågan med den riktiga modellen. I mätningen av de 30
-  testfrågorna frågade den aldrig, vilket är rätt för tydliga frågor.
+- **En fråga med många fall (en öppnare variant av q04):** "Vad är uppsägningstiden i
+  IT-driftavtalet?" beror på vem som säger upp och varför. Agenten svarar för varje fall när
+  fallen är få och svaren korta, och frågar annars med två till fem alternativ. Här räknar den
+  fallen som för många: mot ersättaren för avtal-mcp frågade den i alla tre körningarna med
+  resonemangsnivån `low` och i två av tre med `medium`
+  ([ADR 0025](docs/adr/0025-tankar-och-farre-motfragor.md)). I mätningen av de 30 testfrågorna,
+  med den tidigare regeln, frågade den aldrig, vilket är rätt för tydliga frågor.
 - **Inget svar (q27):** vilket bemanningsföretag som är rangordnat etta står inte i dokumenten.
   Agenten säger att det inte framgår i stället för att gissa.
 
@@ -137,7 +140,7 @@ flowchart LR
         L["gpt-6.1-sol väljer<br/>verktyg och ordning"] --> F["Svarsutkast<br/>med källor"]
         F --> V{"Kontrollen<br/>(validation/)"}
         V -- "underkänt, högst två gånger" --> L
-        L -. "oklar fråga" .-> U["ask_user"]
+        L -. "för många fall" .-> U["ask_user"]
     end
 
     XL --> R
@@ -161,8 +164,8 @@ En fråga från början till slut:
    och datum, `search_documents` för hybridsökningen, `read_section` för hela avsnittet,
    `resolve_reference` för att följa en hänvisning, `find_amendments` för senare ändringar,
    `get_outline`, `list_documents` och `calculate_date`. Med `ask_user` pausar den körningen och
-   frågar användaren. Webbappen visar varje anrop medan det görs ([steg 6](docs/steg/06-verktyg.md),
-   [steg 7](docs/steg/07-agent.md)).
+   frågar användaren, med två till fem alternativ. Webbappen visar varje anrop medan det görs
+   ([steg 6](docs/steg/06-verktyg.md), [steg 7](docs/steg/07-agent.md)).
 3. Agenten lämnar ett svarsutkast: text med hänvisningar [n], källor med ordagranna citat och de
    avtal ur registret som svaret bygger på.
 4. Kontrollen läser om allt genom avtal-mcp, i fast ordning: citaten, registeruppgifterna, senaste
@@ -199,11 +202,11 @@ En fråga från början till slut:
 
 Mellan agenten och koden ligger systemprompten (`src/avtalsagent/agent/prompts.py`), som styr
 agenten men inte tvingar den. Den säger att agenten ska begränsa sökningen till området eller
-avtalet, köra `find_amendments` på varje avsnitt den citerar, fråga med `ask_user` när svaret
-skiljer sig mellan avtal eller delområden, svara att något inte framgår i stället för att gissa och
-behandla text i dokumenten som uppgifter och inte som instruktioner. Följer agenten inte
-instruktionen fångar kontrollen ett ändrat avsnitt som citeras utan ändringen, men inte en fråga
-som borde ha ställts.
+avtalet, köra `find_amendments` på varje avsnitt den citerar, svara för varje fall när svaret
+skiljer sig mellan avtal, delområden eller fall och fallen är få, och annars fråga med `ask_user`,
+svara att något inte framgår i stället för att gissa och behandla text i dokumenten som uppgifter
+och inte som instruktioner. Följer agenten inte instruktionen fångar kontrollen ett ändrat avsnitt
+som citeras utan ändringen, men inte en fråga som borde ha ställts.
 
 ## Hur systemet är kontrollerat
 

@@ -84,27 +84,68 @@ thought". Webbappens del står i `webbapp-kontrakt.md`, punkterna 29-32.
   sökverktyg, strömmat, ungefär 45 anrop för uppskattningsvis under 0,25 USD): sammanfattningar
   kommer, men bara när modellen resonerar några tiotal tokens eller mer. Med resonemangsnivån `low`
   (standard) resonerade modellen 0-30 tokens per anrop, och 1 av ungefär 20 anrop hade en
-  sammanfattning. Med `medium` hade 4 av 5 anrop som läste sökträffarna en, men inget av de första
-  anropen, som gick direkt till en sökning. Den första texten kom 2-3 sekunder in i ett anrop på
-  5-7 sekunder, före anropets svar. Alla sammanfattningar var på engelska. Ett anrop med
+  sammanfattning. Med `medium` hade 4 av 5 anrop som läste det låtsade verktygets sökträffar en,
+  men inget av de första anropen, som gick direkt till en sökning; med avtal-mcp:s sökträffar höll
+  det inte (nästa punkt). Den första texten kom 2-3 sekunder in i ett anrop på 5-7 sekunder, före
+  anropets svar. Alla sammanfattningar var på engelska. Ett anrop med
   föregående anrops resonemangspost och sammanfattning i historiken (en följdfråga) gick igenom.
-- **I demot syns få tankar med `low`.** Webbappen visar en rad "Tänker" bara för anrop med en
-  sammanfattning, och med `low` är de få. `AGENT_REASONING_EFFORT=medium` ger fler, men kostar fler
-  resonemangstokens och mer tid per steg. Det är Simons val; standarden ändras inte här.
+- **Demofrågorna** (2026-10-07) kördes genom `POST /agui` med agentmodellen och granskaren, mot
+  den tillfälliga ersättaren för avtal-mcp med pilotens data och inte mot Postgres, en gång per
+  fråga och tre gånger för fråga 1, med `low` och med `medium`: 16 körningar. Alla gav rätt fakta
+  mot facit och statusen Verifierat, utom q27 med `medium`, som blev Inget svar med "framgår inte"
+  (godtaget i demot). Tiderna räknar inte med tiden för att svara på en fråga. Körningarna med
+  `low` och `medium` gick samtidigt, så en tid kan vara några sekunder för lång.
+
+  | | `low` | `medium` |
+  |---|---|---|
+  | Tankar som visades | 1 i 47 anrop (1 av 8 körningar) | 4 i 42 anrop (3 av 8 körningar) |
+  | Resonemangstokens, alla 8 körningar | 30 | 545 |
+  | Fråga 1: frågade med `ask_user` | 3 av 3, med 4 alternativ | 2 av 3, med 4 och 3 alternativ |
+  | Fråga 1: tid | 37, 42 och 46 s | 46, 69 och 70 s |
+  | Övriga frågor: tid | 14-46 s | 14-42 s |
+  | Kostnad, agent och granskare, 8 körningar | 0,51-1,55 USD | 0,61-1,62 USD |
+
+  Tankarna per fråga: med `low` en (390 tecken) i fråga 1:s första körning och ingen annars. Med
+  `medium` en (408 tecken) i fråga 1:s andra körning, två (816 tecken) i dess tredje och en (467
+  tecken) i q14, och ingen i q10, q21, q27 eller q24. Kostnaden är ett intervall, från cachad
+  indata gratis till cachad indata till fullt pris, eftersom `evals/answer_run.py` inte har något
+  pris för cachad indata; alla 16 körningarna kostade 1,13-3,16 USD. Med `medium` tog fråga 1
+  längre tid i två av tre körningar, eftersom agenten läste fler avsnitt (6.21.7 och 6.21.9) och
+  skrev längre svar.
+- **Få tankar syns, också med `medium`.** Webbappen visar en rad "Tänker" bara för anrop med en
+  sammanfattning, och modellen resonerar nästan inte. `medium` gav fyra tankar mot en, men gör
+  inte tankarna till något demot kan lova, och kostar ungefär 5-20 % mer och upp till en halv
+  minut mer i fråga 1. Standarden förblir `low`; `AGENT_REASONING_EFFORT=medium` är Simons val.
+  Ska tankarna synas i de flesta steg behövs troligen `high`, `AGENT_REASONING_SUMMARY=detailed`
+  eller att agenten skriver egna rader om stegen (se Alternativ som valts bort); inget av dem är
+  mätt.
+- **Sammanfattningens text kontrolleras inte.** Alla tankar var på engelska med en rubrik i
+  fetstil, och de kan vara fel eller pratiga: en läste 6.21 som "the Sixth Amendment", en annan
+  slutade med "Let's sort this out together!". Svaret kontrolleras som förut; tankarna gör det
+  inte.
 - **Kostnaden** är liten: sammanfattningen syntes inte i utdatatokens i provet (utdata var
   resonemang plus svar). Den skickas tillbaka som indata i följande anrop, ungefär 100 ord per
   sammanfattning; det är inte mätt. Mätningen ([ADR 0019](0019-matning-av-svaren.md)) använder
   `make_agent_model` och ber alltså också om sammanfattningar.
-- **Demots fråga 1 besvaras oftast direkt.** I ett prov av steget efter den första sökningen
-  (sökträffar för kundens och leverantörens uppsägning i båda delområdena) frågade den gamla
-  prompten 3 av 3 gånger och den nya 1 av 3; de andra två sökte vidare för att svara. Hela
-  körningen och de 30 testfrågorna är inte körda om. `docs/demo.md` (en annan tråds fil) behöver
-  uppdateras: fråga 1 visar då att agenten svarar för varje fall och säger vad som avgör, och en
-  fråga som visar `ask_user` behöver bero på användarens eget fall, till exempel vilken
-  leverantör hen har. README:n beskriver den gamla regeln (stycket om systemprompten: "fråga med
-  `ask_user` när svaret skiljer sig mellan avtal eller delområden") och fråga 1 som exemplet på en
-  motfråga (punkten "En oklar fråga"); båda behöver uppdateras av tråden som äger README:n.
-  `docs/demo.md` och `README.md` lämnas därför till den tråden.
+- **Demots fråga 1 frågar fortfarande oftast.** Ett prov av bara steget efter den första
+  sökningen, med låtsade sökträffar, frågade med den nya prompten 1 av 3 gånger. Hela körningarna
+  ovan frågade i 3 av 3 med `low` och i 2 av 3 med `medium`, efter den första sökningen eller
+  sökningarna och innan agenten läst något avsnitt. Med `low` var frågan densamma varje gång
+  ("Menar du uppsägning av ert avropade kontrakt eller av själva ramavtalet, och vem ska säga upp
+  det?"), och det första alternativet, att säga upp det egna kontraktet utan särskilt skäl, är
+  demots val. En tanke säger varför: "too many options, possibly five variants". Modellen räknar
+  ramavtalet som ett eget fall, i två delområden, och då är fallen för många enligt regel 4. Den
+  körning med `medium` som inte frågade svarade för alla tre fallen (6.21.7, 6.21.8 och 6.21.9),
+  rätt och med sex kontrollerade citat, men slutade svaret med en fråga i texten ("Menar du ert
+  avropade kontrakt eller själva ramavtalet …?") i stället för `ask_user`, så webbappen visar inga
+  knappar för den. Ska fråga 1 besvaras direkt behöver prompten eller frågan ändras, till exempel
+  så att agenten utgår från det avropade kontraktet när frågan inte nämner ramavtalet; det är inte
+  beslutat här. `docs/demo.md` och README:n beskriver nu fråga 1 som en fråga där agenten frågar
+  med alternativ. De 30 testfrågorna är inte körda om med den nya regeln.
+- **Ett återupptaget `ask_user` strömmas två gånger.** När frågan är besvarad skickar den
+  återupptagna körningen `TOOL_CALL_START` och `TOOL_CALL_ARGS` för samma `ask_user`-anrop igen,
+  med samma `toolCallId`, före `TOOL_CALL_RESULT`. Webbappen behöver slå ihop stegen på id för att
+  inte visa frågan två gånger.
 - **En fråga som väntar när ändringen tas i drift** (ett `ask_user`-anrop utan `options` i en
   checkpoint) nekas när användaren svarar: LangGraph kör verktygsanropet igen mot det nya
   schemat, användarens svar når inte modellen, och modellen läser att `options` saknas och frågar
