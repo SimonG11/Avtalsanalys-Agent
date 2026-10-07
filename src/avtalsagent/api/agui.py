@@ -56,6 +56,12 @@ Why:
       on from there: a client could set `answer` (or the check's private
       `fallback_answer` and `validation_retries`) and skip the check. The
       web app sends neither; the graph's input is the messages alone.
+    The agent model's reasoning summaries (ADR 0025) go through as the
+    library sends them: REASONING_* events before the tool calls of the
+    same model call, and in MESSAGES_SNAPSHOT a message with the role
+    "reasoning" before the model's message. A client that sends them back
+    in its history adds nothing: the library folds them into the model's
+    messages, which the checkpoint already has.
     Each run gets its own session to avtal-mcp. Over HTTP a call that
     fails (avtal-mcp restarting, a timeout) ends its session as well as
     the run (ADR 0013); a session shared by all runs would then fail every
