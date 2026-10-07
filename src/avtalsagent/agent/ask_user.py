@@ -19,14 +19,27 @@ How:
     `interrupt()` then returns the answer. So nothing before it may have a
     side effect. `options` goes into the payload only when given, as the
     contract's `options?` says. The answer is returned as `str`, the
-    contract's plain string.
+    contract's plain string. A question the client cancels instead
+    (AG-UI's resume with status "cancelled") comes back as ag-ui-langgraph's
+    cancel mark, a dict; the model then reads that the user did not answer,
+    not the dict.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 from langchain_core.tools import tool
 from langgraph.types import interrupt
 from pydantic import BaseModel, Field
+
+# The key ag-ui-langgraph sets in the resume value of a cancelled question
+# (ag_ui_langgraph.interrupts.DEFAULT_RESUME_SENTINEL_CANCELLED); the agent does not import
+# the web transport, and a test checks that the two agree.
+CANCELLED_MARK = "__agui_cancelled__"
+NOT_ANSWERED = (
+    "Användaren svarade inte på frågan. Svara så långt det går utan svaret, och säg vad "
+    "som avgör svaret."
+)
 
 
 class AskUserArguments(BaseModel):
@@ -47,4 +60,7 @@ def ask_user(question: str, options: list[str] | None = None) -> str:
     payload: dict[str, Any] = {"question": question}
     if options:
         payload["options"] = options
-    return str(interrupt(payload))
+    answer = interrupt(payload)
+    if isinstance(answer, Mapping) and answer.get(CANCELLED_MARK):
+        return NOT_ANSWERED
+    return str(answer)

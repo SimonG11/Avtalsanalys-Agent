@@ -1,6 +1,6 @@
 # ADR 0011: Hybridsökning med exakt vektorsökning, BM25 och rangfusion
 
-**Status:** Föreslaget (PR #8). Ersätter sökdelen av [ADR 0004](0004-postgres-som-enda-databas.md)
+**Status:** Godkänt av Simon 2026-10-07 (PR #8). Ersätter sökdelen av [ADR 0004](0004-postgres-som-enda-databas.md)
 (Postgres fulltext med `swedish` och vägen till ParadeDB). Allt annat i ADR 0004 gäller.
 
 ## Kontext

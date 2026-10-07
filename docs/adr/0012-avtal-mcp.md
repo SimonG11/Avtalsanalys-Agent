@@ -1,6 +1,6 @@
 # ADR 0012: avtal-mcp med MCP SDK:t 1.x, vanliga funktioner som verktyg och samma regel som indexet
 
-**Status:** Föreslaget (PR #9). Bygger på [ADR 0003](0003-mcp-som-verktygslager.md), som gäller.
+**Status:** Godkänt av Simon 2026-10-07 (PR #9). Bygger på [ADR 0003](0003-mcp-som-verktygslager.md), som gäller.
 
 ## Kontext
 

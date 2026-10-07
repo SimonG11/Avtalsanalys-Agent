@@ -13,6 +13,7 @@ from datetime import date
 from typing import Any, cast
 
 import pytest
+from ag_ui_langgraph.interrupts import DEFAULT_RESUME_SENTINEL_CANCELLED
 from langchain.agents.middleware import InputAgentState
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -24,6 +25,7 @@ from mcp import ClientSession
 from mcp.types import CallToolResult, TextContent
 from mcp.types import Tool as MCPTool
 
+from avtalsagent.agent.ask_user import CANCELLED_MARK, NOT_ANSWERED
 from avtalsagent.agent.checkpointer import serializer
 from avtalsagent.agent.graph import AGENT_NAME, ANSWER_SUBMITTED, AvtalAgent, build_agent
 from avtalsagent.agent.middleware import NO_DRAFT_TEXT, SYNC_RUN_ERROR, CitationCheck
@@ -505,6 +507,30 @@ async def test_ask_user_without_options_sends_only_the_question() -> None:
 
     [question] = (await graph.aget_state(THREAD)).interrupts
     assert question.value == {"question": "Vilket avtal menar du?"}
+
+
+@pytest.mark.anyio
+async def test_a_cancelled_question_tells_the_model_the_user_did_not_answer() -> None:
+    graph, model = build(
+        [
+            tool_call("ask_user", {"question": "Vilket avtal menar du?"}, "c1"),
+            final_answer("Det beror på avtalet.", answered=False, call_id="c2"),
+        ]
+    )
+
+    await graph.ainvoke(QUESTION, THREAD)
+    # ag-ui-langgraph's resume value for an AG-UI resume with status "cancelled".
+    await graph.ainvoke(Command(resume={CANCELLED_MARK: True, "interrupt_id": "i1"}), THREAD)
+
+    state = (await graph.aget_state(THREAD)).values
+    [reply] = tool_messages(state["messages"], "ask_user")
+    assert reply.content == NOT_ANSWERED
+    assert model.calls[1][-1] == reply
+    assert state["answer"].status == "no_answer"
+
+
+def test_the_cancel_mark_is_ag_ui_langgraphs() -> None:
+    assert CANCELLED_MARK == DEFAULT_RESUME_SENTINEL_CANCELLED
 
 
 @pytest.mark.anyio

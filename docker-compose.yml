@@ -1,8 +1,27 @@
-# Local services for avtalsagent: the database and the web app so far. The MCP server, API and
-# (if needed) OCR service are added in their milestones.
+# The whole system on one machine: the database, avtal-mcp, the API and the web app.
 #
-# Start:  docker compose up -d postgres --wait
-# Values come from .env (see .env.example); the defaults below are for local use only.
+#   cp .env.example .env                               # and set OPENAI_API_KEY in it
+#   docker compose --profile ingest run --rm ingest    # once: the register and the documents
+#   docker compose up -d --wait --wait-timeout 300     # then open http://localhost:3000
+#
+# docs/steg/09-api.md explains each step. Values come from .env (see .env.example); the
+# defaults below are for local use only. Each published port is bound to 127.0.0.1, so only
+# this machine reaches it.
+
+# The backend image (Dockerfile), which avtal-mcp, the API and the ingestion run from.
+x-backend: &backend
+  build: .
+  image: avtalsagent-backend:local
+  # Every setting in .env reaches the containers. What follows under `environment` wins over
+  # it: the addresses inside compose differ from those on your machine.
+  env_file:
+    - path: .env
+      required: false
+  environment: &backend-environment
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-avtalsagent}:${POSTGRES_PASSWORD:-avtalsagent}@postgres:5432/${POSTGRES_DB:-avtalsagent}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    DATA_DIR: /app/data
+  restart: unless-stopped
 
 services:
   postgres:
@@ -13,7 +32,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-avtalsagent}
       POSTGRES_DB: ${POSTGRES_DB:-avtalsagent}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       # Runs once, when the data volume is created for the first time.
@@ -23,18 +42,100 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
+  # avtal-mcp, the agent's read-only tools (M6, ADR 0012), reached only by the API.
+  mcp:
+    <<: *backend
+    command: ["python", "-m", "avtalsagent.mcp_server", "http", "--host", "0.0.0.0"]
+    environment:
+      <<: *backend-environment
+      MCP_PORT: "8001"
+      # The Host headers it accepts: its name in compose, and this container for the health check.
+      MCP_ALLOWED_HOSTS: '["mcp:8001", "localhost:*", "127.0.0.1:*"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8001/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # The API (M9, ADR 0014): the agent over AG-UI and the cited PDFs.
+  api:
+    <<: *backend
+    command: ["python", "-m", "avtalsagent.api"]
+    environment:
+      <<: *backend-environment
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+      MCP_TRANSPORT: streamable_http
+      MCP_URL: http://mcp:8001/mcp
+      CHECKPOINTER: postgres
+    volumes:
+      - ./data:/app/data:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # The web app (M10, ADR 0010, web/README.md), which reaches the API inside compose. Without the
+  # backend, try it against the mock: docker compose -f web/compose.mock.yaml up --build
   web:
-    # The web app (M10, see web/README.md). It reaches the agent through the API at API_URL. The
-    # api service is added with the API milestone; until then, try the app against the mock with
-    # docker compose -f web/compose.mock.yaml up --build
     build:
       context: ./web
       target: runner
     environment:
       API_URL: ${API_URL:-http://api:8000}
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  # The ingestion (M1-M5): the tables, the register, then fetch, parse, process and index.
+  # Started only by hand: docker compose --profile ingest run --rm ingest
+  ingest:
+    <<: *backend
+    profiles: ["ingest"]
+    command:
+      - sh
+      - -c
+      - >-
+        alembic upgrade head &&
+        python -m avtalsagent.register --download &&
+        python -m avtalsagent.ingestion run
+    volumes:
+      - ./data:/app/data
+      # Docling's models, downloaded the first time a document is parsed.
+      - huggingface:/home/app/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
 volumes:
   postgres-data:
+  huggingface:

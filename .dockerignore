@@ -1,0 +1,17 @@
+# What the backend image (Dockerfile) is built from: only the code and its lock file.
+# Secrets and downloaded data never enter the build context: docker compose mounts data/ and
+# passes .env's values as environment variables when a container starts.
+.env
+.env.*
+data/
+.git/
+.github/
+.venv/
+**/__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+web/
+tests/
+evals/
+docs/

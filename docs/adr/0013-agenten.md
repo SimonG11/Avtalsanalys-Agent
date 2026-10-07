@@ -1,8 +1,8 @@
 # ADR 0013: Agenten som en `create_agent`-graf med middleware och en citatkontroll som läser källorna själv
 
-**Status:** Föreslaget (PR #10). Ändrar [ADR 0002](0002-langgraph-och-create-agent.md): stegen runt
-agentloopen är middleware i en enda `create_agent`-graf, inte noder i en yttre graf. Resten av ADR
-0002 gäller.
+**Status:** Godkänt av Simon 2026-10-07 (PR #10, till main med PR #9).
+Ändrar [ADR 0002](0002-langgraph-och-create-agent.md): stegen runt agentloopen är middleware i en
+enda `create_agent`-graf, inte noder i en yttre graf. Resten av ADR 0002 gäller.
 
 ## Kontext
 

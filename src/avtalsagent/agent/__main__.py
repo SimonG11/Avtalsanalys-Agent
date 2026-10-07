@@ -45,7 +45,6 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any, TextIO
-from urllib.parse import quote, unquote
 
 import anyio
 import httpx
@@ -375,19 +374,16 @@ def describe_failure(error: BaseException, settings: Settings) -> tuple[int, str
         return INTERRUPTED, "\nAvbrutet."
     for leaf in leaves:
         if isinstance(leaf, CommandError | MissingApiKeyError):
-            return 1, _scrub(str(leaf), settings)
+            return 1, settings.redact(str(leaf))
         if isinstance(leaf, openai.AuthenticationError):  # its message shows part of the key
             return 1, "OpenAI tog inte emot nyckeln i OPENAI_API_KEY."
         if isinstance(leaf, openai.OpenAIError):
-            return 1, _scrub(
-                f"OpenAI svarade med ett fel ({type(leaf).__name__}): {leaf}", settings
-            )
+            return 1, settings.redact(f"OpenAI svarade med ett fel ({type(leaf).__name__}): {leaf}")
         if isinstance(leaf, McpError | anyio.ClosedResourceError | anyio.BrokenResourceError):
-            return 1, _scrub(f"Förbindelsen med avtal-mcp bröts: {_causes(leaf)}", settings)
+            return 1, settings.redact(f"Förbindelsen med avtal-mcp bröts: {_causes(leaf)}")
         if isinstance(leaf, httpx.HTTPError):  # over streamable HTTP, a request that failed
-            return 1, _scrub(
-                f"Förbindelsen med avtal-mcp ({settings.mcp_url}) bröts: {_causes(leaf)}",
-                settings,
+            return 1, settings.redact(
+                f"Förbindelsen med avtal-mcp ({settings.mcp_url}) bröts: {_causes(leaf)}"
             )
     return None
 
@@ -417,26 +413,6 @@ def _leaves(error: BaseException) -> Iterator[BaseException]:
             yield from _leaves(inner)
     else:
         yield error
-
-
-def _scrub(text: str, settings: Settings) -> str:
-    """`text` without the OpenAI key or the database password, should an error quote them.
-
-    The password is replaced where an error would show it: in a database
-    address (":password@", as written or percent-encoded) and in quotes, as
-    libpq quotes a part of the address it cannot read. Alone it can be an
-    ordinary word, as the default "avtalsagent" is, so it is not replaced
-    everywhere.
-    """
-    if settings.openai_api_key is not None:
-        text = text.replace(settings.openai_api_key.get_secret_value(), "***")
-    for host in settings.database_url.hosts():
-        if password := host.get("password"):
-            # As written, as the server reads it and percent-encoded as libpq gets it.
-            decoded = unquote(password)
-            for form in {password, decoded, quote(decoded, safe="")}:
-                text = text.replace(f":{form}@", ":***@").replace(f'"{form}"', '"***"')
-    return text
 
 
 # --- the terminal -----------------------------------------------------------------------------

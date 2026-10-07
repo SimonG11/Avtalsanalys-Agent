@@ -44,6 +44,7 @@ dependencies = [
     "langgraph>=1.2.14",
     "langchain-mcp-adapters>=0.3.2",
     "langgraph-checkpoint-postgres>=3.1.2",
+    "ag-ui-langgraph[fastapi]>=0.0.46",
 ]
 
 [dependency-groups]
@@ -126,3 +127,8 @@ testpaths = ["tests"]
 # Lets tests import shared helpers with `from tests.conftest import ...`.
 pythonpath = ["."]
 addopts = "-ra --strict-markers"
+
+# ag-ui-langgraph ships its types without a py.typed marker; mypy reads them from the source.
+[[tool.mypy.overrides]]
+module = ["ag_ui_langgraph", "ag_ui_langgraph.*"]
+follow_untyped_imports = true
