@@ -8,7 +8,8 @@
 # defaults below are for local use only. Each published port is bound to 127.0.0.1, so only
 # this machine reaches it.
 
-# The backend image (Dockerfile), which avtal-mcp, the API and the ingestion run from.
+# The backend image (Dockerfile), which avtal-mcp, the API, the ingestion and the measurement
+# of the answers run from.
 x-backend: &backend
   build: .
   image: avtalsagent-backend:local
@@ -133,6 +134,27 @@ services:
       - huggingface:/home/app/.cache/huggingface
     depends_on:
       postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # The answers' measurement (M11, docs/steg/11-utvardering.md): the gold questions through the
+  # agent and avtal-mcp, as in the API. Started only by hand; the reports land in evals/reports/:
+  #   docker compose --profile eval run --rm eval
+  #   docker compose --profile eval run --rm eval python -m evals.run_answer_eval --only q01 q21
+  eval:
+    <<: *backend
+    profiles: ["eval"]
+    command: ["python", "-m", "evals.run_answer_eval"]
+    environment:
+      <<: *backend-environment
+      MCP_TRANSPORT: streamable_http
+      MCP_URL: http://mcp:8001/mcp
+      CHECKPOINTER: memory
+    volumes:
+      # The gold, the measurement's code and its reports; the image holds only src/.
+      - ./evals:/app/evals
+    depends_on:
+      mcp:
         condition: service_healthy
     restart: "no"
 

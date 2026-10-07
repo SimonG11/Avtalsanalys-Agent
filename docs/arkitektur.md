@@ -54,6 +54,10 @@
 > - [ADR 0018](adr/0018-andringar-efter-granskningen.md): steg 4 läser också Kammarkollegiets
 >   meddelanden i frågeloggarna och fler ändringsord, och en fråga gäller inget dokument som
 >   publicerades efter den ([steg 4](steg/04-extraktion.md), "Ändringar").
+> - [ADR 0019](adr/0019-matning-av-svaren.md): de 30 testfrågorna mäts genom samma körning som
+>   API:t (`evals/run_answer_eval.py`, tjänsten `eval` i Docker Compose). En domarmodell jämför
+>   varje svar med facit, källorna och registerraderna räknas på plats, och kostnaden anges som ett
+>   intervall eftersom priset för cachad indata saknas ([M11](steg/11-utvardering.md)).
 
 ---
 
