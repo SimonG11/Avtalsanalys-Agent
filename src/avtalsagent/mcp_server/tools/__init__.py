@@ -2,7 +2,8 @@
 
 What:
     `TOOLS`: `search_documents`, `read_section`, `get_outline`,
-    `resolve_reference`, `list_documents` and `search_register`.
+    `resolve_reference`, `list_documents`, `search_register` and
+    `calculate_date`.
 
 Why:
     `server.py` registers the tools in this order, and the agent lists them
@@ -11,7 +12,8 @@ Why:
 
 How:
     Each tool is a plain function `tool(session, [embedder,] **arguments)`
-    that returns a Pydantic model; its docstring, in Swedish, is the
+    that returns a Pydantic model (`calculate_date`, which reads no
+    database, takes no session); its docstring, in Swedish, is the
     description the model reads. The modules are imported as modules, so
     `tools.search_documents` stays the module and a test can patch what it
     uses.
@@ -22,6 +24,7 @@ from collections.abc import Callable
 from pydantic import BaseModel
 
 from avtalsagent.mcp_server.tools import (
+    calculate_date,
     get_outline,
     list_documents,
     read_section,
@@ -37,4 +40,5 @@ TOOLS: list[Callable[..., BaseModel]] = [
     resolve_reference.resolve_reference,
     list_documents.list_documents,
     search_register.search_register,
+    calculate_date.calculate_date,
 ]

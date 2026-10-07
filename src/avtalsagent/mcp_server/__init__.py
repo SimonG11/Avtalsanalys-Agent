@@ -1,10 +1,12 @@
 """avtal-mcp: the agent's read-only tools over the register and the documents (M6).
 
 What:
-    An MCP server with six tools: `search_documents` (the hybrid search),
-    `read_section`, `get_outline`, `resolve_reference`, `list_documents` and
-    `search_register`. Each tool is a plain function in `tools/` that takes a
-    database session and typed arguments and returns a Pydantic model.
+    An MCP server with seven tools: `search_documents` (the hybrid search),
+    `read_section`, `get_outline`, `resolve_reference`, `list_documents`,
+    `search_register` and `calculate_date`. Each tool is a plain function in
+    `tools/` that takes typed arguments, and a database session when it
+    reads the database (`calculate_date` does not), and returns a Pydantic
+    model.
 
 Why:
     The agent gets its data only through these tools (ADR 0003): it cannot

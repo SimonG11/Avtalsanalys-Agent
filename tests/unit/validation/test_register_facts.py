@@ -158,8 +158,8 @@ PRICE_LIST = (
 )
 WRONG_DATE = (
     "Datumet 2028-11-14 står inte i registret för 23.3-5890-2023-002 (giltigt "
-    "2024-11-14–2028-11-13) och inte i något citerat avsnitt. Rätta det, eller skriv hur ett "
-    "beräknat datum räknas."
+    "2024-11-14–2028-11-13) och inte i något citerat avsnitt. Rätta det, eller räkna det med "
+    "calculate_date och skriv dess step i meningen."
 )
 IMPROVES_ORG_NUMBER = (
     "Organisationsnumret 556271-9129 hör inte till 23.3-5890-2023-002 (registret: "
@@ -379,8 +379,8 @@ NORDLO = ["23.3-5890-2023-002", "23.3-10639-2023-007"]
             ["Gäller Telia Cygates avtal till 2030-03-09?"],
             [
                 "Datumet 2030-03-09 står inte i registret för 23.3-8027-2021-004 (giltigt "
-                "2023-02-18–2027-02-17) och inte i något citerat avsnitt. Rätta det, eller skriv "
-                "hur ett beräknat datum räknas."
+                "2023-02-18–2027-02-17) och inte i något citerat avsnitt. Rätta det, eller räkna "
+                "det med calculate_date och skriv dess step i meningen."
             ],
         ),
     ],
@@ -451,8 +451,8 @@ def test_another_declared_agreements_date_in_a_sentence_about_one_is_a_problem()
 
     assert report.problems == [
         "Datumet 2030-03-09 står inte i registret för 23.3-8027-2021-004 (giltigt "
-        "2023-02-18–2027-02-17) och inte i något citerat avsnitt. Rätta det, eller skriv hur ett "
-        "beräknat datum räknas."
+        "2023-02-18–2027-02-17) och inte i något citerat avsnitt. Rätta det, eller räkna det med "
+        "calculate_date och skriv dess step i meningen."
     ]
 
 
@@ -674,7 +674,8 @@ def test_a_date_without_a_passed_section_is_a_problem() -> None:
 
     assert report.problems == [
         "Datumet 2026-09-01 står inte i registret för något avtal i register_facts och inte i "
-        "något citerat avsnitt. Rätta det, eller skriv hur ett beräknat datum räknas."
+        "något citerat avsnitt. Rätta det, eller räkna det med calculate_date och skriv dess step "
+        "i meningen."
     ]
 
 
@@ -713,8 +714,8 @@ def test_long_form_dates_are_compared_with_the_register() -> None:
     assert check(text, ["23.3-8027-2021-004"]).problems == []
     assert check(text.replace("17 februari", "17 mars"), ["23.3-8027-2021-004"]).problems == [
         "Datumet 17 mars 2027 står inte i registret för 23.3-8027-2021-004 (giltigt "
-        "2023-02-18–2027-02-17) och inte i något citerat avsnitt. Rätta det, eller skriv hur ett "
-        "beräknat datum räknas."
+        "2023-02-18–2027-02-17) och inte i något citerat avsnitt. Rätta det, eller räkna det med "
+        "calculate_date och skriv dess step i meningen."
     ]
 
 
@@ -732,8 +733,23 @@ EXPIRY = "Telia Cygate AB:s avtal 23.3-8027-2021-004 gäller till 2027-02-17. "
         "Om 30 dagar, 2026-11-06, gäller avtalet fortfarande.",
         "Avtalet kan förlängas med tjugofyra (24) månader, till 2029-02-17.",
         "En reklamation idag ska besvaras inom fjorton (14) dagar, alltså senast 2026-10-21.",
+        "Avtalet började 2023-02-18; trettiosex månader senare, 2026-02-18, kunde det sägas upp.",
+        "Avbeställ inom tio (10) Arbetsdagar före slutet, alltså senast 2027-02-03.",
+        "Med 14 kalenderdagars uppsägningstid från i dag upphör det 2026-10-21.",
+        "Konsulten ska börja inom 15 arbetsdagar från i dag, senast 2026-10-29.",
     ],
-    ids=["months before", "digits", "an inclusive end", "from today", "tjugofyra (24)", "fjorton"],
+    ids=[
+        "months before",
+        "digits",
+        "an inclusive end",
+        "from today",
+        "tjugofyra (24)",
+        "fjorton",
+        "trettiosex",
+        "working days",
+        "calendar days",
+        "a working day off",
+    ],
 )
 def test_a_computed_date_with_its_calculation_is_backed(computation: str) -> None:
     assert check(EXPIRY + computation, ["23.3-8027-2021-004"]).problems == []
@@ -769,8 +785,8 @@ def test_a_computed_date_without_a_right_calculation_is_a_problem(computation: s
             ["23.3-8027-2021-004"],
             [
                 "Datumet 2027-02-18 står inte i registret för 23.3-8027-2021-004 (giltigt "
-                "2023-02-18–2027-02-17) och inte i något citerat avsnitt. Rätta det, eller skriv "
-                "hur ett beräknat datum räknas."
+                "2023-02-18–2027-02-17) och inte i något citerat avsnitt. Rätta det, eller räkna "
+                "det med calculate_date och skriv dess step i meningen."
             ],
         ),
     ],
@@ -780,6 +796,137 @@ def test_a_date_a_day_off_the_registers_is_a_near_miss_not_a_computed_date(
     text: str, declared: list[str], problems: list[str]
 ) -> None:
     assert check(text, declared).problems == problems
+
+
+# --- calculations written out (calculate_date's step) -------------------------------
+
+TELIA_NUMBER = "23.3-8027-2021-004"
+
+
+@pytest.mark.parametrize(
+    "computation",
+    [
+        "Säg upp avtalet senast 2027-02-17 minus 3 månader = 2026-11-17.",
+        "Med symboler: 2027-02-17 - 3 månader = 2026-11-17.",
+        # A day off the register's date, which alone would be a near miss.
+        "Sista dagen före slutet är 2027-02-17 minus 1 dag = 2027-02-16.",
+        "Konsulten ska börja senast 2026-10-07 plus 15 arbetsdagar = 2026-10-28.",
+        "Avbeställ senast 2027-02-17 minus 10 arbetsdagar = 2027-02-03.",
+        "Om 90 arbetsdagar: 2026-10-07 plus 90 arbetsdagar = 2027-02-15.",
+        "Förlängt: 2027-02-17 plus 24 månader = 2029-02-17, minus 1 dag = 2029-02-16.",
+        "Varsla 2027-02-17 minus 3 månader = 2026-11-17, minus 2 veckor = 2026-11-03.",
+        "Säg upp 2027-02-17 minus 3 månader = 2026-11-17. Påminn 2026-11-17 minus 2 veckor = "
+        "2026-11-03.",
+        "Viktiga datum: 2027-02-17 minus 3 månader = 2026-11-17, minus 6 månader = 2026-08-17.",
+        "Med tankstreck: 2027-02-17 – 3 månader = 2026-11-17.",
+        "Med aftnarna som helgdagar: 2027-02-17 minus 40 arbetsdagar = 2026-12-16.",
+        "Avbeställ senast 2027-02-17 minus 40 arbetsdagar = 2026-12-18. Räknas julafton och "
+        "nyårsafton som helgdagar blir det 2026-12-16.",
+        "Säg upp tre månader före slutet, 2026-11-17. Påminn 2026-11-17 minus 2 veckor = "
+        "2026-11-03.",
+    ],
+    ids=[
+        "months",
+        "a minus sign",
+        "a day off the register",
+        "working days after",
+        "working days before",
+        "over the holidays",
+        "a period's last day",
+        "a chain",
+        "a chain in two sentences",
+        "a list from one date",
+        "an en dash",
+        "the eves as holidays",
+        "the note's other date",
+        "from a computed date",
+    ],
+)
+def test_a_calculation_written_out_and_right_backs_its_date(computation: str) -> None:
+    assert check(EXPIRY + computation, [TELIA_NUMBER]).problems == []
+
+
+def wrong(calculation: str, right: str) -> str:
+    return (
+        f"Uträkningen {calculation} stämmer inte: det blir {right}. Räkna med calculate_date och "
+        "skriv dess step i meningen."
+    )
+
+
+@pytest.mark.parametrize(
+    ("computation", "problem"),
+    [
+        # A day off: the offset in the sentence alone would let it pass.
+        (
+            "Säg upp senast 2027-02-17 minus 3 månader = 2026-11-18.",
+            wrong("2027-02-17 minus 3 månader = 2026-11-18", "2026-11-17"),
+        ),
+        (
+            "Börja senast 2026-10-07 plus 15 arbetsdagar = 2026-10-22.",
+            wrong("2026-10-07 plus 15 arbetsdagar = 2026-10-22", "2026-10-28"),
+        ),
+        # Both dates are the register's, but the calculation is not right.
+        (
+            "Avtalet gäller 2023-02-18 plus 48 månader = 2027-02-17.",
+            wrong("2023-02-18 plus 48 månader = 2027-02-17", "2027-02-18"),
+        ),
+        (
+            "Varsla 2027-02-17 minus 3 månader = 2026-11-17, minus 2 veckor = 2026-11-04.",
+            wrong(
+                "2026-11-17 minus 2 veckor = 2026-11-04",
+                "2026-11-03, och 2027-02-03 från 2027-02-17",
+            ),
+        ),
+        (
+            "Säg upp senast 2027-02-17 – 3 månader = 2026-11-18.",
+            wrong("2027-02-17 - 3 månader = 2026-11-18", "2026-11-17"),
+        ),
+    ],
+    ids=[
+        "a day off",
+        "working days",
+        "dates the register has",
+        "the second of a chain",
+        "an en dash",
+    ],
+)
+def test_a_wrong_calculation_is_a_problem_that_gives_the_right_date(
+    computation: str, problem: str
+) -> None:
+    assert check(EXPIRY + computation, [TELIA_NUMBER]).problems == [problem]
+
+
+@pytest.mark.parametrize(
+    ("computation", "claimed"),
+    [
+        (
+            "Sista dag att säga upp är 2026-11-16 (2027-02-17 minus 3 månader = 2026-11-17).",
+            "2026-11-16",
+        ),
+        (
+            "Sista dag att säga upp är 2026-11-18 (2027-02-17 minus 3 månader = 2026-11-17).",
+            "2026-11-18",
+        ),
+        (
+            "Avbeställ senast 2027-02-04 (2027-02-17 minus 10 arbetsdagar = 2027-02-03).",
+            "2027-02-04",
+        ),
+    ],
+    ids=["a day before", "a day after", "a working day after"],
+)
+def test_a_date_next_to_a_calculation_must_be_its_result(computation: str, claimed: str) -> None:
+    report = check(EXPIRY + computation, [TELIA_NUMBER])
+
+    assert [problem.split(" står ")[0] for problem in report.problems] == [f"Datumet {claimed}"]
+
+
+def test_a_calculation_from_a_date_nothing_backs_backs_nothing() -> None:
+    report = check(EXPIRY + "Från 2025-01-01 plus 3 månader = 2025-04-01.", [TELIA_NUMBER])
+
+    assert [problem.split(" står ")[0] for problem in report.problems] == [
+        "Datumet 2025-01-01",
+        "Datumet 2025-04-01",
+    ]
 
 
 # --- no false hits -------------------------------------------------------------------

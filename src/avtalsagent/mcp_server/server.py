@@ -10,8 +10,9 @@ What:
     (`python -m avtalsagent.mcp_server {stdio,http}`).
 
 Why:
-    A tool is a plain function of a database session and typed arguments,
-    so it can be tested without MCP and reviewed on its own. The server adds
+    A tool is a plain function of a database session and typed arguments
+    (or of the arguments alone, for `calculate_date`), so it can be tested
+    without MCP and reviewed on its own. The server adds
     what every tool needs the same way: a session per call, the embedding
     model for the search, a worker thread for the synchronous query (the
     MCP SDK 1.x would otherwise block its event loop), and error messages
@@ -41,7 +42,8 @@ How:
     a sixth of the characters in the tool results of the agent's first live
     test (M7).
     The wrapper opens a session from `sessions`, calls the tool with it in a
-    worker thread and closes it, which ends the read-only transaction. The
+    worker thread and closes it, which ends the read-only transaction; a
+    tool without a `session` parameter is called without one. The
     tool's docstring is its description, and its
     return model the output schema. `create_app` and `main` read through a
     read-only engine (`create_db_engine(read_only=True)`) and embed questions
@@ -97,7 +99,8 @@ håller tillbaka visas inte.
 Börja med search_register för frågor om vilka avtal och leverantörer som finns och när de \
 gäller, eller med search_documents för vad avtalen säger. Läs sedan hela avsnittet med \
 read_section innan du citerar det, se ett dokuments innehåll med get_outline, följ en \
-hänvisning med resolve_reference och se ett avtals eller områdes dokument med list_documents.
+hänvisning med resolve_reference och se ett avtals eller områdes dokument med list_documents. \
+Räkna fram datum (uppsägningstider, frister, perioder) med calculate_date.
 Citera ordagrant ur texten från read_section och ange källan med dess sha256 och \
 section_position; file_title, section_number, section_title och page_start säger var den står."""
 
@@ -163,15 +166,27 @@ class AvtalMCP(FastMCP):
 def _with_session(
     fn: ToolFunction, sessions: Callable[[], Session], embedder: Embedder | None
 ) -> Callable[..., Awaitable[BaseModel]]:
-    """`fn(session, [embedder,] **arguments)` as the async MCP tool `tool(**arguments)`."""
+    """`fn([session, [embedder,]] **arguments)` as the async MCP tool `tool(**arguments)`.
+
+    A tool that reads no database (`calculate_date`) takes neither and gets
+    no session; `session` and `embedder` anywhere else in a signature are an
+    error, since the model would see them as arguments.
+    """
     signature = inspect.signature(fn, eval_str=True)
     params = list(signature.parameters.values())
-    if not params or params[0].name != "session":
-        raise TypeError(f"{fn.__name__}: a tool's first parameter must be `session`")
-    wants_embedder = len(params) > 1 and params[1].name == "embedder"
-    injected = 2 if wants_embedder else 1
+    names = [param.name for param in params]
+    wants_session = names[:1] == ["session"]
+    wants_embedder = wants_session and names[1:2] == ["embedder"]
+    injected = int(wants_session) + int(wants_embedder)
+    if {"session", "embedder"} & set(names[injected:]):
+        raise TypeError(
+            f"{fn.__name__}: `session` must be a tool's first parameter, and `embedder` its "
+            "second, after `session`"
+        )
 
     def run(arguments: dict[str, Any]) -> BaseModel:
+        if not wants_session:
+            return fn(**arguments)  # pure: no database
         with sessions() as session:
             if wants_embedder:
                 return fn(session, embedder, **arguments)
