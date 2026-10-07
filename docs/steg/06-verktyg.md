@@ -244,9 +244,9 @@ hundra. Prompten säger därför åt agenten att hämta sidor tills den har läs
 | `tests/integration/test_mcp_documents.py` | De fyra dokumentverktygen på M5:s korpus med fyra påhittade hänvisningar: träffarna med kopior, filtren (också ett upphandlingsnummer), att läsa med nummer, plats eller båda, tvetydiga nummer, innehållsförteckningen, hänvisningarna i textordning, att det som hålls tillbaka inte visas och räknas (en gång, också via två avtalssidor), att inget visas mellan `process` och `index`, att serverns anslutning inte kan skriva, och ett anrop per verktyg genom SDK:ts klient i minnet |
 | `tests/integration/test_mcp_register.py` | `list_documents` och `search_register` på samma korpus plus en påhittad registerrad: varje filter för sig och tillsammans, tidigare namn på raderna, registrets stavning, ett avtal som registret skriver på två sätt, upphandlingsnummer, okända värden, gränsen, `offset` och totalen, `%` och `_`, filer som hålls tillbaka, `list_documents` utan index, och ett anrop per verktyg genom MCP; med påhittade rader i tre nivåer: `sub_area` med delarna i båda ordningarna och med gemener, en del på valfri nivå, tillsammans med de andra filtren, och felet som räknar upp områdets delområden, också i ett område där nivå 1 är ett län |
 
-98 enhetstester och 103 integrationstester (M6 hade 84 och 87). Integrationstesterna använder samma korpus och samma
-påhittade embedder (`TopicEmbedder`) som M5:s tester, och läser genom en skrivskyddad anslutning
-som servern gör.
+98 enhetstester och 103 integrationstester (M6 hade 84 och 87). Integrationstesterna använder samma
+korpus och samma påhittade embedder (`TopicEmbedder`) som M5:s tester, och läser genom en
+skrivskyddad anslutning som servern gör.
 
 ## Kända begränsningar
 
@@ -273,8 +273,8 @@ som servern gör.
   `org_number`, `valid_on`, `offset`) ska skickas till webbappstråden enligt kontraktets punkt 5.
 - **`sub_area` viker inte accenter.** "ovre norrland" hittar inte "Övre Norrland" (databasen har
   inte tillägget `unaccent`); felet räknar då upp områdets delområden, om `framework_area` är
-  angivet. Tre vägar utanför piloten
-  har dubbla mellanslag i en nivå och hittas bara med en del utan dem.
+  angivet. Tre vägar utanför piloten har dubbla mellanslag i en nivå och hittas bara med en del
+  utan dem.
 
 ## Så verifierar du M6 själv
 
