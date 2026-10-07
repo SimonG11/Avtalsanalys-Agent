@@ -1,22 +1,26 @@
-"""Tests for avtalsagent.agent.mcp_tools: the agent's tools and section reader from avtal-mcp.
+"""Tests for avtalsagent.agent.mcp_tools: the agent's tools and readers from avtal-mcp.
 
 The real M6 server object is built with stand-ins for the six tools: each
 has the real tool's name, signature and docstring (so the same schemas and
-Swedish descriptions), and only `read_section` answers. The client side
-runs in memory (`create_connected_server_and_client_session`), over HTTP
-with uvicorn on this machine, and over stdio with the real server process;
-no test opens a database connection or calls OpenAI.
+Swedish descriptions), and only `read_section` and `search_register` (over
+a few register rows, paged and matched as the real tool does) answer. The
+client side runs in memory (`create_connected_server_and_client_session`),
+over HTTP with uvicorn on this machine, and over stdio with the real server
+process; no test opens a database connection or calls OpenAI.
 """
 
 import functools
 import inspect
+import itertools
 import json
+import logging
 import os
 import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
+from datetime import date
 from typing import Any
 
 import pytest
@@ -29,19 +33,24 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, sessionmaker
 
 from avtalsagent.agent.mcp_tools import (
+    REGISTER_PAGE,
+    McpRegisterReader,
     McpSectionReader,
     McpTools,
     load_tools,
     open_mcp_tools,
     stdio_parameters,
 )
+from avtalsagent.agent.register_reader import RegisterEntry
 from avtalsagent.agent.sections import CitedSection
 from avtalsagent.config import Settings
+from avtalsagent.domain.identifiers import agreement_key, procurement_key
 from avtalsagent.mcp_server.errors import NotFoundError
 from avtalsagent.mcp_server.references import SectionReference, TargetRef
 from avtalsagent.mcp_server.server import DATABASE_ERROR, ToolFunction, build_server
 from avtalsagent.mcp_server.tools import TOOLS
 from avtalsagent.mcp_server.tools.read_section import Section
+from avtalsagent.mcp_server.tools.search_register import RegisterResult, RegisterRow
 
 CONTRACT_ORDER = [
     "search_documents",
@@ -94,9 +103,98 @@ SECTION = Section(
 )
 
 
+# --- the register rows search_register's stand-in answers from ---
+
+
+def register_row(
+    agreement_number: str, supplier_name: str, org_number: str, sub_area: str, **fields: Any
+) -> RegisterRow:
+    procurement_number, _, _ = agreement_number.rpartition("-")
+    values: dict[str, Any] = {
+        "agreement_number": agreement_number,
+        "procurement_number": procurement_number,
+        "supplier_name": supplier_name,
+        "org_number": org_number,
+        "former_names": [],
+        "framework_area": sub_area.split(" / ")[0],
+        "sub_area": sub_area,
+        "valid_from": date(2024, 11, 23),
+        "valid_to": date(2028, 11, 22),
+        "max_extension_to": None,
+        **fields,
+    }
+    return RegisterRow(**values)
+
+
+# Novare Public HR AB has 34 rows in the register; 24 here, more than one page of 20.
+NOVARE = "23.3-11976-2023-007"
+NOVARE_ROWS = [
+    register_row(
+        NOVARE, "Novare Public HR AB", "559125-5350", f"Rekryteringstjänster / {kind} / {region}"
+    )
+    for kind, region in itertools.product(
+        [
+            "Rekrytering av IT-chefer och IT-specialister",
+            "Rekrytering av chefer",
+            "Rekrytering av kontorspersonal",
+            "Rekrytering av specialister",
+        ],
+        [
+            "Mellersta Norrland",
+            "Norra Mellansverige",
+            "Stockholm",
+            "Västsverige",
+            "Östra Mellansverige",
+            "Övre Norrland",
+        ],
+    )
+]
+# Another agreement of Novare's procurement, which the procurement's number also gives.
+EXPERIS_ROWS = [
+    register_row(
+        "23.3-11976-2023-005",
+        "Experis AB",
+        "556855-1104",
+        f"Rekryteringstjänster / Rekrytering av chefer / {region}",
+    )
+    for region in ["Stockholm", "Västsverige"]
+]
+NORDLO_ADVANCE = register_row(
+    "23.3-5890-2023-002",
+    "Nordlo Advance AB",
+    "556486-1689",
+    "IT-drift / IT-drift Mindre, upp till 200 anställda",
+    former_names=["EPM Data"],
+    valid_from=date(2024, 11, 14),
+    valid_to=date(2028, 11, 13),
+)
+# The register writes one agreement two ways, on different rows.
+DIGITAL_INTERPRETATIONS = [
+    register_row(
+        number,
+        "Digital Interpretations Scandinavia AB",
+        "559032-5394",
+        f"Tolkförmedlingstjänster / {county}",
+    )
+    for number, county in [
+        ("23.3-12000-2020-001", "Stockholms län"),
+        ("23.3-12000-2020-01", "Örebro län"),
+    ]
+]
+REGISTER = [*EXPERIS_ROWS, *NOVARE_ROWS, NORDLO_ADVANCE, *DIGITAL_INTERPRETATIONS]
+NO_SUCH_NUMBER = "Numret {number} finns inte i registret, varken som avtal eller som upphandling."
+# The arguments of each search_register call, in order.
+register_calls: list[dict[str, Any]] = []
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+@pytest.fixture(autouse=True)
+def no_register_calls_yet() -> None:
+    register_calls.clear()
 
 
 # --- the M6 server with the real tools' schemas and a read_section that answers ---
@@ -108,6 +206,28 @@ def answer_read_section(
     if (sha256, section_position) == (SHA, SECTION.section_position):
         return SECTION
     raise NotFoundError(NOT_FOUND.format(position=section_position, sha=sha256[:12]))
+
+
+def answer_search_register(
+    agreement_number: str | None = None, limit: int = 20, offset: int = 0, **other: Any
+) -> RegisterResult:
+    """As the real tool: every spelling of the agreement, else the procurement's agreements."""
+    register_calls.append({"agreement_number": agreement_number, "limit": limit, "offset": offset})
+    assert agreement_number is not None and not any(other.values())
+    key = agreement_key(agreement_number)
+    rows = [
+        row
+        for row in REGISTER
+        if row.agreement_number == agreement_number
+        or (key is not None and agreement_key(row.agreement_number) == key)
+    ]
+    procurement = procurement_key(agreement_number)
+    if not rows and procurement is not None:
+        rows = [row for row in REGISTER if procurement_key(row.procurement_number) == procurement]
+    if not rows:
+        raise NotFoundError(NO_SUCH_NUMBER.format(number=agreement_number))
+    rows.sort(key=lambda row: (row.framework_area, row.agreement_number, row.sub_area))
+    return RegisterResult(rows=rows[offset : offset + limit], total=len(rows))
 
 
 def stand_in(real: ToolFunction, answer: Callable[..., BaseModel] | None) -> ToolFunction:
@@ -123,7 +243,10 @@ def stand_in(real: ToolFunction, answer: Callable[..., BaseModel] | None) -> Too
 
 
 def stand_in_server() -> FastMCP:
-    answers = {"read_section": answer_read_section}
+    answers: dict[str, Callable[..., BaseModel]] = {
+        "read_section": answer_read_section,
+        "search_register": answer_search_register,
+    }
     tools = [stand_in(real, answers.get(real.__name__)) for real in TOOLS]
     return build_server(sessionmaker(), None, allowed_hosts=HOSTS, tools=tools)
 
@@ -236,6 +359,93 @@ async def test_the_reader_gives_none_for_a_section_the_server_does_not_give(
 @pytest.mark.anyio
 async def test_the_reader_is_an_mcp_section_reader(mcp_tools: McpTools) -> None:
     assert isinstance(mcp_tools.reader, McpSectionReader)
+
+
+# --- the register reader ---
+
+
+def entries(rows: list[RegisterRow]) -> list[RegisterEntry]:
+    return [RegisterEntry.model_validate(row.model_dump()) for row in rows]
+
+
+@pytest.mark.anyio
+async def test_the_register_reader_gives_each_row_as_a_register_entry(
+    mcp_tools: McpTools,
+) -> None:
+    assert await mcp_tools.register.read("23.3-5890-2023-002") == [
+        RegisterEntry(
+            agreement_number="23.3-5890-2023-002",
+            procurement_number="23.3-5890-2023",
+            supplier_name="Nordlo Advance AB",
+            org_number="556486-1689",
+            former_names=["EPM Data"],
+            framework_area="IT-drift",
+            sub_area="IT-drift / IT-drift Mindre, upp till 200 anställda",
+            valid_from=date(2024, 11, 14),
+            valid_to=date(2028, 11, 13),
+            max_extension_to=None,
+        )
+    ]
+    assert register_calls == [
+        {"agreement_number": "23.3-5890-2023-002", "limit": REGISTER_PAGE, "offset": 0}
+    ]
+
+
+@pytest.mark.anyio
+async def test_the_register_reader_reads_every_page_of_an_agreement(
+    mcp_tools: McpTools,
+) -> None:
+    read = await mcp_tools.register.read(NOVARE)
+
+    assert read == entries(sorted(NOVARE_ROWS, key=lambda row: row.sub_area))
+    assert REGISTER_PAGE == 20  # search_register's largest limit
+    assert register_calls == [
+        {"agreement_number": NOVARE, "limit": 20, "offset": 0},
+        {"agreement_number": NOVARE, "limit": 20, "offset": 20},
+    ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "number", ["23.3-12000-2020-001", "23.3-12000-2020-01", "23.3.12000-20:001"]
+)
+async def test_the_register_reader_gives_the_rows_of_every_spelling_of_the_agreement(
+    mcp_tools: McpTools, number: str
+) -> None:
+    assert await mcp_tools.register.read(number) == entries(DIGITAL_INTERPRETATIONS)
+
+
+@pytest.mark.anyio
+async def test_the_register_reader_gives_none_for_a_procurement_and_stops_at_its_first_page(
+    mcp_tools: McpTools,
+) -> None:
+    # The server answers a procurement's number with all its agreements: not one agreement.
+    assert await mcp_tools.register.read("23.3-11976-2023") is None
+    assert [call["offset"] for call in register_calls] == [0]
+
+
+@pytest.mark.anyio
+async def test_the_register_reader_gives_none_for_an_unknown_number_and_logs_why(
+    mcp_tools: McpTools, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="avtalsagent.agent.mcp_tools"):
+        read = await mcp_tools.register.read("23.3-11976-2023-099")
+
+    assert read is None
+    assert NO_SUCH_NUMBER.format(number="23.3-11976-2023-099") in caplog.text
+
+
+@pytest.mark.anyio
+async def test_the_register_reader_gives_none_for_a_number_the_tool_refuses(
+    mcp_tools: McpTools,
+) -> None:
+    assert await mcp_tools.register.read("23.3") is None  # shorter than the tool takes
+    assert register_calls == []  # the server refused it before the tool ran
+
+
+@pytest.mark.anyio
+async def test_the_register_reader_is_an_mcp_register_reader(mcp_tools: McpTools) -> None:
+    assert isinstance(mcp_tools.register, McpRegisterReader)
 
 
 # --- the transports ---

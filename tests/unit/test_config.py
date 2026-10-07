@@ -36,7 +36,8 @@ ENV_VARS = (
     "ACCEPTED_FINDINGS_FILE",
     "AGENT_REASONING_EFFORT",
     "AGENT_MODEL_CALL_LIMIT",
-    "CITATION_RETRIES",
+    "VALIDATION_RETRIES",
+    "REVIEWER_REASONING_EFFORT",
     "MCP_TRANSPORT",
     "CHECKPOINTER",
     "API_HOST",
@@ -142,7 +143,8 @@ def test_the_agents_defaults() -> None:
 
     assert settings.agent_reasoning_effort == "low"
     assert settings.agent_model_call_limit == 16
-    assert settings.citation_retries == 1
+    assert settings.validation_retries == 2
+    assert settings.reviewer_reasoning_effort == "low"
     assert settings.mcp_transport == "stdio"
     assert settings.checkpointer == "memory"
 
@@ -150,13 +152,15 @@ def test_the_agents_defaults() -> None:
 def test_the_agents_settings_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_REASONING_EFFORT", "medium")
     monkeypatch.setenv("AGENT_MODEL_CALL_LIMIT", "8")
-    monkeypatch.setenv("CITATION_RETRIES", "0")
+    monkeypatch.setenv("VALIDATION_RETRIES", "0")
+    monkeypatch.setenv("REVIEWER_REASONING_EFFORT", "high")
 
     settings = Settings(_env_file=None)
 
     assert settings.agent_reasoning_effort == "medium"
     assert settings.agent_model_call_limit == 8
-    assert settings.citation_retries == 0
+    assert settings.validation_retries == 0
+    assert settings.reviewer_reasoning_effort == "high"
 
 
 @pytest.mark.parametrize(
@@ -165,7 +169,8 @@ def test_the_agents_settings_are_read_from_environment(monkeypatch: pytest.Monke
         # The agent model takes four levels and refuses "none" (measured in the M7 spike).
         ("AGENT_REASONING_EFFORT", "none"),
         ("AGENT_MODEL_CALL_LIMIT", "0"),
-        ("CITATION_RETRIES", "-1"),
+        ("VALIDATION_RETRIES", "-1"),
+        ("REVIEWER_REASONING_EFFORT", "none"),
     ],
 )
 def test_the_agents_settings_refuse_values_out_of_range(

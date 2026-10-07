@@ -52,12 +52,12 @@ from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 from sqlalchemy.engine import make_url
 
-from avtalsagent.agent.schemas import Answer, Citation, DraftCitation, FinalAnswer
+from avtalsagent.agent.schemas import Answer, Citation, DraftCitation, FinalAnswer, RegisterFact
 from avtalsagent.config import Settings
 
 # The agent's classes in a checkpoint. The nested ones (the citations) are stored inside
 # their parent and rebuilt by it; they are listed so that they come back as classes alone too.
-CHECKPOINT_TYPES: tuple[type, ...] = (FinalAnswer, DraftCitation, Answer, Citation)
+CHECKPOINT_TYPES: tuple[type, ...] = (FinalAnswer, DraftCitation, Answer, Citation, RegisterFact)
 
 # The connections the saver holds. AsyncPostgresSaver runs one operation at a time behind its
 # own lock, whether it has a connection or a pool, so one is all it uses.

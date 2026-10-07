@@ -6,9 +6,11 @@ What:
     conversation, until Ctrl-D. While the agent works, each tool call is
     printed with its arguments; a question from the agent (`ask_user`) is
     asked in the terminal, its options numbered. The answer is printed with
-    its status (Kontrollerat, Med reservation, Inget svar) and its sources,
-    each marked ✓ or ✗ by the citation check. `--json` prints the answer as
-    the web app gets it, the state's `answer`, and the steps on stderr.
+    its status (Kontrollerat, Med reservation, Inget svar), what could not
+    be checked, its sources, each marked ✓ or ✗ by the citation check, and
+    the register rows its facts were checked against. `--json` prints the
+    answer as the web app gets it, the state's `answer`, and the steps on
+    stderr.
 
 Why:
     The command line is the agent's fallback in a demo and the quickest way
@@ -18,8 +20,8 @@ Why:
     are in Swedish, for the people who ask.
 
 How:
-    Starts the model client (`make_agent_model`; without OPENAI_API_KEY it
-    stops before anything else), avtal-mcp (`open_mcp_tools`: over stdio a
+    Starts the model clients (`make_agent_model` and `make_reviewer`;
+    without OPENAI_API_KEY it stops before anything else), avtal-mcp (`open_mcp_tools`: over stdio a
     child process, over streamable HTTP the server at MCP_URL) and the
     checkpointer (`open_checkpointer`), and builds the graph
     (`build_agent`). Each question runs with `astream` in "updates" mode, so
@@ -61,8 +63,10 @@ from avtalsagent.agent.graph import ANSWER_SUBMITTED, AvtalAgent, build_agent
 from avtalsagent.agent.mcp_tools import open_mcp_tools
 from avtalsagent.agent.middleware import FINAL_ANSWER_TOOL, NO_DRAFT_TEXT
 from avtalsagent.agent.model import MissingApiKeyError, make_agent_model
-from avtalsagent.agent.schemas import Answer, Citation
+from avtalsagent.agent.reviewer import make_reviewer
+from avtalsagent.agent.schemas import Answer, Citation, RegisterFact
 from avtalsagent.config import Settings, get_settings
+from avtalsagent.domain.identifiers import agreement_key
 
 STATUS_NAMES = {
     "verified": "Kontrollerat",
@@ -152,6 +156,7 @@ async def run(
 ) -> None:
     """Start the agent and answer `question`, or each question typed, until the input ends."""
     model = make_agent_model(settings)  # without a key, before a server is started
+    reviewer = make_reviewer(settings)
     async with AsyncExitStack() as stack:
         try:
             mcp = await stack.enter_async_context(open_mcp_tools(settings))
@@ -164,7 +169,7 @@ async def run(
                 f"Agentens checkpoints (CHECKPOINTER={settings.checkpointer}) gick inte att "
                 f"öppna: {_causes(error)}"
             ) from error
-        graph = build_agent(model, mcp.tools, mcp.reader, checkpointer, settings)
+        graph = build_agent(model, mcp, reviewer, checkpointer, settings)
         await converse(graph, question, terminal, as_json=as_json)
 
 
@@ -304,30 +309,33 @@ def choice(text: str, options: Sequence[str]) -> str:
 
 
 def answer_lines(answer: Answer) -> list[str]:
-    """The answer as printed: the text, the status line and the sources."""
+    """The answer as printed: the text, the status and its reservations, the sources and rows."""
     lines = ["", answer.text, "", status_line(answer)]
+    lines += [f"  - {note}" for note in answer.reservations]
     if answer.citations:
         lines += ["", "Källor:"]
         for citation in answer.citations:
             lines += source_lines(citation)
+    if answer.register_facts:
+        lines += ["", "Ur registret:", *register_lines(answer.register_facts)]
     return lines
 
 
 def status_line(answer: Answer) -> str:
     """The answer's status in Swedish, with what it means."""
     name = STATUS_NAMES[answer.status]
-    failed = sum(not citation.verified for citation in answer.citations)
     if answer.status == "verified":
-        return f"{name}: varje citat står ordagrant i det avsnitt det anger."
+        checked = []
+        if answer.citations:
+            checked.append("varje citat står ordagrant i det avsnitt det anger")
+        if answer.register_facts:
+            checked.append("uppgifterna ur registret stämmer")
+        return f"{name}: {' och '.join(checked)}, och granskningen fann stöd för svaret."
     if answer.status == "no_answer" and answer.text == NO_DRAFT_TEXT:
         return f"{name}: agenten kom inte fram till ett svar inom gränsen för modellanrop."
     if answer.status == "no_answer":
         return f"{name}: det som frågas framgår inte av avtalen eller registret."
-    if not answer.citations:
-        return f"{name}: svaret har inga källor att kontrollera."
-    if failed:
-        return f"{name}: {failed} av {len(answer.citations)} citat kunde inte kontrolleras (✗)."
-    return f"{name}: hänvisningarna [n] i texten stämmer inte med källorna."
+    return f"{name}: allt i svaret kunde inte kontrolleras."
 
 
 def source_lines(citation: Citation) -> list[str]:
@@ -345,6 +353,34 @@ def source_lines(citation: Citation) -> list[str]:
         if citation.page is not None:
             where += f", s. {citation.page}"
     return [f"[{citation.id}] {where} {mark}", f"    ”{citation.quote}”"]
+
+
+def register_lines(facts: Sequence[RegisterFact]) -> list[str]:
+    """The register rows, one line per agreement: an agreement has a row per sub-area.
+
+    The register writes some numbers two ways (-001 and -01); they are one agreement.
+    """
+    agreements: dict[str, list[RegisterFact]] = {}
+    for fact in facts:
+        key = agreement_key(fact.agreement_number) or fact.agreement_number
+        agreements.setdefault(key, []).append(fact)
+    return [agreement_line(rows) for rows in agreements.values()]
+
+
+def agreement_line(rows: Sequence[RegisterFact]) -> str:
+    """`23.3-5890-2023-002 Nordlo Advance AB (556486-1689), IT-drift …, 2024-11-14–2028-11-13`."""
+    first = rows[0]
+    supplier = f"{first.supplier_name} ({first.org_number})"
+    if first.former_names:
+        supplier += f", tidigare {', '.join(first.former_names)}"
+    where = first.sub_area if len(rows) == 1 else f"{len(rows)} delområden"
+    periods = {(row.valid_from, row.valid_to, row.max_extension_to) for row in rows}
+    if len(periods) > 1:
+        return f"  {first.agreement_number} {supplier}, {where}, olika giltighetstider"
+    period = f"{first.valid_from}–{first.valid_to}"
+    if first.max_extension_to is not None:
+        period += f", längst till {first.max_extension_to}"
+    return f"  {first.agreement_number} {supplier}, {where}, {period}"
 
 
 def answer_json(answer: Answer) -> str:

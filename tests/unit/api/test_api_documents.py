@@ -28,7 +28,12 @@ from avtalsagent.api.documents import (
     StoredFile,
 )
 from avtalsagent.config import Settings
-from tests.unit.agent.scripted_model import DictReader, ScriptedModel
+from tests.unit.agent.scripted_model import (
+    DictReader,
+    ListRegister,
+    ScriptedModel,
+    ScriptedReviewer,
+)
 
 SHA = "c3" * 32
 PDF = b"%PDF-1.7\n% a stand-in\n"
@@ -57,7 +62,7 @@ class Files:
 def app_with(files: Files) -> FastAPI:
     @asynccontextmanager
     async def open_tools(settings: Settings) -> AsyncIterator[McpTools]:
-        yield McpTools(tools=[], reader=DictReader([]))
+        yield McpTools(tools=[], reader=DictReader([]), register=ListRegister())
 
     @asynccontextmanager
     async def open_saver(settings: Settings) -> AsyncIterator[BaseCheckpointSaver[str]]:
@@ -70,6 +75,7 @@ def app_with(files: Files) -> FastAPI:
     return create_app(
         Settings(_env_file=None),
         make_model=lambda settings: ScriptedModel(script=[]),
+        make_answer_reviewer=lambda settings: ScriptedReviewer(),
         open_tools=open_tools,
         open_saver=open_saver,
         open_documents=open_documents,

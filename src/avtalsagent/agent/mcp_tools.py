@@ -1,19 +1,20 @@
-"""The agent's connection to avtal-mcp: the tools, and the reader of cited sections.
+"""The agent's connection to avtal-mcp: the tools, and the readers the answer check uses.
 
 What:
     `open_mcp_tools(settings)` opens one MCP session to avtal-mcp and yields
     `McpTools`: the server's tools as LangChain tools, in the server's order
-    (`tools`), and an `McpSectionReader` on the same session (`reader`).
-    `open_mcp_session` opens the session MCP_TRANSPORT names, and
-    `load_tools` makes `McpTools` of a session that is already open.
+    (`tools`), an `McpSectionReader` (`reader`) and an `McpRegisterReader`
+    (`register`) on the same session. `open_mcp_session` opens the session
+    MCP_TRANSPORT names, and `load_tools` makes `McpTools` of a session that
+    is already open.
 
 Why:
     The agent gets its data only through avtal-mcp (ADR 0003), and the
-    citation check reads each cited section from the server itself, never
-    from the message history, which a client sends and could change. One
-    session lasts as long as the agent: the adapter's `get_tools()` would
-    open a new session for every tool call, which over stdio is a new server
-    process each time.
+    answer check reads each cited section and each declared agreement from
+    the server itself, never from the message history, which a client sends
+    and could change. One session lasts as long as the agent: the adapter's
+    `get_tools()` would open a new session for every tool call, which over
+    stdio is a new server process each time.
 
 How:
     stdio starts `python -m avtalsagent.mcp_server stdio` with the
@@ -32,6 +33,15 @@ How:
     `McpSectionReader.read` calls `read_section` with the hash and the
     position, and validates the result's `structuredContent` (avtal-mcp's
     `Section`) into a `CitedSection`; an error result is None.
+    `McpRegisterReader.read` calls `search_register` with the agreement
+    number, 20 rows at a time (the tool's largest `limit`), with `offset`
+    until `total` rows are read, and validates each row into a
+    `RegisterEntry`. It keeps the rows whose agreement number has the
+    requested one's key, as the server matches spellings (-001 and -01 are
+    one agreement): for a number the register has only as a procurement,
+    the server gives that procurement's agreements instead, and those are
+    not the agreement asked for, so a page without a row of it ends the
+    reading. No row of the agreement, or an error result, is None.
 """
 
 import logging
@@ -48,23 +58,29 @@ from langchain_mcp_adapters.tools import load_mcp_tools
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import TextContent
+from pydantic import BaseModel
 
+from avtalsagent.agent.register_reader import RegisterEntry, RegisterReader
 from avtalsagent.agent.sections import CitedSection, SectionReader
 from avtalsagent.config import Settings
+from avtalsagent.domain.identifiers import agreement_key
 
 _log = logging.getLogger(__name__)
 
 # The server's name for the adapter: tool metadata and callbacks carry it.
 SERVER_NAME = "avtal"
 READ_SECTION = "read_section"
+SEARCH_REGISTER = "search_register"
+REGISTER_PAGE = 20  # search_register's largest limit
 
 
 @dataclass(frozen=True)
 class McpTools:
-    """avtal-mcp's tools for the model, and the section reader for the citation check."""
+    """avtal-mcp's tools for the model, and the readers for the answer check."""
 
     tools: list[BaseTool]
     reader: SectionReader
+    register: RegisterReader
 
 
 class McpSectionReader:
@@ -93,10 +109,67 @@ class McpSectionReader:
         return CitedSection.model_validate(result.structuredContent)
 
 
+class _RegisterPage(BaseModel):
+    """A page of `search_register`'s result (avtal-mcp's `RegisterResult`)."""
+
+    rows: list[RegisterEntry]
+    total: int  # every matching row, also those on other pages
+
+
+class McpRegisterReader:
+    """A `RegisterReader` that reads with avtal-mcp's `search_register`, on an open session."""
+
+    def __init__(self, session: ClientSession) -> None:
+        self._session = session
+
+    async def read(self, agreement_number: str) -> list[RegisterEntry] | None:
+        """Every row of the agreement, or None when the register has no such agreement.
+
+        An error result (an unknown number, a malformed one, the database
+        not answering) is logged as it is, like `McpSectionReader`'s.
+        """
+        key = agreement_key(agreement_number)
+        entries: list[RegisterEntry] = []
+        offset = 0
+        while True:
+            result = await self._session.call_tool(
+                SEARCH_REGISTER,
+                {"agreement_number": agreement_number, "limit": REGISTER_PAGE, "offset": offset},
+            )
+            if result.isError:
+                message = " ".join(
+                    block.text for block in result.content if isinstance(block, TextContent)
+                )
+                _log.info("search_register(%s): %s", agreement_number, message)
+                return None
+            # A result that does not fit is a server of another version: an error, not None.
+            page = _RegisterPage.model_validate(result.structuredContent)
+            rows = [row for row in page.rows if _same_agreement(row, agreement_number, key)]
+            if page.rows and not rows:
+                # The procurement's agreements: the server has no agreement by this number.
+                _log.info(
+                    "search_register(%s): only the procurement's agreements", agreement_number
+                )
+                return None
+            entries += rows
+            offset += len(page.rows)
+            if not page.rows or offset >= page.total:
+                return entries or None
+
+
+def _same_agreement(row: RegisterEntry, number: str, key: str | None) -> bool:
+    """True when the row is the agreement `number`, in any spelling (as the server matches)."""
+    return row.agreement_number == number or (
+        key is not None and agreement_key(row.agreement_number) == key
+    )
+
+
 async def load_tools(session: ClientSession) -> McpTools:
-    """The tools and the section reader of an open, initialised session."""
+    """The tools and the readers of an open, initialised session."""
     tools = await load_mcp_tools(session, server_name=SERVER_NAME)
-    return McpTools(tools=tools, reader=McpSectionReader(session))
+    return McpTools(
+        tools=tools, reader=McpSectionReader(session), register=McpRegisterReader(session)
+    )
 
 
 def stdio_parameters() -> StdioServerParameters:
@@ -133,6 +206,6 @@ async def open_mcp_session(settings: Settings) -> AsyncIterator[ClientSession]:
 
 @asynccontextmanager
 async def open_mcp_tools(settings: Settings) -> AsyncIterator[McpTools]:
-    """avtal-mcp's tools and section reader, on one session open until the block ends."""
+    """avtal-mcp's tools and readers, on one session open until the block ends."""
     async with open_mcp_session(settings) as session:
         yield await load_tools(session)

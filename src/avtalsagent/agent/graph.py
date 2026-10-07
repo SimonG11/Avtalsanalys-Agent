@@ -1,10 +1,10 @@
-"""The agent's graph: create_agent with the citation check, the bounds and today's prompt.
+"""The agent's graph: create_agent with the answer check, the bounds and today's prompt.
 
 What:
-    `build_agent(model, tools, reader, checkpointer, settings)` compiles the
-    agent `avtalsagent`: the model with avtal-mcp's tools and `ask_user`,
-    the structured answer `FinalAnswer`, and the middleware around the
-    loop. `AvtalAgent` is the compiled graph's type.
+    `build_agent(model, mcp, reviewer, checkpointer, settings)` compiles
+    the agent `avtalsagent`: the model with avtal-mcp's tools and
+    `ask_user`, the structured answer `FinalAnswer`, and the middleware
+    around the loop. `AvtalAgent` is the compiled graph's type.
 
 Why:
     One `create_agent` graph, the steps around the loop as middleware
@@ -20,13 +20,15 @@ How:
     - `dated_system_prompt` sets the system prompt with today's date for
       every model call, so a process that runs for days (the API) never
       answers with the date it started on. Only the date's line changes.
-    - `CitationCheck` resets the answer per question and checks the draft
-      (`middleware.py`).
+    - `AnswerCheck` resets the answer per question and checks the draft:
+      the citations and register facts through avtal-mcp's session, then
+      the reviewer (`middleware.py`, `validation/chain.py`).
     - `ModelCallLimitMiddleware` ends a run after `AGENT_MODEL_CALL_LIMIT`
-      model calls, new attempts included; the check turns the missing
-      draft into `no_answer`. The count is not checkpointed, so a run
-      resumed after `ask_user` counts from zero. (`create_agent` sets
-      LangGraph's recursion limit itself.)
+      model calls, new attempts included; the check then gives the answer
+      the last failed draft would have got (`fallback_answer`), or
+      `no_answer` when no draft failed. The count is not checkpointed, so
+      a run resumed after `ask_user` counts from zero. (`create_agent`
+      sets LangGraph's recursion limit itself.)
     - `AnswerOpenToolCalls` gives the model an error result for a tool
       call whose run broke off before the tool answered, so the
       conversation can go on (`open_tool_calls.py`).
@@ -42,7 +44,7 @@ How:
     (`checkpointer.py`).
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from datetime import date
 from typing import Any
 
@@ -60,20 +62,21 @@ from langchain.agents.middleware import (
 )
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models import BaseChatModel
-from langchain_core.tools import BaseTool, ToolException
+from langchain_core.tools import ToolException
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
 from avtalsagent.agent.ask_user import ask_user
-from avtalsagent.agent.middleware import CitationCheck
+from avtalsagent.agent.mcp_tools import McpTools
+from avtalsagent.agent.middleware import AnswerCheck
 from avtalsagent.agent.open_tool_calls import AnswerOpenToolCalls
 from avtalsagent.agent.prompts import system_prompt, today_in_sweden
 from avtalsagent.agent.schemas import AvtalState, FinalAnswer
-from avtalsagent.agent.sections import SectionReader
 from avtalsagent.config import Settings
+from avtalsagent.validation.review import AnswerReviewer
 
 AGENT_NAME = "avtalsagent"
-# ToolStrategy's tool result for a draft; the citation check replaces it when the draft fails.
+# ToolStrategy's tool result for a draft; the answer check replaces it when the draft fails.
 ANSWER_SUBMITTED = "Svaret är lämnat för kontroll."
 
 AvtalAgent = CompiledStateGraph[
@@ -83,8 +86,8 @@ AvtalAgent = CompiledStateGraph[
 
 def build_agent(
     model: BaseChatModel,
-    tools: Sequence[BaseTool],
-    reader: SectionReader,
+    mcp: McpTools,
+    reviewer: AnswerReviewer,
     checkpointer: BaseCheckpointSaver[str] | None,
     settings: Settings,
     *,
@@ -92,8 +95,10 @@ def build_agent(
 ) -> AvtalAgent:
     """The compiled agent; run it with `ainvoke` or `astream` (the check is async).
 
-    `tools` are avtal-mcp's, `reader` reads the cited sections through the
-    same MCP session, and `today` gives the date for the system prompt.
+    `mcp` holds avtal-mcp's tools and the readers of sections and register
+    rows on the same session, `reviewer` reviews a draft that passed the
+    deterministic rules, and `today` gives the date for the system prompt
+    and the check.
     """
 
     @dynamic_prompt
@@ -103,14 +108,16 @@ def build_agent(
     # The hooks' states differ, and AgentMiddleware is invariant in its state type.
     middleware: list[AgentMiddleware[Any, None]] = [
         dated_system_prompt,
-        CitationCheck(reader, retries=settings.citation_retries),
+        AnswerCheck(
+            mcp.reader, mcp.register, reviewer, retries=settings.validation_retries, today=today
+        ),
         ModelCallLimitMiddleware(run_limit=settings.agent_model_call_limit, exit_behavior="end"),
         AnswerOpenToolCalls(),
         ToolErrorMiddleware(_tool_error_message),
     ]
     return create_agent(
         model,
-        tools=[*tools, ask_user],
+        tools=[*mcp.tools, ask_user],
         response_format=ToolStrategy(FinalAnswer, tool_message_content=ANSWER_SUBMITTED),
         middleware=middleware,
         state_schema=AvtalState,

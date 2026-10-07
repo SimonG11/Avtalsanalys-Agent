@@ -24,7 +24,12 @@ from avtalsagent.api.agui import AgentRuns, AvtalAguiAgent
 from avtalsagent.api.app import create_app, open_document_files
 from avtalsagent.api.documents import DatabaseDocumentFiles, DocumentFiles, StoredFile
 from avtalsagent.config import Settings
-from tests.unit.agent.scripted_model import DictReader, ScriptedModel
+from tests.unit.agent.scripted_model import (
+    DictReader,
+    ListRegister,
+    ScriptedModel,
+    ScriptedReviewer,
+)
 
 KEY = "sk-test-0123456789abcdef"
 PASSWORD = "hemligt-lösen-42"
@@ -45,7 +50,7 @@ class Recorder:
     async def open_tools(self, settings: Settings) -> AsyncIterator[McpTools]:
         self.log.append("open mcp")
         try:
-            yield McpTools(tools=[], reader=DictReader([]))
+            yield McpTools(tools=[], reader=DictReader([]), register=ListRegister())
         finally:
             self.log.append("close mcp")
 
@@ -74,6 +79,7 @@ class NoFiles:
 def recorded_app(recorder: Recorder, settings: Settings, **more: Any) -> FastAPI:
     options: dict[str, Any] = {
         "make_model": lambda settings: ScriptedModel(script=[]),
+        "make_answer_reviewer": lambda settings: ScriptedReviewer(),
         "open_tools": recorder.open_tools,
         "open_saver": recorder.open_saver,
         "open_documents": recorder.open_documents,
@@ -107,7 +113,7 @@ async def test_an_avtal_mcp_that_cannot_be_reached_stops_the_start() -> None:
     @asynccontextmanager
     async def unreachable(settings: Settings) -> AsyncIterator[McpTools]:
         raise OSError("All connection attempts failed")
-        yield McpTools(tools=[], reader=DictReader([]))  # pragma: no cover
+        yield McpTools(tools=[], reader=DictReader([]), register=ListRegister())  # pragma: no cover
 
     app = recorded_app(recorder, Settings(_env_file=None), open_tools=unreachable)
 

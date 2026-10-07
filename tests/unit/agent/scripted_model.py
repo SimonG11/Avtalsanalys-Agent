@@ -1,15 +1,18 @@
-"""Test doubles for running the agent's graph offline: a scripted model and a section reader.
+"""Test doubles for running the agent's graph offline: a scripted model, readers, a reviewer.
 
 What:
     `ScriptedModel`, a chat model that answers with prepared messages in
     order and records what it was sent; `tool_call` and `final_answer`
-    build those messages. `DictReader` is a `SectionReader` over a dict and
-    records what it was asked.
+    build those messages. `DictReader` is a `SectionReader` over a dict,
+    `ListRegister` a `RegisterReader` over register rows, and
+    `ScriptedReviewer` an `AnswerReviewer` that gives prepared verdicts
+    (a pass when it has none left); each records what it was asked.
 
 Why:
     The graph's wiring (the hooks, the jumps, the interrupt, the tool
-    errors) can then be tested without a network, an API key or a database:
-    the model's part is fixed, so a test shows what the graph does with it.
+    errors, the answer check) can then be tested without a network, an API
+    key or a database: the models' parts are fixed, so a test shows what
+    the graph does with them.
 
 How:
     `create_agent` binds the tools to the model (`bind_tools`), which here
@@ -29,7 +32,9 @@ from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import Field
 
+from avtalsagent.agent.register_reader import RegisterEntry
 from avtalsagent.agent.sections import CitedSection
+from avtalsagent.validation.review import ReviewInput, ReviewVerdict
 
 
 class ScriptedModel(BaseChatModel):
@@ -74,10 +79,17 @@ def tool_call(name: str, args: dict[str, Any], call_id: str) -> AIMessage:
 
 
 def final_answer(
-    text: str, citations: Iterable[dict[str, Any]] = (), *, answered: bool = True, call_id: str
+    text: str,
+    citations: Iterable[dict[str, Any]] = (),
+    *,
+    answered: bool = True,
+    register_facts: Iterable[str] = (),
+    call_id: str,
 ) -> AIMessage:
     """An AI message handing in a `FinalAnswer`."""
-    args = {"answered": answered, "text": text, "citations": list(citations)}
+    args: dict[str, Any] = {"answered": answered, "text": text, "citations": list(citations)}
+    if register_facts:
+        args["register_facts"] = list(register_facts)
     return tool_call("FinalAnswer", args, call_id)
 
 
@@ -91,3 +103,31 @@ class DictReader:
     async def read(self, sha256: str, section_position: int) -> CitedSection | None:
         self.reads.append((sha256, section_position))
         return self.sections.get((sha256, section_position))
+
+
+class ListRegister:
+    """A `RegisterReader` over register rows; an agreement without rows is unknown (None)."""
+
+    def __init__(self, entries: Iterable[RegisterEntry] = ()) -> None:
+        self.entries = list(entries)
+        self.reads: list[str] = []
+
+    async def read(self, agreement_number: str) -> list[RegisterEntry] | None:
+        self.reads.append(agreement_number)
+        rows = [e for e in self.entries if e.agreement_number == agreement_number]
+        return rows or None
+
+
+PASSED = ReviewVerdict(claims=[], missing=[])
+
+
+class ScriptedReviewer:
+    """An `AnswerReviewer` that gives `verdicts` in order, then passes every answer."""
+
+    def __init__(self, verdicts: Iterable[ReviewVerdict | None] = ()) -> None:
+        self.verdicts = list(verdicts)
+        self.requests: list[ReviewInput] = []
+
+    async def review(self, request: ReviewInput) -> ReviewVerdict | None:
+        self.requests.append(request)
+        return self.verdicts.pop(0) if self.verdicts else PASSED

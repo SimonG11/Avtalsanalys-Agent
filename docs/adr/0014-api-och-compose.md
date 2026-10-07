@@ -1,6 +1,8 @@
 # ADR 0014: API:t som ett tunt FastAPI-lager över agenten, en MCP-session per körning och hela systemet i Docker Compose
 
-**Status:** Föreslaget (PR för M9).
+**Status:** Godkänt av Simon 2026-10-07 (PR #11).
+[ADR 0015](0015-valideringskedjan.md) lägger till en femte ändring i adaptern (punkt 11 där): API:t
+tar inte emot klientens tillstånd.
 
 ## Kontext
 

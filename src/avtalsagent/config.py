@@ -110,9 +110,12 @@ class Settings(BaseSettings):
     # user has answered ask_user. A run that reaches the limit gets the status no_answer, so a
     # run that never settles has a bounded cost.
     agent_model_call_limit: int = Field(default=16, gt=0)
-    # New attempts after a draft fails the citation check; after them the answer is given
-    # with reservation (with_reservation), its failed citations marked as not verified.
-    citation_retries: int = Field(default=1, ge=0)
+    # New attempts after a draft fails the answer check (M8: the citations, the register facts
+    # or the review); after them the answer is given with reservation (with_reservation), with
+    # notes on what could not be verified. Two, so a question gets at most three drafts.
+    validation_retries: int = Field(default=2, ge=0)
+    # How much the reviewer model (REVIEWER_MODEL) reasons before its verdict (M8, ADR 0015).
+    reviewer_reasoning_effort: Literal["low", "medium", "high", "xhigh"] = "low"
     # How the agent reaches avtal-mcp: "stdio" starts the server as its own child process
     # (the command line, local work), "streamable_http" connects to MCP_URL (the API's
     # container).

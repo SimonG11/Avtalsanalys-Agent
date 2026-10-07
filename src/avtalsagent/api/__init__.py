@@ -15,8 +15,9 @@ Why:
     business logic of its own (ADR 0014).
 
 How:
-    `create_app()` builds the app. Its lifespan makes the model client,
-    checks once that avtal-mcp answers, and opens the checkpointer and a
+    `create_app()` builds the app. Its lifespan makes the model clients
+    (the agent's and the reviewer's), checks once that avtal-mcp answers,
+    and opens the checkpointer and a
     read-only database engine until the app stops. Each request to `/agui`
     opens its own session to avtal-mcp (`agui.AgentRuns`) and runs the
     agent on its own copy of ag-ui-langgraph's `LangGraphAgent`.

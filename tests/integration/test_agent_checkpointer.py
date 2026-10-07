@@ -26,6 +26,7 @@ How:
 """
 
 from collections.abc import Iterator
+from datetime import date
 from typing import Any
 
 import pytest
@@ -37,10 +38,18 @@ from sqlalchemy import Engine, text
 
 from avtalsagent.agent.checkpointer import open_checkpointer
 from avtalsagent.agent.graph import build_agent
-from avtalsagent.agent.schemas import Answer, Citation, DraftCitation, FinalAnswer
+from avtalsagent.agent.mcp_tools import McpTools
+from avtalsagent.agent.schemas import Answer, Citation, DraftCitation, FinalAnswer, RegisterFact
 from avtalsagent.agent.sections import CitedSection
 from avtalsagent.config import Settings
-from tests.unit.agent.scripted_model import DictReader, ScriptedModel, final_answer, tool_call
+from tests.unit.agent.scripted_model import (
+    DictReader,
+    ListRegister,
+    ScriptedModel,
+    ScriptedReviewer,
+    final_answer,
+    tool_call,
+)
 
 DATABASE = "agent_checkpoints"
 SHA = "ab" * 32
@@ -77,8 +86,30 @@ ANSWER = Answer(
         )
     ],
 )
+# An answer with reservation from the register, as the check gives it after the retries.
+RESERVED = Answer(
+    text="Avtalet gäller till 2028-11-14 enligt registret.",
+    status="with_reservation",
+    citations=[],
+    reservations=["Kunde inte kontrolleras mot registret: 2028-11-14."],
+    register_facts=[
+        RegisterFact(
+            agreement_number="23.3-5890-2023-002",
+            supplier_name="Nordlo Advance AB",
+            org_number="556486-1689",
+            sub_area="IT-drift Mindre",
+            valid_from=date(2024, 11, 14),
+            valid_to=date(2028, 11, 13),
+            max_extension_to=None,
+        )
+    ],
+)
 CONFIG: RunnableConfig = {"configurable": {"thread_id": "integration", "checkpoint_ns": ""}}
 THREAD: RunnableConfig = {"configurable": {"thread_id": "conversation"}}
+
+
+def mcp() -> McpTools:
+    return McpTools(tools=[], reader=DictReader([SECTION]), register=ListRegister())
 
 
 @pytest.fixture
@@ -112,7 +143,9 @@ async def save(saver: BaseCheckpointSaver[str], values: dict[str, Any]) -> Runna
 @pytest.mark.anyio
 async def test_the_draft_and_the_answer_survive_postgres_and_a_restart(settings: Settings) -> None:
     async with open_checkpointer(settings) as saver:
-        saved = await save(saver, {"structured_response": DRAFT, "answer": ANSWER})
+        saved = await save(
+            saver, {"structured_response": DRAFT, "answer": ANSWER, "fallback_answer": RESERVED}
+        )
     async with open_checkpointer(settings) as saver:  # setup() again: the tables are there
         loaded = await saver.aget_tuple(saved)
 
@@ -122,6 +155,8 @@ async def test_the_draft_and_the_answer_survive_postgres_and_a_restart(settings:
     assert values["structured_response"] == DRAFT
     assert type(values["answer"]) is Answer
     assert values["answer"] == ANSWER
+    assert values["fallback_answer"] == RESERVED
+    assert type(values["fallback_answer"].register_facts[0]) is RegisterFact
 
 
 @pytest.mark.anyio
@@ -138,10 +173,10 @@ async def test_a_run_waiting_for_the_user_is_resumed_after_a_restart(settings: S
     )
 
     async with open_checkpointer(settings) as saver:
-        graph = build_agent(asking, [], DictReader([SECTION]), saver, settings)
+        graph = build_agent(asking, mcp(), ScriptedReviewer(), saver, settings)
         await graph.ainvoke(question, THREAD)
     async with open_checkpointer(settings) as saver:  # a new process: the graph built again
-        graph = build_agent(answering, [], DictReader([SECTION]), saver, settings)
+        graph = build_agent(answering, mcp(), ScriptedReviewer(), saver, settings)
         waiting = await graph.aget_state(THREAD)
         await graph.ainvoke(Command(resume="IT-drift Större"), THREAD)
         state = (await graph.aget_state(THREAD)).values
