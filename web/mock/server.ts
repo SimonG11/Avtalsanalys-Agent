@@ -20,7 +20,7 @@ import { buildFixturePdf } from "./fixture-pdf.ts";
 import { planRun } from "./scenarios.ts";
 
 const port = Number(process.env.MOCK_PORT ?? 8000);
-/** MOCK_FAST=1 removes the pauses, for tests. */
+/** MOCK_FAST=1 removes the pauses, for tests, except those a test needs to see (minPauseMs). */
 const pauseFactor = process.env.MOCK_FAST === "1" ? 0 : 1;
 
 const pdf = await buildFixturePdf();
@@ -42,8 +42,8 @@ async function runAgent(request: IncomingMessage, response: ServerResponse): Pro
     "Content-Type": encoder.getContentType(),
     "Cache-Control": "no-cache",
   });
-  for (const { event, pauseMs } of planRun(input, { documentSha256: pdf.sha256 })) {
-    await sleep(pauseMs * pauseFactor);
+  for (const { event, pauseMs, minPauseMs } of planRun(input, { documentSha256: pdf.sha256 })) {
+    await sleep(Math.max(pauseMs * pauseFactor, minPauseMs ?? 0));
     response.write(encoder.encode(event));
   }
   response.end();

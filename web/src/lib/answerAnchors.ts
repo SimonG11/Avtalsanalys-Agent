@@ -13,6 +13,7 @@
 export interface MessageLike {
   id: string;
   role: string;
+  toolCalls?: readonly { id: string }[];
 }
 
 /** Maps the id of each question's last message to the id of the question itself. */
@@ -35,4 +36,18 @@ export function lastQuestionId(messages: readonly MessageLike[]): string | null 
     if (messages[i].role === "user") return messages[i].id;
   }
   return null;
+}
+
+/**
+ * Whether a tool call is the latest one made for the most recent question. The backend may send
+ * no result for a FinalAnswer call, neither for the draft it accepts nor for one it rejects, so
+ * an earlier call can still look unfinished. Only the latest call may show as running.
+ */
+export function isLatestToolCall(messages: readonly MessageLike[], toolCallId: string): boolean {
+  let latest: string | null = null;
+  for (const message of messages) {
+    if (message.role === "user") latest = null;
+    latest = message.toolCalls?.at(-1)?.id ?? latest;
+  }
+  return latest === toolCallId;
 }

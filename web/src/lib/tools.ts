@@ -34,14 +34,11 @@ export const TOOL_LABELS: Record<string, ToolLabel> = {
 };
 
 /**
- * Tool calls that are not steps. The agent hands in its answer by calling FinalAnswer; the
- * answer is shown from the state, so the call and its result are hidden.
+ * The tool the agent hands in its answer with. It is not a step: the answer is shown from the
+ * state, so the call and the check's reply to it are hidden, and while the check runs the chat
+ * shows that the answer is being checked (components/AnswerCheck.tsx).
  */
-const HIDDEN_TOOLS = new Set(["FinalAnswer"]);
-
-export function isHiddenTool(name: string): boolean {
-  return HIDDEN_TOOLS.has(name);
-}
+export const ANSWER_TOOL = "FinalAnswer";
 
 /** Swedish names for the arguments the tools take; other arguments keep their own name. */
 const ARGUMENT_LABELS: Record<string, string> = {

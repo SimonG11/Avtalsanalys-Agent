@@ -31,7 +31,10 @@ test("answers with verified sources and opens the cited page with the quote mark
 }) => {
   await ask(page, "Hur säger kunden upp ett kontrakt inom IT-drift?");
 
-  // Two tool calls are steps; the third, FinalAnswer, hands in the answer and is hidden.
+  // Two tool calls are steps; the third, FinalAnswer, hands in the answer. It is not a step,
+  // but a line that says the answer is being checked, until the answer is set.
+  const check = page.getByTestId("answer-check");
+  await expect(check).toHaveText("Kontrollerar svaret …");
   const steps = page.getByTestId("agent-step");
   await expect(steps).toHaveCount(2);
   await expect(steps.nth(0)).toContainText("Sökte i dokumenten");
@@ -43,6 +46,8 @@ test("answers with verified sources and opens the cited page with the quote mark
   await expect(card).toHaveAttribute("data-status", "verified");
   await expect(card).toContainText("Verifierat");
   await expect(card).toContainText("tre månaders uppsägningstid");
+  await expect(check).toHaveCount(0);
+  await expect(card.getByTestId("reservations")).toHaveCount(0);
 
   await card.getByTestId("ref-1").first().click();
   const panel = page.getByTestId("source-panel");
@@ -99,13 +104,21 @@ test("accepts an answer in the person's own words", async ({ page }) => {
   );
 });
 
-test("shows a reservation and says when a quote is not on the page", async ({ page }) => {
+test("shows the reservations and says when a quote is not on the page", async ({ page }) => {
   await ask(page, "Vilket vite gäller vid försenad leverans?");
 
   const card = page.getByTestId("answer-card");
   await expect(card).toHaveAttribute("data-status", "with_reservation");
   await expect(card).toContainText("Med reservation");
+  await expect(card).toContainText("Se reservationerna under svaret.");
+  const reservations = card.getByTestId("reservations");
+  await expect(reservations).toContainText("Reservationer");
+  await expect(reservations.locator("li")).toHaveCount(2);
+  await expect(reservations).toContainText("Citat 2 kunde inte kontrolleras mot avtalstexten.");
   await expect(card).toContainText("Citatet kunde inte kontrolleras mot avtalet");
+  // The check rejected the first draft; neither the draft nor the rejection is shown.
+  await expect(page.getByText("Kontrollen underkände svaret")).toHaveCount(0);
+  await expect(page.getByTestId("answer-check")).toHaveCount(0);
 
   await card.getByTestId("ref-2").click();
   const panel = page.getByTestId("source-panel");
@@ -156,11 +169,23 @@ test("shows a source in a Word file without a page and without a PDF", async ({ 
   await expect(page.getByTestId("no-pdf")).toBeVisible();
 });
 
-test("answers from the register with a reservation and no sources", async ({ page }) => {
+test("answers from the register with one line per agreement", async ({ page }) => {
   await ask(page, "Vilket avtalsnummer har IT-drift?");
 
   const card = page.getByTestId("answer-card");
-  await expect(card).toHaveAttribute("data-status", "with_reservation");
-  await expect(card).toContainText("Svaret har inga källor i avtalstexten");
+  await expect(card).toHaveAttribute("data-status", "verified");
+  await expect(card).toContainText("Uppgifterna stämmer med registret.");
   await expect(card.getByTestId("source-1")).toHaveCount(0);
+
+  // Three rows, two agreements: the register writes the first one's number two ways.
+  const register = card.getByTestId("register-facts");
+  await expect(register).toContainText("Ur registret: 2 avtal");
+  const agreements = register.getByTestId("register-agreement");
+  await expect(agreements).toHaveCount(2);
+  await expect(agreements.nth(0)).toContainText("00.0-0000-2026-001");
+  await expect(agreements.nth(0)).toContainText("tidigare Gamla Exempelbolaget AB (fiktivt)");
+  await expect(agreements.nth(0)).toContainText("2 delområden");
+  await expect(agreements.nth(0)).toContainText("längst till 2030-12-31");
+  await expect(agreements.nth(1)).toContainText("Testleverantören AB (fiktiv) (000000-0002)");
+  await expect(agreements.nth(1)).not.toContainText("längst till");
 });

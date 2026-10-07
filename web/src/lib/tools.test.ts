@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { splitAnswerText } from "./answerText.ts";
-import { describeToolCall, isHiddenTool } from "./tools.ts";
+import { describeToolCall } from "./tools.ts";
 
 describe("describeToolCall", () => {
   it("gives a Swedish title and puts the main argument first", () => {
@@ -81,13 +81,6 @@ describe("describeToolCall", () => {
 
   it("copes with arguments that are still streaming", () => {
     assert.deepEqual(describeToolCall("get_outline", undefined, "inProgress").details, []);
-  });
-});
-
-describe("isHiddenTool", () => {
-  it("hides the call that hands in the answer, and nothing else", () => {
-    assert.equal(isHiddenTool("FinalAnswer"), true);
-    assert.equal(isHiddenTool("search_documents"), false);
   });
 });
 

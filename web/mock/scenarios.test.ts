@@ -54,8 +54,51 @@ describe("planRun", () => {
       const count = (type: EventType) => list.filter((event) => event.type === type).length;
       assert.equal(count(EventType.STEP_STARTED), count(EventType.STEP_FINISHED));
       assert.equal(count(EventType.TOOL_CALL_START), count(EventType.TOOL_CALL_END));
-      assert.equal(count(EventType.TOOL_CALL_START), count(EventType.TOOL_CALL_RESULT));
     }
+  });
+
+  it("gives every tool call a result event, except the drafts handed in with FinalAnswer", () => {
+    for (const question of questions) {
+      const list = events(input(question));
+      const answered = new Set(
+        list.filter((e) => e.type === EventType.TOOL_CALL_RESULT).map((e) => e.toolCallId),
+      );
+      const unanswered = list
+        .filter((e) => e.type === EventType.TOOL_CALL_START && !answered.has(e.toolCallId))
+        .map((e) => e.toolCallName);
+      assert.ok(unanswered.length > 0, question);
+      assert.ok(
+        unanswered.every((name) => name === "FinalAnswer"),
+        question,
+      );
+    }
+  });
+
+  it("sets the answer after a pause for the reviewer that MOCK_FAST keeps", () => {
+    const timed = planRun(input(questions[0]), CONTEXT);
+    const answerState = timed.find(
+      ({ event }) =>
+        event.type === EventType.STATE_SNAPSHOT &&
+        (event as BaseEvent & { snapshot: { answer: unknown } }).snapshot.answer !== null,
+    );
+    assert.ok((answerState?.minPauseMs ?? 0) > 0);
+  });
+
+  it("rejects the first draft about vite in the messages at the end of the run", () => {
+    const list = events(input(questions[1]));
+    const snapshot = list.findLast((event) => event.type === EventType.MESSAGES_SNAPSHOT);
+    const messages = snapshot?.messages as RunAgentInput["messages"];
+    const drafts = messages.flatMap((message) =>
+      message.role === "assistant"
+        ? (message.toolCalls ?? []).filter((call) => call.function.name === "FinalAnswer")
+        : [],
+    );
+    assert.equal(drafts.length, 2);
+    const rejection = messages.find(
+      (message) => message.role === "tool" && message.toolCallId === drafts[0].id,
+    );
+    assert.match(String(rejection?.content), /^Kontrollen underkände svaret \(försök 1 av 3\):/);
+    assert.equal(finalAnswer(input(questions[1])).status, "with_reservation");
   });
 
   it("clears the previous answer at the start of a new question", () => {

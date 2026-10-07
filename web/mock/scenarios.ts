@@ -10,11 +10,15 @@
  *   - termination without an area -> the agent asks which area first: it calls the ask_user
  *     tool, which stops the run with an interrupt, and the run that resumes it gives the tool's
  *     result (the person's answer) before it goes on
- *   - "vite" -> an answer with a reservation and one unverified citation
+ *   - "vite" -> the check rejects the first draft; the second has a reservation and one
+ *     unverified citation
  *   - "bilaga" -> no answer, with a source in a Word file (no page, no PDF) and a list in the text
- *   - "avtalsnummer" -> an answer from the register: a reservation and no sources
+ *   - "avtalsnummer" -> a verified answer from the register: no quotes, but the register rows
+ *     it rests on, with one agreement written two ways (-001 and -01)
  *   - anything else -> no answer
- * Before an answer the agent calls FinalAnswer, as the real agent does, which the web app hides.
+ * Every answer is handed in with FinalAnswer and set by the check after a pause for the
+ * reviewer, as the real agent does (webbapp-kontrakt.md, points 24-27); the web app hides the
+ * call and shows that the answer is being checked.
  * The question is sent as ag-ui-langgraph does with `emit_interrupt_outcome=True`: the older
  * on_interrupt event and the AG-UI standard outcome on RUN_FINISHED. "[legacy]" in the question
  * sends only the older event (ag-ui-langgraph's default) and "[outcome]" only the standard one
@@ -32,7 +36,13 @@ import { DOCUMENT_TITLE, PAGE_TITLE } from "./fixture-pdf.ts";
 export interface TimedEvent {
   event: BaseEvent;
   pauseMs: number;
+  /** A pause that MOCK_FAST keeps, so the tests can see what the web app shows meanwhile. */
+  minPauseMs?: number;
 }
+
+/** The reviewer's pause before the answer is set: about nine seconds in the real agent. */
+const REVIEW_MS = 3000;
+const REVIEW_MIN_MS = 800;
 
 export interface MockContext {
   documentSha256: string;
@@ -103,8 +113,8 @@ class RunBuilder {
     this.push({ type: EventType.RUN_STARTED, threadId: input.threadId, runId: input.runId }, 0);
   }
 
-  private push(event: BaseEvent, pauseMs = 150): void {
-    this.events.push({ event, pauseMs });
+  private push(event: BaseEvent, pauseMs = 150, minPauseMs?: number): void {
+    this.events.push({ event, pauseMs, ...(minPauseMs ? { minPauseMs } : {}) });
   }
 
   private nextId(kind: string): string {
@@ -173,13 +183,38 @@ class RunBuilder {
     this.newMessages.push({ id: toolMessageId, role: "tool", toolCallId, content });
   }
 
-  /** The agent hands in its answer for the citation check, as the real agent does. */
-  finalAnswer(answer: Record<string, unknown>): void {
-    this.toolCall("FinalAnswer", answer, "Svaret är lämnat för kontroll.");
+  /**
+   * The agent hands in its answer with FinalAnswer, and the check (AnswerCheck) sets `answer`
+   * after the reviewer has read it, as the real agent does: no events come during the review,
+   * and the call gets no result event. Its tool message ("Svaret är lämnat för kontroll.") only
+   * comes with the messages snapshot at the end of the run.
+   */
+  handIn(answer: Record<string, unknown>): void {
+    let toolCallId = "";
+    this.step("model", () => {
+      toolCallId = this.callTool("FinalAnswer", answer);
+    });
+    this.step("AnswerCheck.after_agent", () => this.state({ answer }, REVIEW_MS, REVIEW_MIN_MS));
+    const content = "Svaret är lämnat för kontroll.";
+    this.newMessages.push({ id: this.nextId("tool"), role: "tool", toolCallId, content });
   }
 
-  state(snapshot: Record<string, unknown>): void {
-    this.push({ type: EventType.STATE_SNAPSHOT, snapshot } as BaseEvent);
+  /**
+   * A draft the check rejects: it answers the call with why, and the agent tries again. Like the
+   * accepted draft's, the answer only comes with the messages snapshot at the end of the run.
+   */
+  rejectedDraft(answer: Record<string, unknown>, reason: string): void {
+    let toolCallId = "";
+    this.step("model", () => {
+      toolCallId = this.callTool("FinalAnswer", answer);
+    });
+    this.step("AnswerCheck.after_agent", () => {});
+    const content = `Kontrollen underkände svaret (försök 1 av 3): ${reason}`;
+    this.newMessages.push({ id: this.nextId("tool"), role: "tool", toolCallId, content });
+  }
+
+  state(snapshot: Record<string, unknown>, pauseMs = 150, minPauseMs?: number): void {
+    this.push({ type: EventType.STATE_SNAPSHOT, snapshot } as BaseEvent, pauseMs, minPauseMs);
   }
 
   messagesSnapshot(): void {
@@ -275,8 +310,13 @@ function searchHits(context: MockContext, sections: [string, string, number][]) 
   };
 }
 
+/** An answer with the lists the contract always has, empty unless given. */
+function answerOf(fields: { text: string; status: string } & Record<string, unknown>) {
+  return { citations: [], reservations: [], register_facts: [], ...fields };
+}
+
 function noticePeriodAnswer(context: MockContext, area: string) {
-  return {
+  return answerOf({
     text:
       `I ramavtalet för ${area} får kunden säga upp kontraktet med tre månaders uppsägningstid, ` +
       "och uppsägningen ska vara skriftlig [1]. Vid väsentligt avtalsbrott får en part säga upp " +
@@ -304,7 +344,7 @@ function noticePeriodAnswer(context: MockContext, area: string) {
         verified: true,
       }),
     ],
-  };
+  });
 }
 
 function answerNoticePeriod(run: RunBuilder, context: MockContext, area: string): void {
@@ -323,9 +363,8 @@ function answerNoticePeriod(run: RunBuilder, context: MockContext, area: string)
       { sha256: context.documentSha256, section_number: "6.21.9" },
       { section_number: "6.21.9", page: 2, text: "Kunden har rätt att säga upp Kontraktet ..." },
     );
-    run.finalAnswer(answer);
   });
-  run.step("finalize", () => run.state({ answer }));
+  run.handIn(answer);
 }
 
 /** No answer, but a source that says where the question is regulated: a Word file. */
@@ -337,51 +376,73 @@ function answerAttachment(run: RunBuilder): void {
       { hits: [{ sha256: WORD_FILE_SHA256, section_number: null, section_title: "Avropsbilaga" }] },
     );
   });
-  run.step("finalize", () =>
-    run.state({
-      answer: {
-        text:
-          "Avtalen säger inte vilken säkerhetsnivå som gäller. Den bestäms i avropsbilagan, " +
-          "som kunden skriver själv vid avropet [1].\n\nAvropsbilagan ska ange:\n" +
-          "- krav på säkerhetsnivå\n- kontaktpersoner",
-        status: "no_answer",
-        citations: [
-          {
-            id: 1,
-            sha256: WORD_FILE_SHA256,
-            file_title: "Exempelbilaga Avropsförfrågan (fiktiv)",
-            page_title: null,
-            section_number: null,
-            section_title: "Avropsbilaga",
-            page: null,
-            quote: "Kunden anger säkerhetsnivå och kontaktpersoner i avropsbilagan.",
-            verified: true,
-          },
-        ],
-      },
+  run.handIn(
+    answerOf({
+      text:
+        "Avtalen säger inte vilken säkerhetsnivå som gäller. Den bestäms i avropsbilagan, " +
+        "som kunden skriver själv vid avropet [1].\n\nAvropsbilagan ska ange:\n" +
+        "- krav på säkerhetsnivå\n- kontaktpersoner",
+      status: "no_answer",
+      citations: [
+        {
+          id: 1,
+          sha256: WORD_FILE_SHA256,
+          file_title: "Exempelbilaga Avropsförfrågan (fiktiv)",
+          page_title: null,
+          section_number: null,
+          section_title: "Avropsbilaga",
+          page: null,
+          quote: "Kunden anger säkerhetsnivå och kontaktpersoner i avropsbilagan.",
+          verified: true,
+        },
+      ],
     }),
   );
 }
 
-/** An answer from the register: nothing in the agreement text to quote. */
+/** One row of the register, made up, as the check reads it. */
+function registerRow(fields: Record<string, unknown>) {
+  return {
+    agreement_number: "00.0-0000-2026-001",
+    supplier_name: "Exempelleverantören AB (fiktiv)",
+    former_names: ["Gamla Exempelbolaget AB (fiktivt)"],
+    org_number: "000000-0001",
+    sub_area: "IT-drift / Större (fiktivt)",
+    valid_from: "2026-01-01",
+    valid_to: "2028-12-31",
+    max_extension_to: "2030-12-31",
+    ...fields,
+  };
+}
+
+/**
+ * A verified answer from the register: nothing in the agreement text to quote, but the rows it
+ * rests on. The first agreement has two sub-areas, and the register writes its number two ways.
+ */
 function answerFromRegister(run: RunBuilder): void {
+  const rows = [
+    registerRow({}),
+    registerRow({ agreement_number: "00.0-0000-2026-01", sub_area: "IT-drift / Mindre (fiktivt)" }),
+    registerRow({
+      agreement_number: "00.0-0000-2026-002",
+      supplier_name: "Testleverantören AB (fiktiv)",
+      former_names: [],
+      org_number: "000000-0002",
+      sub_area: "IT-drift / Mindre (fiktivt)",
+      max_extension_to: null,
+    }),
+  ];
   run.step("research_agent", () => {
-    run.toolCall(
-      "search_register",
-      { framework_area: "IT-drift" },
-      {
-        rows: [{ agreement_number: "00.0-0000-2026-001 (fiktivt)", framework_area: "IT-drift" }],
-        total: 1,
-      },
-    );
+    run.toolCall("search_register", { framework_area: "IT-drift" }, { rows, total: rows.length });
   });
-  run.step("finalize", () =>
-    run.state({
-      answer: {
-        text: "Exempelavtalet för IT-drift har avtalsnummer 00.0-0000-2026-001 (fiktivt).",
-        status: "with_reservation",
-        citations: [],
-      },
+  run.handIn(
+    answerOf({
+      text:
+        "Enligt registret har exempelområdet IT-drift två avtal: 00.0-0000-2026-001 med " +
+        "Exempelleverantören AB och 00.0-0000-2026-002 med Testleverantören AB. Båda gäller " +
+        "från 2026-01-01 till 2028-12-31.",
+      status: "verified",
+      register_facts: rows,
     }),
   );
 }
@@ -444,50 +505,62 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
           searchHits(context, [["7.2", "Vite vid försenad leverans", 3]]),
         );
       });
-      run.step("finalize", () =>
-        run.state({
-          answer: {
-            text:
-              "Vid försenad leverans har kunden rätt till vite med 0,5 procent av det avropade " +
-              "värdet per påbörjad vecka, högst tio procent [1]. Om vitet också gäller " +
-              "delleveranser kunde inte bekräftas [2].",
-            status: "with_reservation",
-            citations: [
-              citation(context, {
-                id: 1,
-                section_number: "7.2",
-                section_title: "Vite vid försenad leverans",
-                page: 3,
-                quote:
-                  "Om Leverantören inte levererar i tid har Kunden rätt till vite med 0,5 procent " +
-                  "av det avropade värdet för varje påbörjad vecka, dock högst tio (10) procent.",
-                verified: true,
-              }),
-              citation(context, {
-                id: 2,
-                section_number: "7.2",
-                section_title: "Vite vid försenad leverans",
-                page: 3,
-                quote: "Vite utgår även vid försenad delleverans.",
-                verified: false,
-              }),
-            ],
-          },
+      const quote2 = citation(context, {
+        id: 2,
+        section_number: "7.2",
+        section_title: "Vite vid försenad leverans",
+        page: 3,
+        quote: "Vite utgår även vid försenad delleverans.",
+        verified: false,
+      });
+      run.rejectedDraft(
+        answerOf({ text: "Vite utgår även vid försenad delleverans [1].", status: "verified" }),
+        "citat 1 står inte i avsnittet. Läs avsnittet och citera det ordagrant.",
+      );
+      run.step("research_agent", () => {
+        run.toolCall(
+          "read_section",
+          { sha256: context.documentSha256, section_number: "7.2" },
+          { section_number: "7.2", page: 3, text: "Om Leverantören inte levererar i tid ..." },
+        );
+      });
+      run.handIn(
+        answerOf({
+          text:
+            "Vid försenad leverans har kunden rätt till vite med 0,5 procent av det avropade " +
+            "värdet per påbörjad vecka, högst tio procent [1]. Om vitet också gäller " +
+            "delleveranser kunde inte bekräftas [2].",
+          status: "with_reservation",
+          citations: [
+            citation(context, {
+              id: 1,
+              section_number: "7.2",
+              section_title: "Vite vid försenad leverans",
+              page: 3,
+              quote:
+                "Om Leverantören inte levererar i tid har Kunden rätt till vite med 0,5 procent " +
+                "av det avropade värdet för varje påbörjad vecka, dock högst tio (10) procent.",
+              verified: true,
+            }),
+            quote2,
+          ],
+          reservations: [
+            "Citat 2 kunde inte kontrolleras mot avtalstexten.",
+            "Svaret granskades inte mot källorna, eftersom det inte klarade kontrollen av " +
+              "citat och registeruppgifter.",
+          ],
         }),
       );
     } else {
       run.step("research_agent", () => {
         run.toolCall("search_documents", { query: question.slice(0, 80) }, { hits: [] });
       });
-      run.step("finalize", () =>
-        run.state({
-          answer: {
-            text:
-              "Jag hittar inget i avtalen som besvarar frågan. Ange gärna vilket ramavtal du menar " +
-              "eller formulera frågan på ett annat sätt.",
-            status: "no_answer",
-            citations: [],
-          },
+      run.handIn(
+        answerOf({
+          text:
+            "Jag hittar inget i avtalen som besvarar frågan. Ange gärna vilket ramavtal du menar " +
+            "eller formulera frågan på ett annat sätt.",
+          status: "no_answer",
         }),
       );
     }
