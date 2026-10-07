@@ -143,6 +143,7 @@ spåras inte; det hör till mätningen, inte till agenten
 | Flagga | Standard | Betydelse |
 |---|---|---|
 | `--gold` | `evals/datasets/gold_sv.jsonl` | testsamlingen |
+| `--mode` | `agent` | `agent`, eller `workflow` för baslinjen (se nedan) |
 | `--only ID …` | alla | bara dessa frågor |
 | `--effort` | `AGENT_REASONING_EFFORT` | agentens resonemangsnivå |
 | `--concurrency` | 4 | frågor åt gången |
@@ -261,12 +262,12 @@ ställs, så en körning som har kostat pengar inte går förlorad på slutet.
 
 | Fil | Tester | Vad |
 |---|---:|---|
-| `tests/unit/evals/test_answer_run.py` | 18 | En fråga genom agentens riktiga graf med en skriptad modell: svar, utkast, verktyg med argument, modellanrop och tokens; `ask_user` får det fasta svaret; ett utkast som kontrollen och ett som granskaren skickar tillbaka, med skälen ur återkopplingen; ett `read_section` till ett mål ur ett tidigare svars hänvisningar; ett verktygsfel; ett fel med en hemlighet som döljs; en nyckel som OpenAI inte tar emot stoppar körningen; tidsgränsen; gränsen för modellanrop; ett felaktigt argument som inte gör att svaret går förlorat; tokens, kostnad och felgrupper |
+| `tests/unit/evals/test_answer_run.py` | 19 | En fråga genom agentens riktiga graf med en skriptad modell: svar, utkast, verktyg med argument, modellanrop och tokens; `ask_user` får det fasta svaret, eller frågans förtydligande, och alternativen sparas per motfråga; ett utkast som kontrollen och ett som granskaren skickar tillbaka, med skälen ur återkopplingen; ett `read_section` till ett mål ur ett tidigare svars hänvisningar; ett verktygsfel; ett fel med en hemlighet som döljs; en nyckel som OpenAI inte tar emot stoppar körningen; tidsgränsen; gränsen för modellanrop; ett felaktigt argument som inte gör att svaret går förlorat; tokens, kostnad och felgrupper |
 | `tests/unit/evals/test_answer_steps.py` | 17 | Varje anrop i ordning med argument och utfall; mål ur hänvisningar (position eller nummer, bara ur svar före anropet, inte hela filer, också ur `resolve_reference` och ur JSON-texten) och ändringar ur `find_amendments`; om en tidigare sökning hade gett avsnittet (träff eller kopia, bara ur lyckade svar före anropet); positioner som inte är siffrorna 0–9 ("²", "①", "٣٧"); varje regels egna fel räknas till rätt regel; återkopplingens rader och de underkända utkasten |
-| `tests/unit/evals/test_answer_scores.py` | 20 | Citatens positioner ur utkastet, källor på plats (position eller nummer), bara godkända citat, avtal med samma nyckel, regeln för svar utan utkast, sammanfattningen (där ett svar utan utkast inte räknas som "framgår inte"), agentens väg (verktyg, modellanrop, läsningar ur hänvisningar med och utan sökträff och nya försök efter regel, i de frågor vars väg sparades), kategorierna och percentilen |
-| `tests/unit/evals/test_answer_report.py` | 24 | Rapporternas namn, Markdown med svenska tal, skäl, fel och svar som citat, utan domare, en domare som inte svarade, svar utan utkast, samma modell som agent och granskare, raden Följdfrågor också vid noll, vägen per fråga med argument och märken, utkastet som blev ett svar med reservation, tabellerna per verktyg och regel, båda måtten för hänvisningar och `resolve_reference`, en fråga som aldrig nådde agenten (inte sparat, `null` i JSON) och en som nådde den utan anrop (noll), metodens definitioner, commit (ur git eller `AVTALSAGENT_COMMIT`, och vad den gäller) och prompternas hash, JSON, utskriften, och mappen som prövas före körningen och vid skrivning |
-| `tests/unit/evals/test_judge.py` | 8 | Domarens klient, frågan med båda svaren, att ingen text kan avsluta sitt element, det strikta schemat, ett lyckat och två misslyckade anrop |
-| `tests/unit/evals/test_run_answer_eval.py` | 20 | Urvalet av frågor, inställningarna, commit och ändringar ur git (och utan git eller utanför ett repo, oberoende av var testets mapp ligger och av `GIT_DIR`), commit ur `AVTALSAGENT_COMMIT` när git inte kan svara, prompternas hash, bedömningen (ingen utan domare), avtal-mcp som inte svarar, en nyckel som OpenAI inte tar emot, frågor åt gången i facits ordning, kommandoradens utskrift och fel, och en mapp som inte går att skriva i stoppar före första frågan |
+| `tests/unit/evals/test_answer_scores.py` | 25 | Citatens positioner ur utkastet, källor på plats (position eller nummer), bara godkända citat, avtal med samma nyckel, regeln för svar utan utkast, sammanfattningen (där ett svar utan utkast inte räknas som "framgår inte"), agentens väg (verktyg, modellanrop, läsningar ur hänvisningar med och utan sökträff och nya försök efter regel, i de frågor vars väg sparades), kategorierna och percentilen; motfrågorna (rätt bara när den skiljer alternativen åt, onödig, ej bedömd, en körning som aldrig frågar) och poängen per bedömning |
+| `tests/unit/evals/test_answer_report.py` | 28 | Rapporternas namn, Markdown med svenska tal, skäl, fel och svar som citat, utan domare, en domare som inte svarade, svar utan utkast, samma modell som agent och granskare, raden Följdfrågor också vid noll, vägen per fråga med argument och märken, utkastet som blev ett svar med reservation, tabellerna per verktyg och regel, båda måtten för hänvisningar och `resolve_reference`, en fråga som aldrig nådde agenten (inte sparat, `null` i JSON) och en som nådde den utan anrop (noll), metodens definitioner, commit (ur git eller `AVTALSAGENT_COMMIT`, och vad den gäller) och prompternas hash, JSON, utskriften, och mappen som prövas före körningen och vid skrivning; avsnittet Motfrågor (fråga, inte fråga, onödig), dess JSON och utskrift, och en körning av baslinjen (namn, de fasta stegen, 0 av de frågor där den borde fråga) |
+| `tests/unit/evals/test_judge.py` | 9 | Domarens klient, frågan med båda svaren, förtydligandet efter frågan, att ingen text kan avsluta sitt element, det strikta schemat, ett lyckat och två misslyckade anrop |
+| `tests/unit/evals/test_run_answer_eval.py` | 26 | Urvalet av frågor, inställningarna, commit och ändringar ur git (och utan git eller utanför ett repo, oberoende av var testets mapp ligger och av `GIT_DIR`), commit ur `AVTALSAGENT_COMMIT` när git inte kan svara, prompternas hash, bedömningen (ingen utan domare), avtal-mcp som inte svarar, en nyckel som OpenAI inte tar emot, frågor åt gången i facits ordning, kommandoradens utskrift och fel, och en mapp som inte går att skriva i stoppar före första frågan; `--mode workflow` (baslinjens graf, rapportens namn och promptens hash), förtydligandet till domaren bara när agenten frågade, motfrågornas domare bara där agenten skulle fråga och frågade, och båda domarnas tokens |
 
 ## Kända begränsningar
 
@@ -302,3 +303,87 @@ docker compose --profile eval run --rm eval            # alla 30 frågor, cirka 
 - att sammanfattningen och tabellerna har 30 frågor och inga fel i körningen;
 - några av domarens bedömningar mot svaren längst ned i rapporten, särskilt de som inte är rätt;
 - att q06 och q26, frågornas fällor, finns med bland de svar du vill tala om på presentationen.
+
+## Baslinjen och oklara frågor (tillagt efter M12)
+
+Rekryteringspanelens granskning pekade ut den största luckan: att agenten slår ett fast
+arbetsflöde var ett påstående, inte ett mått. Mätningen har därför fått en baslinje och stöd för
+frågor där agenten ska fråga användaren. Besluten och varför står i
+[ADR 0024](../adr/0024-baslinje-fast-workflow.md).
+
+### Kommandon
+
+```bash
+# Baslinjen på de 30 testfrågorna, med samma modell, kontroll, granskare, gränser och domare:
+uv run python -m evals.run_answer_eval --mode workflow
+uv run python -m evals.run_answer_eval                 # agenten, som förut
+
+# Jämför två rapporter av samma testsamling (A och B; B−A med 95 %-intervall):
+uv run python -m evals.compare_answer_runs \
+    evals/reports/answers-gpt-6.1-sol-low.json \
+    evals/reports/answers-gpt-6.1-sol-low-workflow.json
+
+# Oklara frågor (en fil i samma format med should_ask, options och clarification):
+uv run python -m evals.run_answer_eval --gold <oklara-frågor>.jsonl
+uv run python -m evals.run_answer_eval --gold <oklara-frågor>.jsonl --mode workflow
+```
+
+Baslinjens rapporter heter `answers-<modell>-<resonemang>-workflow[-<etikett>]`, och jämförelsen
+skrivs till `compare-<A>-vs-<B>.md` i `--out` (standard `evals/reports/`). Jämförelsen vägrar två
+rapporter av olika testsamlingar (guldfilens sha256) eller med olika frågor (till exempel olika
+`--only`).
+
+### Vad som mäts
+
+- **Baslinjen** (`evals/workflow_baseline.py`) tar samma steg i samma ordning för varje fråga:
+  ett modellanrop som läser frågan (område, delområde, avtal, leverantör och två sökfrågor),
+  `search_register` när frågan nämner ett område, ett avtal eller en leverantör,
+  `search_documents` och `read_section` på de fem första olika avsnitten, `find_amendments` på
+  dem och `read_section` på högst fem ändringar, och `search_documents` i Frågor och svar med
+  `read_section` på de tre första träffarna. Sedan skriver modellen svaret utan verktyg, och
+  agentens kontroll, granskare och nya försök tar vid. Stegen står i rapportens väg per fråga som
+  agentens anrop gör, och läsningen av frågan räknas som ett modellanrop.
+- **Jämförelsen** (`evals/compare_answer_runs.py`) ger för båda körningarna, totalt och per
+  kategori: rätt (rätt 1, delvis rätt 0,5, fel 0; en fråga utan bedömning räknas inte),
+  andelen kontrollerade svar, facits källor, tid och modellanrop (median) och kostnad, och den
+  parade skillnaden B−A med ett 95 %-intervall för rätt och för facits källor; vidare
+  bedömningarna sida vid sida per fråga, och motfrågorna när testsamlingen har sådana.
+- **Oklara frågor:** en fråga i testsamlingen kan ange `should_ask` (om agenten ska fråga),
+  `options` (alternativen en bra motfråga ger, minst två när den ska fråga) och `clarification`
+  (användarens svar). Frågar agenten får den förtydligandet i stället för det fasta svaret, och
+  domaren läser förtydligandet med frågan; frågar den inte bedöms svaret mot frågan som den
+  ställdes. En andra domare (`evals/ask_judge.py`, samma modell och nivå) avgör om motfrågan
+  låter användaren välja mellan de väntade alternativen. Rapportens avsnitt Motfrågor visar per
+  fråga om agenten skulle fråga, om den frågade, motfrågan med alternativen, om den skiljer
+  alternativen åt och varför, och bedömningen av svaret, med raden "frågade när den borde i n av
+  m (k med en motfråga som skiljer alternativen åt); frågade i onödan i n av m". Baslinjen kan
+  inte fråga och får 0 av m.
+
+En provkörning 2026-10-07 mot ersättaren för avtal-mcp: baslinjen på q01 blev rätt och
+kontrollerad på 30 sekunder med två modellanrop; agenten på den oklara frågan a01 frågade om
+uppdraget är högst eller över 1 000 timmar (domaren: skiljer alternativen åt), fick
+förtydligandet och svarade rätt; baslinjen på a01 svarade fel. Utkastet med de oklara frågorna
+är inte godkänt och ligger inte i repot, och hela jämförelsen på de 30 frågorna är inte körd.
+
+### Tester
+
+| Fil | Tester | Vad |
+|---|---:|---|
+| `tests/unit/evals/test_workflow_baseline.py` | 12 | De fasta stegen i ordning med sina argument, sparade som steg (en ändring märkt som ändring); läsningen av frågan räknas som modellanrop, mot gränsen, och dess tokens når körningens räknare; modellen erbjuds bara `FinalAnswer`; kontrollen skickar tillbaka ett dåligt utkast; ett verktygsfel (också ett verktyg som saknas) stoppar inte flödet; en plan som inte går att läsa ger en sökning på frågan utan filter; prompten delar agentens regler ordagrant och går inte att bygga om agentens prompt ändras; planens områden täcker testsamlingens |
+| `tests/unit/evals/test_ask_judge.py` | 6 | Motfrågans domare: frågan, de väntade alternativen och agentens motfrågor med alternativ, att ingen text kan avsluta sitt element, det strikta schemat, ett lyckat och två misslyckade anrop |
+| `tests/unit/evals/test_compare_answer_runs.py` | 6 | Två rapporter sida vid sida, den parade skillnaden över frågor som bedömts i båda, olika testsamlingar och olika frågor vägras, kommandoraden, motfrågornas tal och en rapport från före läget |
+| `tests/unit/evals/test_gold.py` | 13 nya (63) | Fälten för motfrågor: utan dem som förut, giltiga, och tio sätt att ange dem fel |
+
+Ändrade filer har fått tester i tabellen ovan (talen där gäller nu).
+
+### Kända begränsningar
+
+- **Baslinjen är vår konstruktion.** Ett annat fast flöde kunde göra bättre eller sämre ifrån
+  sig; gränserna (fem, fem och tre avsnitt) är valda, inte uppmätta. Baslinjen kan inte söka
+  igen, följa hänvisningar, bläddra i registret, räkna datum eller fråga användaren, och det är
+  just det jämförelsen ska visa värdet av.
+- **Ersättaren.** Provkörningarna är gjorda mot ersättaren för avtal-mcp; jämförelsen bör köras
+  mot den riktiga databasen innan den visas.
+- **Motfrågornas domare är en modell**, och med fyra frågor där agenten ska fråga är talet grovt.
+- **En körning per fråga och läge.** Intervallet tar hänsyn till antalet frågor, inte till att
+  svaren varierar mellan körningar.
