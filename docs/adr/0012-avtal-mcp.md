@@ -12,8 +12,7 @@ får läsa. M6 bygger den. För MVP:n är det sex av planens åtta verktyg; `fin
 `sok_dokument`, `las_avsnitt` och så vidare. Argumenten heter som i kontraktet där dess punkt 5
 har ett namn (`query`, `framework_area`, `agreement_number`, `sha256`, `section_number`,
 `reference` och `limit`); `document_type`, `section_position`, `supplier`, `org_number`,
-`valid_on`, `offset` och `sub_area` (tillagt efter M8) är nya namn som ska skickas till
-webbappstråden.
+`valid_on` och `offset` är nya namn som ska skickas till webbappstråden.
 
 Det som styr besluten:
 
@@ -69,13 +68,11 @@ Det som styr besluten:
    upphandlingen, i alla tre verktyg som tar `agreement_number`. Ett okänt värde är ett fel, inte
    en tom lista som modellen skulle tolka som att avtalen inte säger något. `list_documents`
    använder sökningens egna villkor (`hybrid_search.scope_conditions`), så filtren betyder samma
-   sak i båda. Ett delområde i `search_register` (`sub_area`, tillagt efter M8) delas vid "/",
-   och registrets väg ska innehålla varje del; ett delområde som ingen väg har är ett fel som
-   räknar upp områdets delområden (docs/steg/06-verktyg.md, avsnitt 8).
+   sak i båda.
 7. **Argumenten är delade `Annotated`-typer** i `arguments.py`, med gränser och svenska
    beskrivningar. Namnen är kontraktets där punkt 5 har ett; `document_type`,
-   `section_position`, `supplier`, `org_number`, `valid_on`, `offset` och `sub_area` är nya och
-   skickas till webbappstråden. Servern kontrollerar gränserna, och att ingen text har tecknet NUL, innan en
+   `section_position`, `supplier`, `org_number`, `valid_on` och `offset` är nya och skickas till
+   webbappstråden. Servern kontrollerar gränserna, och att ingen text har tecknet NUL, innan en
    session öppnas. Ett argumentnamn som verktyget inte har ger ett fel som räknar upp
    verktygets argument, och varje schema har `additionalProperties: false` (`server.AvtalMCP`):
    SDK:t skulle annars släppa argumentet, och ett felstavat filter ge ett svar utan filter. Ett

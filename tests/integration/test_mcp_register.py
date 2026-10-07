@@ -111,12 +111,14 @@ ADVANIA_SECOND = register_row(
 )
 
 # Invented rows with the register's three levels for Bemanningstjänster (service group, then
-# region), the same region in another area, and a region of its own.
+# region), the same region in another area, a region of its own, and an area whose top level
+# is a county, not the area's own name, as in Hotelltjänster.
 IT_UPTO = "Bemanningstjänster - IT-tjänster upp till 1000 timmar"
 IT_OVER = "Bemanningstjänster - IT-tjänster överstigande 1000 timmar"
 OFFICE = "Bemanningstjänster - Kontorstjänster upp till 1000 timmar"
 OFFICE_AGREEMENT = "23.3-14537-2023-005"
 RECRUITMENT = "23.3-9000-2024-001"
+HOTEL = "23.3-9100-2024-001"
 REGION_ROWS = [
     register_row(source_row, number, supplier, org, area, "unused").model_copy(
         update={"sub_area_path": path}
@@ -161,6 +163,14 @@ REGION_ROWS = [
             NETBIN_ORG,
             "Rekryteringstjänster",
             ("Rekryteringstjänster", "Rekrytering av chefer", "Övre Norrland"),
+        ),
+        (
+            20,
+            HOTEL,
+            "NetBin Sverige AB",
+            NETBIN_ORG,
+            "Hotelltjänster",
+            ("Gävleborgs län", "Gävle"),
         ),
     ]
 ]
@@ -707,8 +717,14 @@ def test_a_sub_area_keeps_the_paths_that_have_every_part(
             "Inget delområde i IT-drift innehåller 'Övre Norrland'. Delområden: "
             "IT-drift Mindre, upp till 200 anställda; Tilläggstjänster.",
         ),
+        # The county at the top level is a sub-area too.
+        (
+            {"sub_area": "Gävleborg län", "framework_area": "Hotelltjänster"},
+            "Inget delområde i Hotelltjänster innehåller 'Gävleborg län'. Delområden: Gävle; "
+            "Gävleborgs län.",
+        ),
     ],
-    ids=["misspelt in an area", "misspelt", "percent", "underscore", "another area"],
+    ids=["misspelt in an area", "misspelt", "percent", "underscore", "another area", "a county"],
 )
 def test_a_sub_area_no_path_has_is_an_error_that_lists_the_areas_sub_areas(
     regions: Engine, sessions: sessionmaker[Session], filters: dict[str, Any], message: str

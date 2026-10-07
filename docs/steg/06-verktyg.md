@@ -209,11 +209,17 @@ Bemanningstjänster - IT-tjänster upp till 1000 timmar / Övre Norrland". Argum
 En enda delsträng av hela vägen hade gett noll rader för just den texten, och bara den sista
 nivån hade missat tjänstegruppen, som står på nivå två. `sub_area` räcker som enda filter.
 Finns ingen rad, frågar verktyget om något delområde alls har delarna (inom området, om det är
-angivet). Har inget det, är det ett fel som räknar upp områdets delområden (högst 40 namn,
-annars ett råd att söka med en kortare del), så att en felstavad region inte läses som "inga
-leverantörer där". Ett delområde som finns men som de andra filtren utesluter ger en tom lista.
+angivet). Har inget det, är det ett fel, så att en felstavad region inte läses som "inga
+leverantörer där". Med `framework_area` räknar felet upp områdets delområden (högst 40 namn,
+annars ett råd att söka med en kortare del); utan det ber felet om `framework_area` eller en
+kortare del. Nivå 1 är oftast områdets eget namn, men i Hotelltjänster, Hotelltjänster Longstay
+och Konferenser och möten ett län, så felet räknar upp alla nivåer utom områdets eget namn. Ett
+delområde som finns men som de andra filtren utesluter ger en tom lista.
 Filtret kom till efter provkörningen av M8: utan det fick agenten bläddra igenom alla 224 rader
 i Bemanningstjänster för att räkna upp leverantörerna i en region, och den slutade efter 60.
+Filtret ersätter inte bläddrandet: "IT-tjänster / Övre Norrland" ryms på en sida (14 rader),
+men regionen i hela Bemanningstjänster är 28 rader och ett län i Konferenser och möten flera
+hundra. Prompten säger därför åt agenten att hämta sidor tills den har läst `total` rader.
 
 ### 9. Utanför paketet
 
@@ -236,9 +242,9 @@ i Bemanningstjänster för att räkna upp leverantörerna i en region, och den s
 | `tests/unit/mcp_server/test_mcp_register_checks.py` | Att ett filter krävs (också att ett tomt `sub_area` inte räcker), organisationsnumrens former, `list_documents` utan index, gränserna, NUL, `offset` och standardvärdena i schemat, att varje dokumenttyp har en plats i ordningen |
 | `tests/unit/mcp_server/test_mcp_register_sql.py` | Med en påhittad session: ett avtal som registret skriver på två sätt hittas med båda stavningarna, dokumentfiltret tar den stavning som indexet sparade, och `search_register` frågar efter båda; `offset` och `limit` kommer efter sorteringen men inte i totalen; `sub_area` delas i delar som var och en blir ett villkor på vägen, med `%` och `_` som tecken, och ett delområde som inget delområde har är ett fel |
 | `tests/integration/test_mcp_documents.py` | De fyra dokumentverktygen på M5:s korpus med fyra påhittade hänvisningar: träffarna med kopior, filtren (också ett upphandlingsnummer), att läsa med nummer, plats eller båda, tvetydiga nummer, innehållsförteckningen, hänvisningarna i textordning, att det som hålls tillbaka inte visas och räknas (en gång, också via två avtalssidor), att inget visas mellan `process` och `index`, att serverns anslutning inte kan skriva, och ett anrop per verktyg genom SDK:ts klient i minnet |
-| `tests/integration/test_mcp_register.py` | `list_documents` och `search_register` på samma korpus plus en påhittad registerrad: varje filter för sig och tillsammans, tidigare namn på raderna, registrets stavning, ett avtal som registret skriver på två sätt, upphandlingsnummer, okända värden, gränsen, `offset` och totalen, `%` och `_`, filer som hålls tillbaka, `list_documents` utan index, och ett anrop per verktyg genom MCP; med påhittade rader i tre nivåer: `sub_area` med delarna i båda ordningarna och med gemener, en del på valfri nivå, tillsammans med de andra filtren, och felet som räknar upp områdets delområden |
+| `tests/integration/test_mcp_register.py` | `list_documents` och `search_register` på samma korpus plus en påhittad registerrad: varje filter för sig och tillsammans, tidigare namn på raderna, registrets stavning, ett avtal som registret skriver på två sätt, upphandlingsnummer, okända värden, gränsen, `offset` och totalen, `%` och `_`, filer som hålls tillbaka, `list_documents` utan index, och ett anrop per verktyg genom MCP; med påhittade rader i tre nivåer: `sub_area` med delarna i båda ordningarna och med gemener, en del på valfri nivå, tillsammans med de andra filtren, och felet som räknar upp områdets delområden, också i ett område där nivå 1 är ett län |
 
-84 enhetstester och 87 integrationstester. Integrationstesterna använder samma korpus och samma
+98 enhetstester och 103 integrationstester (M6 hade 84 och 87). Integrationstesterna använder samma korpus och samma
 påhittade embedder (`TopicEmbedder`) som M5:s tester, och läser genom en skrivskyddad anslutning
 som servern gör.
 
@@ -266,7 +272,8 @@ som servern gör.
 - **Nya argumentnamn** (`document_type`, `section_position`, `supplier`, `sub_area`,
   `org_number`, `valid_on`, `offset`) ska skickas till webbappstråden enligt kontraktets punkt 5.
 - **`sub_area` viker inte accenter.** "ovre norrland" hittar inte "Övre Norrland" (databasen har
-  inte tillägget `unaccent`); felet räknar då upp områdets delområden. Tre vägar utanför piloten
+  inte tillägget `unaccent`); felet räknar då upp områdets delområden, om `framework_area` är
+  angivet. Tre vägar utanför piloten
   har dubbla mellanslag i en nivå och hittas bara med en del utan dem.
 
 ## Så verifierar du M6 själv

@@ -247,9 +247,9 @@ def _require_sub_area(
             f"{message} Ange framework_area, så listas områdets delområden, eller sök med "
             "en kortare del av namnet."
         )
-    names = sorted(
-        set(session.scalars(select(area.name).where(*in_area, area.level > 1).distinct()))
-    )
+    # Level 1 is most often the area's own name, but in some areas a county.
+    own_name = (area.level == 1) & (area.name == area.framework_area)
+    names = sorted(set(session.scalars(select(area.name).where(*in_area, ~own_name).distinct())))
     if not names:
         raise NotFoundError(f"{message} Området har inga delområden; sök utan sub_area.")
     if len(names) > _MAX_LISTED_SUB_AREAS:
