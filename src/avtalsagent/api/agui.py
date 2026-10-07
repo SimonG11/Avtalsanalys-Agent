@@ -8,7 +8,7 @@ What:
 
 Why:
     ag-ui-langgraph turns LangGraph's events into AG-UI's, which CopilotKit
-    reads (ADR 0010). Five of its defaults do not fit the contract
+    reads (ADR 0010). Six of its defaults do not fit the contract
     (webbapp-kontrakt.md) or the API:
     - A state snapshot holds the whole state again with every step: every
       message, and the draft before its check (`structured_response`).
@@ -24,6 +24,13 @@ Why:
       off: the web app reads the outcome (the web thread confirmed this
       2026-10-07, and its tests run that shape alone).
     - A RAW copy of every LangGraph event is off: nothing reads it.
+    - Each run's config is filled in with LangChain's defaults, and their
+      recursion limit (25 of LangGraph's steps) replaced the graph's own
+      (`create_agent`'s 9 999). With the middleware a model call is about
+      four steps, so a question that needed more than about six model
+      calls failed in the web app, though not on the command line. The
+      agent's config sets the graph's own limit again;
+      `ModelCallLimitMiddleware` is what bounds a run (`agent/graph.py`).
     - The client's `state` and `forwardedProps.node_name` are dropped.
       With `node_name`, the library's "continue" mode writes the client's
       state into the graph as that node, past the input schema, and goes
@@ -115,10 +122,19 @@ def make_agui_agent(graph: AvtalAgent) -> AvtalAguiAgent:
     return AvtalAguiAgent(
         name=AGENT_NAME,
         graph=graph,
+        config={"recursion_limit": recursion_limit(graph)},
         enable_legacy_on_interrupt_event=False,
         emit_interrupt_outcome=True,
         emit_raw_events=False,
     )
+
+
+def recursion_limit(graph: AvtalAgent) -> int:
+    """The graph's own recursion limit, which `create_agent` sets, for each run's config."""
+    limit = (graph.config or {}).get("recursion_limit")
+    if not isinstance(limit, int):
+        raise TypeError("the agent's graph has no recursion limit of its own")
+    return limit
 
 
 class AgentRuns:

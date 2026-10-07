@@ -266,6 +266,25 @@ async def test_a_question_streams_the_steps_and_ends_with_the_checked_answer() -
 
 
 @pytest.mark.anyio
+async def test_a_question_with_many_steps_is_not_stopped_by_langchains_default_limit() -> None:
+    # A model call is about four of LangGraph's steps with the middleware. With LangChain's
+    # default recursion limit (25) a run in the web app stopped after about six model calls.
+    searches = [tool_call("search_documents", {"query": f"sökning {n}"}, f"c{n}") for n in range(8)]
+    app, model = app_with(
+        [*searches, final_answer("Uppsägningstiden är tre månader [1].", [GOOD], call_id="c9")]
+    )
+
+    async with client_of(app) as client:
+        events = await post(client, run_input("r1", QUESTION))
+
+    assert of_type(events, "RUN_ERROR") == []
+    assert events[-1]["type"] == "RUN_FINISHED"
+    assert len(of_type(events, "TOOL_CALL_START")) >= 8
+    assert of_type(events, "STATE_SNAPSHOT")[-1]["snapshot"]["answer"]["status"] == "verified"
+    assert model.script == []  # every scripted call was made
+
+
+@pytest.mark.anyio
 async def test_a_state_snapshot_holds_only_the_answer_and_it_starts_as_null() -> None:
     app, _ = app_with([final_answer("Tre månader [1].", [GOOD], call_id="c1")])
 

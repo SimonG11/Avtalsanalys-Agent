@@ -29,7 +29,9 @@ How:
       the last failed draft would have got (`fallback_answer`), or
       `no_answer` when no draft failed. The count is not checkpointed, so
       a run resumed after `ask_user` counts from zero. (`create_agent`
-      sets LangGraph's recursion limit itself.)
+      sets LangGraph's recursion limit itself, to 9 999; the API passes it
+      on to each run, since ag-ui-langgraph would otherwise put
+      LangChain's default of 25 in its place, `api/agui.py`.)
     - `AnswerOpenToolCalls` gives the model an error result for a tool
       call whose run broke off before the tool answered, so the
       conversation can go on (`open_tool_calls.py`).
