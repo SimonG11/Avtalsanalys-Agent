@@ -4,7 +4,8 @@ What:
     One `Annotated` type per kind of argument: `Query`, `Sha256`, `Limit` and
     `Offset`, which a tool requires or gives a default, and the optional
     `FrameworkArea`, `AgreementNumber`, `DocumentTypeArg`, `SectionNumber`,
-    `SectionPosition`, `Reference`, `Supplier`, `OrgNumber` and `ValidOn`.
+    `SectionPosition`, `Reference`, `Supplier`, `SubAreaArg`, `OrgNumber` and
+    `ValidOn`.
 
 Why:
     The MCP SDK builds each tool's JSON schema from its signature, and the
@@ -20,8 +21,8 @@ How:
     Pydantic `Field` constraints and descriptions. The names are the
     contract's where its point 5 has one: `query`, `framework_area`,
     `agreement_number`, `sha256`, `section_number`, `reference` and `limit`.
-    `document_type`, `section_position`, `supplier`, `org_number`, `valid_on`
-    and `offset` are new names, to be sent to the web-app thread.
+    `document_type`, `section_position`, `supplier`, `org_number`, `valid_on`,
+    `offset` and `sub_area` are new names, to be sent to the web-app thread.
     Descriptions are in Swedish because the questions and the documents are.
     An optional argument's type includes None (`framework_area:
     FrameworkArea = None`): Pydantic then puts the description on the
@@ -154,6 +155,19 @@ Supplier = Annotated[
         min_length=2,
         max_length=200,
         description="Leverantörens namn eller en del av det.",
+    ),
+    _NO_NUL,
+]
+SubAreaArg = Annotated[
+    str | None,
+    Field(
+        min_length=2,
+        max_length=200,
+        description=(
+            "Delområde eller region, eller en del av namnet, t.ex. 'Övre Norrland' eller "
+            "'IT-drift Större'. Skilj flera delar med ' / '; alla delar måste finnas i "
+            "delområdet, t.ex. 'IT-tjänster / Övre Norrland'."
+        ),
     ),
     _NO_NUL,
 ]

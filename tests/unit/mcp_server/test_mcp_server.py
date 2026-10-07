@@ -34,6 +34,7 @@ from avtalsagent.mcp_server.arguments import (
     Reference,
     SectionNumber,
     Sha256,
+    SubAreaArg,
     Supplier,
 )
 from avtalsagent.mcp_server.errors import NotFoundError
@@ -70,6 +71,7 @@ CONTRACT_ARGUMENTS = {
     "section_position",
     "reference",
     "supplier",
+    "sub_area",
     "org_number",
     "valid_on",
     "limit",
@@ -276,7 +278,16 @@ async def test_an_argument_out_of_range_is_an_error_before_any_session(
 
 @pytest.mark.parametrize(
     "argument",
-    [Query, FrameworkArea, AgreementNumber, SectionNumber, Reference, Supplier, OrgNumber],
+    [
+        Query,
+        FrameworkArea,
+        AgreementNumber,
+        SectionNumber,
+        Reference,
+        Supplier,
+        SubAreaArg,
+        OrgNumber,
+    ],
     ids=[
         "Query",
         "FrameworkArea",
@@ -284,6 +295,7 @@ async def test_an_argument_out_of_range_is_an_error_before_any_session(
         "SectionNumber",
         "Reference",
         "Supplier",
+        "SubAreaArg",
         "OrgNumber",
     ],
 )

@@ -51,7 +51,10 @@ Varje anrop tog 4–5 sekunder.
 Efter granskningens rättelser kördes fyra av frågorna igen (q10, q11, q01, q24). Alla fyra blev
 `verified` utan nya försök, men q11 räknade bara upp tre av de sju leverantörerna: agenten läste
 60 av registrets 224 rader för Bemanningstjänster och slutade bläddra, och granskaren ser bara
-raderna för avtalen som svaret anger. Se Kända begränsningar.
+raderna för avtalen som svaret anger. Med filtret på delområde (`sub_area`, PR:n efter M8) kördes
+q11 och q12 igen: agenten frågade efter "IT-tjänster / Övre Norrland" och "IT-säkerhet", fick 14
+respektive 8 rader på en sida och räknade upp alla sju och alla åtta leverantörer, `verified`
+utan nya försök (36 och 26 sekunder).
 
 Provkörningen hittade tre fel som är rättade: granskaren fick inte leverantörens tidigare namn ur
 registret och underkände därför ett rätt svar (raden har nu `former_names`), granskaren såg inte
@@ -269,10 +272,12 @@ uv run pytest tests/unit
   följdfråga ("Och för Mindre?") bedöms utan de tidigare frågorna i samtalet.
 - **En uppräkning kan vara ofullständig utan att kontrollen märker det.** Kontrollen prövar det
   som svaret säger mot raderna för avtalen som det anger, inte att agenten har läst alla rader.
-  `search_register` kan inte avgränsa till ett delområde eller en region, så en fråga om
-  leverantörer i en region kräver att agenten bläddrar igenom hela området (224 rader för
-  Bemanningstjänster), och i en provkörning slutade den efter 60 (q11). Ett filter på delområde i
-  `search_register` kommer i nästa PR, tillsammans med `find_amendments`.
+  Utan filter på delområde fick agenten bläddra igenom hela området (224 rader för
+  Bemanningstjänster) för en fråga om leverantörer i en region, och i en provkörning slutade den
+  efter 60 (q11). `search_register` har nu `sub_area` (steg 6, avsnitt 8), och med det fick q11
+  alla sju leverantörer på en sida (se Resultat). En uppräkning över flera sidor kan fortfarande
+  bli ofullständig om agenten slutar bläddra; prompten säger åt den att läsa tills den har `total`
+  rader.
 - **Registerregeln parar värden inom en mening eller rad.** Ett organisationsnummer i nästa
   mening eller på nästa rad i en lista prövas mot alla angivna avtal, inte mot avtalet som
   meningen före nämner. Ett organisationsnummer eller datum med en siffra för mycket eller för lite

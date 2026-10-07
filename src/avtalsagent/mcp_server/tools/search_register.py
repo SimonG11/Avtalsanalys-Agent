@@ -1,4 +1,4 @@
-"""search_register: the register's agreements, by supplier, number, area or org number.
+"""search_register: the register's agreements, by supplier, number, area, sub-area or org number.
 
 What:
     `search_register` returns one row per agreement and sub-area of the
@@ -7,7 +7,9 @@ What:
     framework area, sub-area path and the dates the agreement is valid from
     and to and may be extended to.
     `total` counts every matching row, also beyond `limit`, and `offset`
-    skips rows, so the model can page through a large area.
+    skips rows, so the model can page through a large area. `sub_area`
+    narrows to the sub-areas or regions whose path contains each of its
+    parts, so "IT-tjänster / Övre Norrland" gives one region's agreements.
     `register_org_number` turns an organisation number into the register's
     spelling.
 
@@ -31,7 +33,15 @@ How:
     without the supplier's sequence ("23.3-5890-2023"), gives all the
     procurement's agreements (`visibility.register_procurements`, by
     `procurement_key`, so "23.3.5890-23" finds it too). A framework area
-    goes through `register_area`. An organisation number is
+    goes through `register_area`. A sub-area is split on "/" into parts,
+    and the path must contain every part, in any order, case-insensitively
+    (ILIKE, % and _ escaped): the model writes the levels it knows, as
+    "IT-tjänster / Övre Norrland", while the register's path is
+    "Bemanningstjänster / Bemanningstjänster - IT-tjänster upp till 1000
+    timmar / Övre Norrland". Only when nothing matches does a fourth query
+    ask whether any sub-area has those parts; if none has, the error lists
+    the area's sub-areas, since an empty list would read as "no supplier
+    there". An organisation number is
     normalised as M1 stores it (`normalize_org_number`: NNNNNN-NNNN, or a
     foreign number without spaces). Rows are sorted by framework area,
     agreement number and sub-area before `offset` and `limit` cut them. A
@@ -54,6 +64,7 @@ from avtalsagent.mcp_server.arguments import (
     Limit,
     Offset,
     OrgNumber,
+    SubAreaArg,
     Supplier,
     ValidOn,
 )
@@ -90,6 +101,7 @@ def search_register(
     supplier: Supplier = None,
     agreement_number: AgreementNumber = None,
     framework_area: FrameworkArea = None,
+    sub_area: SubAreaArg = None,
     org_number: OrgNumber = None,
     valid_on: ValidOn = None,
     limit: Limit = 20,
@@ -97,9 +109,12 @@ def search_register(
 ) -> RegisterResult:
     """Sök i registret över giltiga ramavtal: avtal, leverantörer, områden och giltighetstider.
 
-    Ange minst ett av supplier (namnet eller en del av det), agreement_number, framework_area
-    och org_number; valid_on behåller bara avtal som gäller det datumet. Ett nummer utan
-    leverantörens löpnummer, som '23.3-5890-2023', ger alla avtal i den upphandlingen. Datum
+    Ange minst ett av supplier (namnet eller en del av det), agreement_number, framework_area,
+    sub_area och org_number; valid_on behåller bara avtal som gäller det datumet. Ett nummer
+    utan leverantörens löpnummer, som '23.3-5890-2023', ger alla avtal i den upphandlingen.
+    sub_area behåller delområden eller regioner som innehåller texten, t.ex. 'Övre Norrland';
+    'IT-tjänster / Övre Norrland' kräver båda delarna. Använd det när frågan gäller ett
+    delområde eller en region, så att du får alla leverantörer där och inte bara de första. Datum
     och leverantörer kommer från registret, som går före dokumenten; vad avtalen säger
     (villkor, priser, viten) söker du med search_documents. Varje rad är ett avtal i ett
     delområde, och total är antalet rader, även de som inte ryms i limit. Är total större än
@@ -108,12 +123,20 @@ def search_register(
     """
     # Spaces as the register stores names (`parse_supplier_name`); blank is no name.
     name = None if supplier is None else " ".join(supplier.split()) or None
-    if name is None and agreement_number is None and framework_area is None and org_number is None:
+    parts = [] if sub_area is None else sub_area_parts(sub_area)
+    if (
+        name is None
+        and agreement_number is None
+        and framework_area is None
+        and not parts
+        and org_number is None
+    ):
         raise MissingArgumentError(
-            "Ange minst ett av supplier, agreement_number, framework_area och org_number; "
-            "valid_on begränsar bara de andra."
+            "Ange minst ett av supplier, agreement_number, framework_area, sub_area och "
+            "org_number; valid_on begränsar bara de andra."
         )
-    agreement, link, sub_area = models.Agreement, models.AgreementSubArea, models.SubArea
+    agreement, link, area = models.Agreement, models.AgreementSubArea, models.SubArea
+    area_name: str | None = None
     conditions: list[ColumnElement[bool]] = []
     if org_number is not None:
         conditions.append(agreement.org_number == register_org_number(org_number))
@@ -122,7 +145,9 @@ def search_register(
     if agreement_number is not None:
         conditions.append(_agreement_matches(session, agreement_number))
     if framework_area is not None:
-        conditions.append(sub_area.framework_area == register_area(session, framework_area))
+        area_name = register_area(session, framework_area)
+        conditions.append(area.framework_area == area_name)
+    conditions += _path_matches(parts)
     if valid_on is not None:
         conditions += [link.valid_from <= valid_on, link.valid_to >= valid_on]
     query = (
@@ -131,20 +156,22 @@ def search_register(
             agreement.procurement_number,
             agreement.supplier_name,
             agreement.org_number,
-            sub_area.framework_area,
-            sub_area.path.label("sub_area"),
+            area.framework_area,
+            area.path.label("sub_area"),
             link.valid_from,
             link.valid_to,
             link.max_extension_to,
         )
         .join(link, link.agreement_number == agreement.agreement_number)
-        .join(sub_area, sub_area.id == link.sub_area_id)
+        .join(area, area.id == link.sub_area_id)
         .where(*conditions)
     )
     total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
+    if total == 0 and parts:
+        _require_sub_area(session, " / ".join(parts), parts, area_name)
     rows = list(
         session.execute(
-            query.order_by(sub_area.framework_area, agreement.agreement_number, sub_area.path)
+            query.order_by(area.framework_area, agreement.agreement_number, area.path)
             .offset(offset)
             .limit(limit)
         )
@@ -179,6 +206,58 @@ def register_org_number(org_number: str) -> str:
             f"Organisationsnumret '{org_number}' kan inte läsas. Skriv ett svenskt nummer som "
             "NNNNNN-NNNN, eller sök på leverantörens namn med supplier."
         ) from None
+
+
+def sub_area_parts(sub_area: str) -> list[str]:
+    """The parts of a sub-area filter: split on "/", spaces collapsed, blank parts dropped.
+
+    Example: "IT-tjänster /  Övre Norrland" -> ["IT-tjänster", "Övre Norrland"].
+    A "/" inside a level ("Arlanda/Arlandastad") splits it too, which is
+    harmless: both halves are still in the same path.
+    """
+    return [part for raw in sub_area.split("/") if (part := " ".join(raw.split()))]
+
+
+def _path_matches(parts: list[str]) -> list[ColumnElement[bool]]:
+    """One condition per part: the sub-area's full path contains it, in any case."""
+    # autoescape: a % or _ in the text is that character, not a LIKE wildcard.
+    return [models.SubArea.path.icontains(part, autoescape=True) for part in parts]
+
+
+# Listing more sub-area names than this in an error would flood the model.
+_MAX_LISTED_SUB_AREAS = 40
+
+
+def _require_sub_area(
+    session: Session, sub_area: str, parts: list[str], framework_area: str | None
+) -> None:
+    """`NotFoundError` when no sub-area path has every part; returns when one has.
+
+    Called only when the search found no rows, so a sub-area that exists but
+    is excluded by the other filters still gives an empty list.
+    """
+    area = models.SubArea
+    in_area = [] if framework_area is None else [area.framework_area == framework_area]
+    if session.scalar(select(area.id).where(*in_area, *_path_matches(parts)).limit(1)):
+        return
+    where = "" if framework_area is None else f" i {framework_area}"
+    message = f"Inget delområde{where} innehåller '{sub_area}'."
+    if framework_area is None:
+        raise NotFoundError(
+            f"{message} Ange framework_area, så listas områdets delområden, eller sök med "
+            "en kortare del av namnet."
+        )
+    # Level 1 is most often the area's own name, but in some areas a county.
+    own_name = (area.level == 1) & (area.name == area.framework_area)
+    names = sorted(set(session.scalars(select(area.name).where(*in_area, ~own_name).distinct())))
+    if not names:
+        raise NotFoundError(f"{message} Området har inga delområden; sök utan sub_area.")
+    if len(names) > _MAX_LISTED_SUB_AREAS:
+        raise NotFoundError(
+            f"{message} Området har {len(names)} delområden; sök med en kortare del av namnet, "
+            f"eller med search_register(framework_area='{framework_area}') och läs sub_area."
+        )
+    raise NotFoundError(f"{message} Delområden: {'; '.join(names)}.")
 
 
 def _supplier_matches(name: str) -> ColumnElement[bool]:

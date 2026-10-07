@@ -95,11 +95,19 @@ def test_every_document_type_has_a_place_in_the_order() -> None:
 
 @pytest.mark.parametrize(
     "arguments",
-    [{}, {"valid_on": date(2026, 10, 6)}, {"supplier": "   "}, {"limit": 5}],
-    ids=["nothing", "only a date", "a blank name", "only a limit"],
+    [
+        {},
+        {"valid_on": date(2026, 10, 6)},
+        {"supplier": "   "},
+        {"sub_area": " / "},
+        {"limit": 5},
+    ],
+    ids=["nothing", "only a date", "a blank name", "a blank sub-area", "only a limit"],
 )
 def test_search_register_needs_a_filter_besides_the_date(arguments: dict[str, Any]) -> None:
-    message = "Ange minst ett av supplier, agreement_number, framework_area och org_number"
+    message = (
+        "Ange minst ett av supplier, agreement_number, framework_area, sub_area och org_number"
+    )
     with pytest.raises(MissingArgumentError, match=message):
         search_register(NO_DATABASE, **arguments)
 
@@ -136,6 +144,8 @@ def test_an_unreadable_org_number_is_an_error_before_the_database() -> None:
         ("search_register", {"supplier": "Advania", "limit": 21}, "limit"),
         ("search_register", {"supplier": "Advania", "valid_on": "2026-13-01"}, "valid_on"),
         ("search_register", {"supplier": "A"}, "supplier"),
+        ("search_register", {"sub_area": "Ö"}, "sub_area"),
+        ("search_register", {"sub_area": "Övre\x00Norrland"}, "sub_area"),
         ("search_register", {"supplier": "Advania\x00"}, "supplier"),  # Postgres refuses NUL
         ("search_register", {"supplier": "Advania", "offset": -1}, "offset"),
     ],
