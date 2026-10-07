@@ -22,9 +22,10 @@ påstående, inte ett mätt resultat.
 - **Agentens motfrågor mäts inte.** ADR 0019 ger `ask_user` ett fast svar ("svara utifrån frågan
   som den är ställd"), eftersom testfrågorna ska gå att besvara som de är ställda. Att fråga
   användaren när frågan passar flera delområden med olika svar är en av sakerna ett arbetsflöde
-  inte kan, men det syns inte i siffrorna. Det finns ett utkast med sju oklara frågor (fyra där
-  agenten ska fråga och tre kontroller där svaret är detsamma i alla alternativ), ännu inte
-  godkänt och därför inte i repot.
+  inte kan, men det syns inte i siffrorna. De oklara frågorna i
+  `evals/datasets/ambiguous_sv.jsonl` är åtta, skrivna för den nya regel 4 (PR #34): två där
+  agenten ska fråga, tre där den ska svara för varje fall och tre kontroller där svaret är
+  detsamma i alla alternativ ([steg 11](../steg/11-utvardering.md)).
 - **Ingen Postgres i utvecklingsmiljön.** Som i ADR 0019 körs mätningen mot den tillfälliga
   ersättaren för avtal-mcp, och mot den riktiga databasen där den finns.
 
@@ -138,8 +139,7 @@ påstående, inte ett mätt resultat.
   `/mnt/project-files/case-tokentek/implementering/matning-2026-10-07/`. Jämförelsen bör köras
   om mot den riktiga databasen innan den visas.
 - Motfrågornas domare är en språkmodell, som svarsdomaren, och kan döma fel; dess skäl står i
-  rapporten. Med fyra frågor där agenten ska fråga är talet grovt, och utkastet behöver godkännas
-  innan det läggs i repot.
+  rapporten. Med två frågor där agenten ska fråga är talet grovt.
 - Varje fråga körs en gång per läge, som i ADR 0019, så en enskild fråga kan skifta mellan
   körningar. Bootstrapintervallet tar hänsyn till antalet frågor, inte till att agenten svarar
   olika från gång till gång.
