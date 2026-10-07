@@ -1,15 +1,16 @@
-"""The API's FastAPI app: the agent over AG-UI, the cited PDFs and a health check.
+"""The API's FastAPI app: the agent over AG-UI, the cited PDFs, the user's files and health.
 
 What:
     `create_app(settings, ...)` builds the app with the routes of `agui.py`
     (`POST /agui`, `GET /agui/health`), `documents.py`
-    (`GET /api/documents/{sha256}/pdf`) and `GET /health`.
+    (`GET /api/documents/{sha256}/pdf`), `uploads.py` (`/api/uploads`) and
+    `GET /health`.
 
 Why:
     Some of what the agent needs stays open while the app runs: the model
     clients (the agent's and the reviewer's), the checkpointer's Postgres
-    pool and, for the PDF route, a
-    read-only database engine. They are opened in the app's lifespan, once,
+    pool, for the PDF route a read-only database engine, and the store of
+    the user's files. They are opened in the app's lifespan, once,
     and closed in reverse order when the app stops. The session to
     avtal-mcp is opened per run instead (`agui.AgentRuns`), so a failed
     call cannot break the questions after it. Starting checks the
@@ -26,10 +27,12 @@ How:
     session to avtal-mcp once and closes it (`open_mcp_tools`;
     MCP_TRANSPORT=streamable_http in the container), and opens the
     checkpointer (`open_checkpointer`; CHECKPOINTER=postgres in the
-    container) and the document lookup, after the tracing (`open_tracing`,
-    off without Langfuse's keys), which closes last and so sends what is
-    left. It puts `AgentRuns` and the lookup on `app.state`, where the
-    routes read them. `GET /health` answers
+    container) and the document lookup, then the upload store
+    (`open_upload_store`; UPLOAD_STORE=postgres in the container, which
+    creates its tables and deletes expired files), after the tracing
+    (`open_tracing`, off without Langfuse's keys), which closes last and so
+    sends what is left. It puts the settings, `AgentRuns`, the lookup and
+    the upload store on `app.state`, where the routes read them. `GET /health` answers
     without touching the database or avtal-mcp: it says the process serves
     HTTP, which is what a container's health check asks.
 """
@@ -55,14 +58,18 @@ from avtalsagent.api.agui import AgentRuns, OpenTools
 from avtalsagent.api.agui import router as agui_router
 from avtalsagent.api.documents import DatabaseDocumentFiles, DocumentFiles
 from avtalsagent.api.documents import router as documents_router
+from avtalsagent.api.uploads import router as uploads_router
 from avtalsagent.config import Settings, get_settings
 from avtalsagent.db.session import create_db_engine, session_factory
 from avtalsagent.observability.tracing import Tracing, open_tracing
+from avtalsagent.uploads.open_store import open_upload_store
+from avtalsagent.uploads.store import UploadStore
 from avtalsagent.validation.review import AnswerReviewer
 
 OpenCheckpointer = Callable[[Settings], AbstractAsyncContextManager[BaseCheckpointSaver[str]]]
 OpenDocuments = Callable[[Settings], AbstractContextManager[DocumentFiles]]
 OpenTracing = Callable[[Settings], AbstractContextManager[Tracing]]
+OpenUploads = Callable[[Settings], AbstractAsyncContextManager[UploadStore]]
 
 
 @contextmanager
@@ -84,6 +91,7 @@ def create_app(
     open_saver: OpenCheckpointer = open_checkpointer,
     open_documents: OpenDocuments = open_document_files,
     open_trace: OpenTracing = open_tracing,
+    open_uploads: OpenUploads = open_upload_store,
 ) -> FastAPI:
     """The API; the agent and its connections open when the app starts (see the module)."""
 
@@ -98,6 +106,8 @@ def create_app(
             tracing = stack.enter_context(open_trace(current))  # closed last: sends what is left
             checkpointer = await stack.enter_async_context(open_saver(current))
             app.state.documents = stack.enter_context(open_documents(current))
+            app.state.uploads = await stack.enter_async_context(open_uploads(current))
+            app.state.settings = current
             app.state.runs = AgentRuns(current, model, reviewer, checkpointer, open_tools, tracing)
             yield
 
@@ -108,6 +118,7 @@ def create_app(
     )
     app.include_router(agui_router)
     app.include_router(documents_router)
+    app.include_router(uploads_router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

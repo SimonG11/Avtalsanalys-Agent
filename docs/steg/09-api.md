@@ -115,6 +115,7 @@ fungerar men tar några sekunder extra. `CHECKPOINTER=postgres` sparar samtalen 
 | `POST /agui` | En körning av agenten. Kroppen är AG-UI:s `RunAgentInput`, svaret server-sent events |
 | `GET /agui/health` | `{"status": "ok", "agent": {"name": "avtalsagent"}}`, som adapterns egen |
 | `GET /api/documents/{sha256}/pdf` | PDF:en, inline; 404 om dokumentet inte visas eller är en Word-fil; 422 för en felaktig hash; 503 om databasen inte svarar |
+| `/api/uploads` | Användarens egna filer; se [Egna filer](#egna-filer-2026-10-07) |
 | `GET /health` | `{"status": "ok"}` utan databas och avtal-mcp, för containerns hälsokontroll |
 | `GET /docs` | FastAPI:s beskrivning av routerna |
 
@@ -215,6 +216,64 @@ gång fäller jobbet i stället för att låta det vänta i timmar.
 | `tests/integration/test_api_document_lookup.py` | 5 | Uppslaget mot Postgres på M5:s testkorpus: en indexerad fil hittas med sin sökväg, också med ett avsnitt i karantän; en okänd hash och en fil i karantän hittas inte; en Word-fil kommer tillbaka som Word |
 
 43 nya enhetstester och 5 integrationstester. Inget test anropar språkmodellen.
+
+## Egna filer (2026-10-07)
+
+Simon vill kunna ladda upp egna filer i chatten och låta agenten jämföra dem med ramavtalen
+(webbapp-kontrakt.md, punkterna 33-38). Det här är första delen: API:t tar emot, läser och sparar
+filerna. Agentens verktyg för att läsa dem (`list_uploads`, `read_upload`), citaten ur dem och
+ADR 0026 kommer i nästa del, och webbappen bygger knappen.
+
+| Route | Vad |
+|---|---|
+| `POST /api/uploads` | Formulär (multipart) med `file` och `thread_id`. 201 med `{upload_id, filename, kind, pages, sections, characters, size, warnings, created_at}`; 200 med samma svar om tråden redan har filen. 409 när tråden har fem filer, 413 för stor fil (bytes, sidor, tecken eller uppackad Word-fil), 415 fel filtyp, 422 ingen text eller trasig fil, 503 när databasen inte svarar |
+| `GET /api/uploads?thread_id=…` | `{"uploads": [...]}`, trådens filer, äldst först |
+| `DELETE /api/uploads/{upload_id}?thread_id=…` | 204, eller 404 om tråden inte har filen |
+| `GET /api/uploads/{upload_id}/file?thread_id=…` | Filen som den laddades upp: PDF och text `inline`, Word som bilaga |
+
+En fil hör till sin tråd. Varje route tar trådens id, och en fil i en annan tråd ger 404, som en
+fil som inte finns. avtal-mcp ser aldrig filerna: API:t sparar dem och agenten läser dem genom
+samma lager (`uploads/store.py`).
+
+**Läsningen** (`uploads/`). Filtypen avgörs av innehållet och namnets ändelse måste stämma med det:
+`%PDF-` för PDF, ett zip-arkiv med `word/document.xml` för .docx, och .txt eller .md utan
+NUL-tecken för text. En Word-fils arkiv kontrolleras innan det öppnas (högst 100 MB uppackat och
+5 000 delar), så en zip-bomb stoppas. En PDF läses med pypdfium2:s textlager, sida för sida, utan
+Docling och PyTorch (300 sidor tar ungefär en sekund); en PDF utan text (inskannad) får 422, och
+sidor utan text nämns i `warnings`. Word läses med python-docx (rubrikformat, listor, tabeller) och
+text som UTF-8, där Markdowns `#`-rubriker räknas. Texten delas sedan i avsnitt med inläsningens
+egna regler (`ingestion/step3_chunk.split_sections`): vid numrerade rubriker som "6.2 Ansvar", och
+annars vid rubriker utan nummer, "§ 3" och "Bilaga 2". Ett avsnitt längre än 12 000 tecken delas
+i delar ("(del 2 av 3)"), som var och en har sidan den börjar på. Läsningen körs i en egen tråd med
+en gräns på 60 sekunder, så att agentens körningar aldrig väntar på den.
+
+**Lagringen.** Med `UPLOAD_STORE=postgres` (compose) ligger filerna i tabellerna `upload` (en rad
+per fil, med filens bytes) och `upload_section`, som API:t skapar själv när det startar, som
+LangGraphs checkpointtabeller. Demot behöver alltså bara `docker compose up --build`, inte
+inläsningen igen. `memory` (standard) håller filerna i processen. Filer äldre än sju dagar läses
+aldrig och tas bort när API:t startar och vid varje uppladdning.
+
+| Variabel | Standard | Vad |
+|---|---|---|
+| `UPLOAD_STORE` | `memory` | `memory` eller `postgres`; compose sätter `postgres` för API:t |
+| `UPLOAD_MAX_BYTES` | 10485760 | Högsta storlek på en fil (10 MB) |
+| `UPLOAD_MAX_PAGES` | 300 | Högsta antal sidor i en PDF |
+| `UPLOAD_MAX_CHARACTERS` | 1500000 | Högsta antal tecken text i en fil |
+| `UPLOAD_MAX_PER_THREAD` | 5 | Filer per konversation |
+| `UPLOAD_RETENTION_DAYS` | 7 | Dagar en fil sparas |
+
+Tester: `tests/unit/uploads/` (filtyper, zip-bomben, namnen, läsningen av PDF, Word och text,
+gränserna, avsnitten och lagret i minnet; PDF:erna byggs med reportlab och Word-filerna med
+python-docx i testerna), `tests/unit/api/test_api_uploads.py` (routerna genom hela appen, varje
+fel, trådarna hålls isär) och `tests/integration/test_upload_store_postgres.py` (lagret mot
+Postgres, också två uppladdningar samtidigt). CI:s compose-jobb laddar upp, läser och tar bort en
+textfil genom API:t.
+
+Begränsningar: inskannade sidor läses inte (ingen OCR), en Word-fil har inga sidor, Words
+automatiska numrering finns inte i texten (avsnitten får då rubrikerna utan nummer), och en "Bilaga"
+på PDF:ens sista sida blir en del av avsnittet före, som i inläsningen. En läsning som passerar
+tidsgränsen får 422, men dess tråd arbetar klart i bakgrunden; gränserna för sidor och tecken
+håller den kort.
 
 ## Kända begränsningar
 

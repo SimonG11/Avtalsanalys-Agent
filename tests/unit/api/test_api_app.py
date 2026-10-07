@@ -7,6 +7,7 @@ The lifespan is run with stand-ins that record when they open and close;
 import logging
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -24,6 +25,7 @@ from avtalsagent.api.agui import AgentRuns, AvtalAguiAgent
 from avtalsagent.api.app import create_app, open_document_files
 from avtalsagent.api.documents import DatabaseDocumentFiles, DocumentFiles, StoredFile
 from avtalsagent.config import Settings
+from avtalsagent.uploads.store import MemoryUploadStore, UploadStore
 from tests.unit.agent.scripted_model import (
     DictAmendments,
     DictReader,
@@ -76,6 +78,14 @@ class Recorder:
         finally:
             self.log.append("close documents")
 
+    @asynccontextmanager
+    async def open_uploads(self, settings: Settings) -> AsyncIterator[UploadStore]:
+        self.log.append("open uploads")
+        try:
+            yield MemoryUploadStore(timedelta(days=7))
+        finally:
+            self.log.append("close uploads")
+
 
 class NoFiles:
     def find(self, sha256: str) -> StoredFile | None:
@@ -89,6 +99,7 @@ def recorded_app(recorder: Recorder, settings: Settings, **more: Any) -> FastAPI
         "open_tools": recorder.open_tools,
         "open_saver": recorder.open_saver,
         "open_documents": recorder.open_documents,
+        "open_uploads": recorder.open_uploads,
         **more,
     }
     return create_app(settings, **options)
@@ -101,15 +112,22 @@ async def test_the_app_checks_avtal_mcp_then_opens_its_connections_and_closes_th
 
     async with app.router.lifespan_context(app):
         # avtal-mcp is asked once at start-up; each run opens a session of its own.
-        assert recorder.log == ["open mcp", "close mcp", "open checkpointer", "open documents"]
+        assert recorder.log == [
+            "open mcp",
+            "close mcp",
+            "open checkpointer",
+            "open documents",
+            "open uploads",
+        ]
         assert isinstance(app.state.runs, AgentRuns)
         assert isinstance(app.state.documents, NoFiles)
+        assert isinstance(app.state.uploads, MemoryUploadStore)
         async with app.state.runs.open() as agent:
             assert isinstance(agent, AvtalAguiAgent)
-            assert recorder.log[4:] == ["open mcp"]
-        assert recorder.log[5:] == ["close mcp"]
+            assert recorder.log[5:] == ["open mcp"]
+        assert recorder.log[6:] == ["close mcp"]
 
-    assert recorder.log[6:] == ["close documents", "close checkpointer"]
+    assert recorder.log[7:] == ["close uploads", "close documents", "close checkpointer"]
 
 
 @pytest.mark.anyio
@@ -186,13 +204,41 @@ async def test_a_checkpointer_that_cannot_open_stops_the_start() -> None:
     assert recorder.log == ["open mcp", "close mcp"]  # only the start-up check
 
 
+@pytest.mark.anyio
+async def test_an_upload_store_that_cannot_open_stops_the_start_and_closes_the_rest() -> None:
+    recorder = Recorder()
+
+    @asynccontextmanager
+    async def unreachable(settings: Settings) -> AsyncIterator[UploadStore]:
+        raise OSError("the database cannot be reached")
+        yield MemoryUploadStore(timedelta(days=7))  # pragma: no cover
+
+    app = recorded_app(recorder, Settings(_env_file=None), open_uploads=unreachable)
+
+    with pytest.raises(OSError, match="cannot be reached"):
+        async with app.router.lifespan_context(app):
+            pass
+
+    assert recorder.log[-2:] == ["close documents", "close checkpointer"]
+
+
 def test_the_routes_are_part_of_the_app_before_it_starts() -> None:
     app = recorded_app(Recorder(), Settings(_env_file=None))
 
     paths = app.openapi()["paths"]
 
-    assert set(paths) == {"/agui", "/agui/health", "/api/documents/{sha256}/pdf", "/health"}
+    assert set(paths) == {
+        "/agui",
+        "/agui/health",
+        "/api/documents/{sha256}/pdf",
+        "/api/uploads",
+        "/api/uploads/{upload_id}",
+        "/api/uploads/{upload_id}/file",
+        "/health",
+    }
     assert set(paths["/agui"]) == {"post"}
+    assert set(paths["/api/uploads"]) == {"post", "get"}
+    assert set(paths["/api/uploads/{upload_id}"]) == {"delete"}
 
 
 def test_the_document_lookup_reads_through_a_read_only_engine_it_disposes_of(

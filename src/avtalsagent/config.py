@@ -131,6 +131,20 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, gt=0, lt=65536)
 
+    # Files the user uploads in the chat (api/uploads.py, uploads/). Where they are kept, as
+    # for the checkpoints: "memory" lasts as long as the process (tests, local work),
+    # "postgres" is the database in DATABASE_URL, in tables the API creates itself.
+    upload_store: Literal["memory", "postgres"] = "memory"
+    # Limits against large or hostile files: bytes of one file, pages of a PDF, characters
+    # of text in one file, and files per conversation.
+    upload_max_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    upload_max_pages: int = Field(default=300, gt=0)
+    upload_max_characters: int = Field(default=1_500_000, gt=0)
+    upload_max_per_thread: int = Field(default=5, gt=0)
+    # Days an upload is kept; older ones are deleted when the API starts and on each upload,
+    # and are never read before that.
+    upload_retention_days: int = Field(default=7, gt=0)
+
     # Tracing of the agent's runs in Langfuse (observability/; ADR 0021): off unless both keys
     # are set. The address is Langfuse Cloud's EU region; a self-hosted Langfuse has its own.
     langfuse_public_key: str | None = None
