@@ -321,13 +321,16 @@ def test_a_position_that_is_no_plain_number_names_no_section() -> None:
             call("read_section", {"sha256": TERMS, "section_position": "①"}, "c2"),
             call("read_section", {"sha256": TERMS, "section_position": "٣٧"}, "c3"),
             call("read_section", {"sha256": TERMS, "section_number": "6.21.4"}, "c4"),
+            call("read_section", {"sha256": TERMS, "section_position": "9" * 5000}, "c5"),
+            call("read_section", {"sha256": TERMS, "section_position": "\x1c5"}, "c6"),
         ),
     ]
 
     steps = read_steps(messages)
 
     # A target without a plain position is no section target, so neither of its places counts.
-    assert [step.target_from for step in steps] == [None, None, None, None]
+    # More digits than int() converts name no section; space that str.strip() removes is dropped.
+    assert [step.target_from for step in steps] == [None] * 6
 
 
 def test_a_result_without_an_artifact_is_read_from_its_json_text() -> None:

@@ -182,14 +182,14 @@ med sina argument, också `ask_user` och varje utkast, och om verktyget svarade 
 angav. Det märks också om ett tidigare svar från `search_documents` hade avsnittet bland sina
 träffar eller deras kopior (`found_by_search`), så att en läsning som bara kan komma ur
 hänvisningen går att skilja från en som agenten också hade fått ur en sökning. En position räknas
-bara när den är ett heltal eller siffrorna 0–9 som text; ett argument som "²" pekar inte ut något
-avsnitt och kan inte stoppa läsningen, så en fråga som redan är betald går inte förlorad. Varje
-utkast som kontrollen skickade tillbaka sparas med sina fel, och varje fel räknas till regeln som
-skrev det (citat, registeruppgifter, senaste lydelsen eller granskaren) efter hur regeln formulerar
-sina fel; testerna prövar varje regels egna fel, så en regel som formuleras om syns där i stället
-för att räknas fel. Modellanropen är den räkning som `ModelCallLimitMiddleware` för i trådens
-tillstånd. En fråga som aldrig nådde agenten (sessionen mot avtal-mcp kom inte igång) har varken
-väg, skäl eller modellanrop sparade (`QuestionRun.path_saved`).
+bara när den är ett heltal eller högst nio av siffrorna 0–9 som text; ett argument som "²" pekar
+inte ut något avsnitt och kan inte stoppa läsningen, så en fråga som redan är betald går inte
+förlorad. Varje utkast som kontrollen skickade tillbaka sparas med sina fel, och varje fel räknas
+till regeln som skrev det (citat, registeruppgifter, senaste lydelsen eller granskaren) efter hur
+regeln formulerar sina fel; testerna prövar varje regels egna fel, så en regel som formuleras om
+syns där i stället för att räknas fel. Modellanropen är den räkning som `ModelCallLimitMiddleware`
+för i trådens tillstånd. En fråga som aldrig nådde agenten (sessionen mot avtal-mcp kom inte igång)
+har varken väg, skäl eller modellanrop sparade (`QuestionRun.path_saved`).
 
 ### 3. `evals/answer_scores.py` – poängen
 

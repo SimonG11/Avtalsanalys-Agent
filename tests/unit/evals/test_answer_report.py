@@ -590,7 +590,8 @@ def test_the_run_names_the_commit_and_the_prompts_it_measured() -> None:
     unknown = render_markdown(report())  # neither git nor the variable told the commit
     assert (
         "- **Kod:** okänd commit (git gick inte att fråga där mätningen kördes, och "
-        "`AVTALSAGENT_COMMIT` var inte satt); gäller agenten" in unknown
+        "`AVTALSAGENT_COMMIT` gav ingen commit: inte satt, eller inte en sha, se loggen); "
+        "gäller agenten" in unknown
     )
     assert (
         "- **Prompter, sha256:** agentens systemprompt inte sparat (mallen `SYSTEM_PROMPT`, "

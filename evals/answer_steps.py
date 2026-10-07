@@ -35,8 +35,8 @@ How:
     successful `search_documents` result: a read from a reference that no
     search had returned is one the agent can only have taken from the
     reference (or from an outline). A position is a whole number, or a
-    string of the digits 0-9; any other value names no section, so a
-    malformed argument never stops the reading. A draft is sent back when its
+    string of at most nine of the digits 0-9; any other value names no
+    section, so a malformed argument never stops the reading. A draft is sent back when its
     tool result has status error, submitted when it is ToolStrategy's
     ANSWER_SUBMITTED, and refused (its form) otherwise, as `answer_run`
     counts them. The check's feedback replaces the draft's tool result as
@@ -232,15 +232,15 @@ def _called_place(args: Mapping[str, Any]) -> _Place | None:
     return None
 
 
-_DIGITS = re.compile(r"[0-9]+")
+_DIGITS = re.compile(r"[0-9]{1,9}")  # no file has a billion sections; int() refuses 4 300 digits
 
 
 def _position(value: Any) -> int | None:
     """A section position: a whole number, or a string of the digits 0-9 (not "²" or "①")."""
     if isinstance(value, int) and not isinstance(value, bool):
         return value
-    if isinstance(value, str) and _DIGITS.fullmatch(value.strip()):
-        return int(value)
+    if isinstance(value, str) and _DIGITS.fullmatch(text := value.strip()):
+        return int(text)
     return None
 
 

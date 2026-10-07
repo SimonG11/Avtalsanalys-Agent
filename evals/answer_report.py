@@ -389,7 +389,7 @@ def _commit(info: RunInfo) -> str:
     if info.commit is None:
         commit = (
             "okänd commit (git gick inte att fråga där mätningen kördes, och "
-            f"`{COMMIT_VARIABLE}` var inte satt)"
+            f"`{COMMIT_VARIABLE}` gav ingen commit: inte satt, eller inte en sha, se loggen)"
         )
     elif info.commit_source == "environment":
         commit = (
