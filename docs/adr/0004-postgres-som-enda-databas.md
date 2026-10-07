@@ -1,6 +1,8 @@
 # ADR 0004: PostgreSQL + pgvector som enda databas
 
-**Status:** Godkänt av Simon 2026-10-05
+**Status:** Godkänt av Simon 2026-10-05. Punkten om sökningen och vägen till ParadeDB ersätts av
+[ADR 0011](0011-hybridsokning.md): BM25 räknas i Python och lagras som `sparsevec` i stället för
+Postgres fulltext.
 
 ## Kontext
 

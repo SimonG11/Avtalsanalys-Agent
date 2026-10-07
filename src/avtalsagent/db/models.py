@@ -8,7 +8,10 @@ What:
     which file. The section tables (M3): each parsed file, its numbered
     sections and the chunks they are cut into for search. The extraction
     tables (M4): what step 4 found in each file (metadata, facts, references
-    and their targets) and the findings of step 5.
+    and their targets) and the findings of step 5. The search tables (M5):
+    each indexed chunk with its embedding and BM25 weights, the words of the
+    BM25 index, each file's scope, the current index's settings, and a cache
+    of embeddings that outlives the index.
 
 Why:
     The Excel list has one row per supplier and sub-area. Splitting it into
@@ -21,13 +24,20 @@ Why:
 How:
     Each class is one table. Alembic migrations in `db/migrations/` create
     the tables; `register/load.py`, `ingestion/catalog.py`,
-    `ingestion/section_store.py` and `ingestion/extraction_store.py` fill
-    them. The register tables mirror the most recently loaded list;
-    `register_version` records every load.
+    `ingestion/section_store.py`, `ingestion/extraction_store.py` and
+    `ingestion/index_store.py` fill them. The register tables mirror the most
+    recently loaded list; `register_version` records every load. The search
+    index's chunk rows and file scopes are deleted with their chunk or file
+    (ON DELETE CASCADE), and `process` empties its words and build row in the
+    same transaction, so a new run of steps 3-5 empties the index until step
+    6 builds it again: a chunk that is changed or newly held back is never
+    searchable by mistake. The embedding cache is kept.
 """
 
 from datetime import date, datetime
 
+from pgvector.sparsevec import SparseVector
+from pgvector.sqlalchemy import SPARSEVEC, Vector
 from sqlalchemy import (
     ARRAY,
     Boolean,
@@ -386,3 +396,108 @@ class ValidationFinding(Base):
     # Set when a person has accepted the deviation in accepted_findings.toml; an
     # accepted finding does not quarantine.
     accepted_reason: Mapped[str | None] = mapped_column(Text)
+
+
+class DocumentScope(Base):
+    """Where a file belongs: the areas, procurements, agreements and pages that link to it (M5).
+
+    Step 6 writes one row per indexed file, from the catalog and the register, so
+    the search can be limited to a framework agreement and `list_documents` (M6)
+    can list one's files. The arrays hold every value: a file can be linked from
+    several pages and procurements.
+    """
+
+    __tablename__ = "document_scope"
+    __table_args__ = (
+        Index("ix_document_scope_framework_areas", "framework_areas", postgresql_using="gin"),
+        Index(
+            "ix_document_scope_procurement_numbers", "procurement_numbers", postgresql_using="gin"
+        ),
+        Index("ix_document_scope_agreement_numbers", "agreement_numbers", postgresql_using="gin"),
+    )
+
+    sha256: Mapped[str] = mapped_column(
+        ForeignKey("parsed_file.sha256", ondelete="CASCADE"), primary_key=True
+    )
+    framework_areas: Mapped[list[str]] = mapped_column(ARRAY(Text))  # as the register spells them
+    procurement_numbers: Mapped[list[str]] = mapped_column(ARRAY(String(32)))
+    # The supplier-card agreement numbers of the file's links and its own metadata.
+    agreement_numbers: Mapped[list[str]] = mapped_column(ARRAY(String(40)))
+    page_titles: Mapped[list[str]] = mapped_column(ARRAY(Text))  # "IT-drift Större, ..."
+    # The file's DocumentType from step 4 ("general_terms"); NULL for a file it has not typed.
+    document_type: Mapped[str | None] = mapped_column(String(32), index=True)
+
+
+class SearchChunk(Base):
+    """A chunk in the search index, with its embedding and its BM25 weights (M5, step 6).
+
+    Only chunks the quarantine does not hold back get a row. Deleted with the
+    chunk (ON DELETE CASCADE).
+    """
+
+    __tablename__ = "search_chunk"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["sha256", "section_position", "position"],
+            ["section_chunk.sha256", "section_chunk.section_position", "section_chunk.position"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    section_position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # sha256 of the section's text with whitespace normalised: sections with the same
+    # hash are copies of one text (general terms repeated in a procurement document).
+    section_hash: Mapped[str] = mapped_column(String(64), index=True)
+    # L2-normalised; the dimension is the model's (index_build.embedding_model), so the
+    # column has none, which an exact search does not need.
+    embedding: Mapped[list[float]] = mapped_column(Vector())
+    # BM25 weight per word, indexed by search_term.id; dimension index_build.term_count.
+    term_weights: Mapped[SparseVector] = mapped_column(SPARSEVEC())
+
+
+class SearchTerm(Base):
+    """A word of the BM25 index: a stem from `retrieval/swedish_text.py` (M5)."""
+
+    __tablename__ = "search_term"
+
+    term: Mapped[str] = mapped_column(Text, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, unique=True)  # 0-based index in term_weights
+    chunk_count: Mapped[int] = mapped_column(Integer)  # indexed chunks that contain it
+
+
+class IndexBuild(Base):
+    """How the current search index was built (M5): one row, written with the index.
+
+    The search compares it with its own embedding model and text analyser and
+    refuses to search an index built with others, whose vectors and stems would
+    not match the question's.
+    """
+
+    __tablename__ = "index_build"
+    __table_args__ = (CheckConstraint("id = 1", name="one_index_build"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    embedding_model: Mapped[str] = mapped_column(Text)  # e.g. "text-embedding-3-large:1536"
+    analyser: Mapped[str] = mapped_column(Text)  # e.g. "sv-1 snowballstemmer 3.1.1"
+    term_count: Mapped[int] = mapped_column(Integer)  # the dimension of term_weights
+    chunk_count: Mapped[int] = mapped_column(Integer)
+    held_back_count: Mapped[int] = mapped_column(Integer)  # chunks the quarantine left out
+    document_count: Mapped[int] = mapped_column(Integer)
+    built_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EmbeddingCache(Base):
+    """Embeddings already computed, by model and text (M5).
+
+    Kept when the index is rebuilt (no foreign key), so a new run embeds only
+    texts it has not seen: the pilot's 13,000 chunks are about 4 million tokens.
+    """
+
+    __tablename__ = "embedding_cache"
+
+    model: Mapped[str] = mapped_column(Text, primary_key=True)  # as index_build.embedding_model
+    text_hash: Mapped[str] = mapped_column(String(64), primary_key=True)  # sha256 of the text
+    embedding: Mapped[list[float]] = mapped_column(Vector())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

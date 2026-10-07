@@ -78,6 +78,19 @@ class Settings(BaseSettings):
     # commands are run. A missing file accepts nothing, and `process` logs a warning for it.
     accepted_findings_file: Path = Path("accepted_findings.toml")
 
+    # The search (M5, step 6 and retrieval/; ADR 0011). The embedding model, shortened
+    # by the API to `embedding_dimensions`. Changing either needs a new index (`index`).
+    embedding_model: str = "text-embedding-3-large"
+    embedding_dimensions: int = Field(default=1536, gt=0)
+    # Texts per embedding request; the API takes at most 2,048.
+    embedding_batch_size: int = Field(default=100, gt=0, le=2048)
+    # Chunks each branch of the hybrid search (vector and BM25) passes to the fusion.
+    search_candidates: int = Field(default=100, gt=0)
+    # The constant k of reciprocal rank fusion; 60 as in Cormack, Clarke and Büttcher (2009).
+    rrf_k: int = Field(default=60, gt=0)
+    # Sections a search returns when the caller sets no limit.
+    search_limit: int = Field(default=8, gt=0)
+
     log_level: str = "INFO"
 
     @property

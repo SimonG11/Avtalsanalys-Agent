@@ -23,3 +23,6 @@ htmlcov/
 
 # Downloaded data (Excel, PDFs)
 data/
+
+# Measurement reports (rebuilt by evals/run_retrieval_eval.py)
+evals/reports/
