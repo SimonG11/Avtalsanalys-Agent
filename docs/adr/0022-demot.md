@@ -1,6 +1,6 @@
 # ADR 0022: Demot: fem frågor, fyra ur testsamlingen, körda mot den riktiga databasen, och README:n som ingång
 
-**Status:** Föreslaget (M12).
+**Status:** Godkänt (PR #26, M12).
 
 ## Kontext
 

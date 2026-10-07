@@ -1,6 +1,6 @@
 # ADR 0020: Omrankning: mätt med två modeller, inte inbyggd
 
-**Status:** Föreslaget.
+**Status:** Godkänt (PR #25).
 Avgör omrankningen i [arkitekturvalideringens](../validering.md) punkt 5 (Qwen3-Reranker som
 utgångsläge) och i planen mot presentationen ("om mätningen visar att den ökar recall").
 [ADR 0011](0011-hybridsokning.md) punkt 10 lämnade den utanför MVP:n och till en mätning.
