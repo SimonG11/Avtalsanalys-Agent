@@ -3,15 +3,17 @@
 What:
     `python -m evals.compare_answer_runs A.json B.json [--out DIR]` reads
     two JSON reports of `run_answer_eval` (`load_run`), refuses them unless
-    they were measured on the same gold file and the same questions
-    (`check_comparable`), and writes a Swedish Markdown comparison
-    (`render_comparison`) to `compare-<A>-vs-<B>.md` in DIR: for all
-    questions and per category, each run's right-score, verified share,
-    gold sources cited, median seconds, median model calls and cost; the
-    paired difference B - A with its 95 % bootstrap interval for the
-    right-score and the gold sources cited; each question's two verdicts
-    side by side; and the questions to the user, when the gold file says
-    whether the agent should ask.
+    they were measured on the same gold file and the same questions, by the
+    same judge and against the same avtal-mcp (`check_comparable`), and
+    writes a Swedish Markdown comparison (`render_comparison`) to
+    `compare-<A>-vs-<B>.md` in DIR: the settings in which the runs differ;
+    for all questions and per category, each run's right-score, verified
+    share, gold sources cited, median seconds, median model calls and cost;
+    the paired difference B - A with the questions it pairs and, over at
+    least MIN_PAIRS_FOR_INTERVAL questions, its 95 % bootstrap interval,
+    for the right-score and the gold sources cited; each question's two
+    verdicts side by side; and the questions to the user, when the gold
+    file says whether the agent should ask.
 
         uv run python -m evals.compare_answer_runs agent.json workflow.json
 
@@ -22,20 +24,28 @@ Why:
     questions and bootstraps the difference (`metrics.paired_bootstrap`, as
     the search's variants are compared). Reports of different gold files,
     or of different questions (`--only`), would compare different things,
-    so they are refused (ADR 0024).
+    so they are refused, and so are reports of different judges or servers,
+    whose scores are measured differently (ADR 0024). Any other setting
+    that differs (the model, the effort, the reviewer, the bounds) is
+    listed, since it may be the point of the comparison.
 
 How:
     Only the JSON reports are read, so a comparison can be made long after
     the runs, on the machine they were written on (the reports hold the
     answers and stay out of git). A verdict scores as `answer_scores.
     verdict_score` gives (correct 1, partly correct 0.5, incorrect 0); a
-    question unjudged in a run (no judge, no verdict, or an error) has no
-    score there, and the paired difference counts the questions judged in
+    question the run gave no answer to (an error or a timeout) scores 0,
+    as a run's own report counts it, so a run that fails more is not
+    flattered; an answer left unjudged (no judge, or no verdict) has no
+    score there, and the paired difference counts the questions scored in
     both. Gold sources cited are compared per question as the share of its
-    sources cited, over the questions that have document sources. Which run
-    is the agent and which the baseline comes from each report's mode (a
-    report made before the mode was recorded is the agent's). Numbers are
-    written the Swedish way, as in `answer_report`.
+    sources cited, over the questions that have document sources. On fewer
+    than MIN_PAIRS_FOR_INTERVAL questions (most categories) the
+    percentile bootstrap says nothing (on three questions all of one sign
+    its interval has no width), so only the mean is shown. Which run is the
+    agent and which the baseline comes from each report's mode (a report
+    made before the mode was recorded is the agent's). Numbers are written
+    with `report_text`, as in `answer_report`.
 """
 
 import argparse
@@ -51,10 +61,22 @@ from evals.answer_report import UNJUDGED_NAME, VERDICT_NAMES
 from evals.answer_scores import verdict_score
 from evals.judge import Verdict
 from evals.metrics import paired_bootstrap
+from evals.report_text import (
+    NBSP,
+    dollar_range,
+    in_seconds,
+    md,
+    md_row,
+    percent,
+    plain_number,
+)
 
 DEFAULT_OUT = Path("evals/reports")
 MODE_NAMES = {"agent": "agenten", "workflow": "baslinjen"}
 OVERALL = "Alla frågor"
+# The fewest paired questions an interval is shown for: on fewer it says nothing.
+MIN_PAIRS_FOR_INTERVAL = 10
+UNKNOWN = "okänt"
 
 
 class CompareError(ValueError):
@@ -78,6 +100,9 @@ class QuestionRow:
 
     @property
     def score(self) -> float | None:
+        """The verdict's score; 0 for a run that gave no answer (an error), as reports count it."""
+        if self.status is None:
+            return 0.0
         return verdict_score(self.verdict)
 
     @property
@@ -99,6 +124,16 @@ class RunReport:
     gold_path: str
     questions: tuple[QuestionRow, ...]
     asks: Mapping[str, int] | None  # answer_scores.AskSummary, when the gold says
+    # How the run was made, as its report's RunInfo gives it; None where it does not.
+    judge_model: str | None = None  # also None without a judge (--no-judge)
+    judge_effort: str | None = None
+    reviewer_model: str | None = None
+    reviewer_effort: str | None = None
+    reviewer_prompt_sha256: str | None = None
+    mcp: str | None = None
+    validation_retries: int | None = None
+    model_call_limit: int | None = None
+    timeout: float | None = None
 
     @property
     def name(self) -> str:
@@ -106,6 +141,33 @@ class RunReport:
         label = f", {self.label}" if self.label else ""
         who = MODE_NAMES.get(self.mode, self.mode)
         return f"{who} ({self.agent_model}, {self.agent_effort}{label})"
+
+    @property
+    def judge(self) -> str:
+        """'gpt-6-astra, resonemang medium', or that there was none."""
+        if self.judge_model is None:
+            return "ingen (--no-judge)"
+        return f"{self.judge_model}, resonemang {self.judge_effort or UNKNOWN}"
+
+    def settings(self) -> dict[str, str]:
+        """The run's settings by their Swedish names, as the comparison lists them."""
+        reviewer_prompt = self.reviewer_prompt_sha256
+        return {
+            "modell": self.agent_model,
+            "resonemang": self.agent_effort,
+            "granskare": f"{self.reviewer_model or UNKNOWN}, "
+            f"resonemang {self.reviewer_effort or UNKNOWN}",
+            "granskarens prompt": reviewer_prompt[:12] if reviewer_prompt else UNKNOWN,
+            "domare": self.judge,
+            "avtal-mcp": self.mcp or UNKNOWN,
+            "nya försök": _known(self.validation_retries),
+            "gräns för modellanrop": _known(self.model_call_limit),
+            "tidsgräns": in_seconds(self.timeout) if self.timeout is not None else UNKNOWN,
+        }
+
+
+def _known(value: int | None) -> str:
+    return str(value) if value is not None else UNKNOWN
 
 
 def load_run(path: Path) -> RunReport:
@@ -123,6 +185,15 @@ def load_run(path: Path) -> RunReport:
             gold_path=str(gold["path"]),
             questions=tuple(_row_of(item) for item in data["questions"]),
             asks=data.get("asks"),
+            judge_model=run.get("judge_model"),
+            judge_effort=run.get("judge_effort"),
+            reviewer_model=run.get("reviewer_model"),
+            reviewer_effort=run.get("reviewer_effort"),
+            reviewer_prompt_sha256=run.get("reviewer_prompt_sha256"),
+            mcp=run.get("mcp"),
+            validation_retries=run.get("validation_retries"),
+            model_call_limit=run.get("model_call_limit"),
+            timeout=run.get("timeout"),
         )
     except OSError as error:
         raise CompareError(f"cannot read {path}: {error.strerror}") from None
@@ -147,11 +218,21 @@ def _row_of(item: Mapping[str, Any]) -> QuestionRow:
 
 
 def check_comparable(a: RunReport, b: RunReport) -> None:
-    """Refuse two reports of different gold files, or of different questions."""
+    """Refuse reports of different gold files or questions, judges or avtal-mcp servers."""
     if a.gold_sha256 != b.gold_sha256:
         raise CompareError(
             f"the reports are of different gold files ({a.gold_sha256[:12]} and "
             f"{b.gold_sha256[:12]}): compare runs of the same file"
+        )
+    if (a.judge_model, a.judge_effort) != (b.judge_model, b.judge_effort):
+        raise CompareError(
+            f"the reports were judged differently ({a.judge_model} {a.judge_effort} and "
+            f"{b.judge_model} {b.judge_effort}): compare runs with the same judge"
+        )
+    if a.mcp != b.mcp:
+        raise CompareError(
+            f"the reports measured different avtal-mcp servers ({a.mcp} and {b.mcp}): "
+            "compare runs against the same server"
         )
     a_ids, b_ids = {q.id for q in a.questions}, {q.id for q in b.questions}
     if a_ids != b_ids:
@@ -235,19 +316,24 @@ def paired_difference(
 def render_comparison(a: RunReport, b: RunReport) -> str:
     """The comparison in Swedish Markdown; the reports must be comparable."""
     lines = [
-        f"# Jämförelse: {_md(a.name)} och {_md(b.name)}",
+        f"# Jämförelse: {md(a.name)} och {md(b.name)}",
         "",
-        f"- **A:** {_md(a.name)}, `{_md(a.path.name)}`",
-        f"- **B:** {_md(b.name)}, `{_md(b.path.name)}`",
-        f"- **Guldfil:** {_md(a.gold_path)} (sha256 `{a.gold_sha256[:12]}`), "
+        f"- **A:** {md(a.name)}, `{md(a.path.name)}`",
+        f"- **B:** {md(b.name)}, `{md(b.path.name)}`",
+        f"- **Guldfil:** {md(a.gold_path)} (sha256 `{a.gold_sha256[:12]}`), "
         f"{len(a.questions)} frågor i båda",
+        f"- **Domare:** {md(a.judge)}; **avtal-mcp:** {md(a.mcp or UNKNOWN)}",
+        _md_settings(a, b),
         "",
-        "Rätt räknas som i rapporterna: rätt 1, delvis rätt 0,5, fel 0, och en fråga utan "
-        "bedömning räknas inte. B−A är medelskillnaden per fråga i procentenheter (p.e.), "
-        "parad på frågan, med ett 95 %-intervall ur 10 000 bootstrapdragningar; ett intervall "
-        "som inte innehåller 0 är en skillnad utöver slumpen. Facits källor jämförs per fråga "
-        "som andelen av frågans källor som svaret citerar, i frågorna som har källor i "
-        "dokumenten.",
+        "Rätt räknas som rätt 1, delvis rätt 0,5 och fel 0; en fråga utan svar (fel i "
+        "körningen) räknas som fel, och ett svar som domaren inte bedömde räknas inte. B−A är "
+        "medelskillnaden per fråga i procentenheter (p.e.), parad på frågan, med antalet frågor "
+        "som har ett värde i båda och, över minst "
+        f"{MIN_PAIRS_FOR_INTERVAL} frågor, ett 95{NBSP}%-intervall ur 10{NBSP}000 "
+        "bootstrapdragningar; ett intervall som inte innehåller 0 är en skillnad utöver slumpen. "
+        "På färre frågor säger ett sådant intervall inget, så där står bara medelskillnaden. "
+        "Facits källor jämförs per fråga som andelen av frågans källor som svaret citerar, i "
+        "frågorna som har källor i dokumenten.",
         "",
     ]
     lines += _md_group(OVERALL, a.questions, b.questions)
@@ -266,6 +352,17 @@ def render_comparison(a: RunReport, b: RunReport) -> str:
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
+def _md_settings(a: RunReport, b: RunReport) -> str:
+    """The settings in which the runs differ, or that they are the same."""
+    x, y = a.settings(), b.settings()
+    differ = [f"{name} (A: {md(x[name])}, B: {md(y[name])})" for name in x if x[name] != y[name]]
+    if not differ:
+        return (
+            "- **Körningarna:** samma modell, resonemang, granskare, domare, avtal-mcp och gränser"
+        )
+    return f"- **Körningarna skiljer sig i:** {'; '.join(differ)}"
+
+
 def _md_group(
     title: str, a: Sequence[QuestionRow], b: Sequence[QuestionRow], level: str = "##"
 ) -> list[str]:
@@ -273,23 +370,23 @@ def _md_group(
     right = paired_difference(a, b, lambda row: row.score)
     sources = paired_difference(a, b, lambda row: row.sources_share)
     lines = [
-        f"{level} {_md(title)} ({x.questions} frågor)",
+        f"{level} {md(title)} ({x.questions} frågor)",
         "",
-        _row(["Mått", "A", "B", "B−A (95 %)"]),
-        _row(["---", "---:", "---:", "---:"]),
-        _row(["Rätt (poäng)", _right(x), _right(y), _difference(right)]),
-        _row(
+        md_row(["Mått", "A", "B", "B−A (95 %)"]),
+        md_row(["---", "---:", "---:", "---:"]),
+        md_row(["Rätt (poäng)", _right(x), _right(y), _difference(right)]),
+        md_row(
             [
                 "Kontrollerade svar",
-                f"{x.verified} av {x.questions} ({_percent(x.verified, x.questions)})",
-                f"{y.verified} av {y.questions} ({_percent(y.verified, y.questions)})",
+                f"{x.verified} av {x.questions} ({percent(x.verified, x.questions)})",
+                f"{y.verified} av {y.questions} ({percent(y.verified, y.questions)})",
                 "–",
             ]
         ),
     ]
     if x.document_sources:
         lines.append(
-            _row(
+            md_row(
                 [
                     "Facits källor citerade",
                     _sources(x),
@@ -299,15 +396,15 @@ def _md_group(
             )
         )
     lines += [
-        _row(
+        md_row(
             [
                 "Tid per fråga (median)",
-                _seconds(x.median_seconds),
-                _seconds(y.median_seconds),
+                in_seconds(x.median_seconds),
+                in_seconds(y.median_seconds),
                 "–",
             ]
         ),
-        _row(
+        md_row(
             [
                 "Modellanrop per fråga (median)",
                 _calls(x.median_model_calls),
@@ -315,7 +412,7 @@ def _md_group(
                 "–",
             ]
         ),
-        _row(["Kostnad, agent och granskare", _cost(x.cost), _cost(y.cost), "–"]),
+        md_row(["Kostnad, agent och granskare", _cost(x.cost), _cost(y.cost), "–"]),
         "",
     ]
     return lines
@@ -326,8 +423,8 @@ def _md_questions(a: RunReport, b: RunReport) -> list[str]:
     lines = [
         "## Per fråga",
         "",
-        _row(["Fråga", "Kategori", "A", "B", "Skillnad", "Källor A", "Källor B"]),
-        _row(["---", "---", "---", "---", "---", "---:", "---:"]),
+        md_row(["Fråga", "Kategori", "A", "B", "Skillnad", "Källor A", "Källor B"]),
+        md_row(["---", "---", "---", "---", "---", "---:", "---:"]),
     ]
     differ = 0
     for x in a.questions:
@@ -335,10 +432,10 @@ def _md_questions(a: RunReport, b: RunReport) -> list[str]:
         changed = x.verdict != y.verdict
         differ += changed
         lines.append(
-            _row(
+            md_row(
                 [
-                    _md(x.id),
-                    _md(x.category),
+                    md(x.id),
+                    md(x.category),
                     _verdict(x),
                     _verdict(y),
                     "≠" if changed else "",
@@ -358,17 +455,18 @@ def _md_questions(a: RunReport, b: RunReport) -> list[str]:
 def _md_asks(a: RunReport, b: RunReport) -> list[str]:
     if a.asks is None and b.asks is None:
         return []
+    baseline = " Baslinjen kan inte fråga." if "workflow" in (a.mode, b.mode) else ""
     return [
         "## Motfrågor",
         "",
-        _row(["Mått", "A", "B"]),
-        _row(["---", "---:", "---:"]),
-        _row(["Frågade när den borde", _asked(a.asks), _asked(b.asks)]),
-        _row(["Frågade i onödan", _unnecessary(a.asks), _unnecessary(b.asks)]),
+        md_row(["Mått", "A", "B"]),
+        md_row(["---", "---:", "---:"]),
+        md_row(["Frågade när den borde", _asked(a.asks), _asked(b.asks)]),
+        md_row(["Frågade i onödan", _unnecessary(a.asks), _unnecessary(b.asks)]),
         "",
         "Frågade när den borde: frågor där testsamlingen säger att agenten ska fråga "
-        "användaren, och i parentes de där domaren fann att motfrågan skiljer alternativen åt. "
-        "Baslinjen kan inte fråga.",
+        "användaren, och i parentes de där domaren fann att motfrågan skiljer alternativen åt "
+        "och de motfrågor den inte bedömde." + baseline,
         "",
     ]
 
@@ -376,7 +474,10 @@ def _md_asks(a: RunReport, b: RunReport) -> list[str]:
 def _asked(asks: Mapping[str, int] | None) -> str:
     if asks is None:
         return "–"
-    return f"{asks['asked']} av {asks['should_ask']} ({asks['separating']} skiljer)"
+    text = f"{asks['asked']} av {asks['should_ask']} ({asks['separating']} skiljer"
+    if unjudged := asks.get("unjudged"):
+        text += f", {unjudged} ej bedömda"
+    return text + ")"
 
 
 def _unnecessary(asks: Mapping[str, int] | None) -> str:
@@ -386,9 +487,9 @@ def _unnecessary(asks: Mapping[str, int] | None) -> str:
 
 
 def _right(numbers: GroupNumbers) -> str:
-    text = f"{_decimal(numbers.right)} av {numbers.judged}"
+    text = f"{plain_number(numbers.right)} av {numbers.judged}"
     if numbers.judged:
-        text += f" ({round(100 * numbers.right / numbers.judged)}{_NBSP}%)"
+        text += f" ({round(100 * numbers.right / numbers.judged)}{NBSP}%)"
     if unjudged := numbers.questions - numbers.judged:
         text += f"; {unjudged} ej bedömda"
     return text
@@ -396,15 +497,21 @@ def _right(numbers: GroupNumbers) -> str:
 
 def _sources(numbers: GroupNumbers) -> str:
     found, total = numbers.sources_found, numbers.document_sources
-    return f"{found} av {total} ({_percent(found, total)})"
+    return f"{found} av {total} ({percent(found, total)})"
 
 
 def _difference(difference: Difference | None) -> str:
-    """'−12 p.e. (−25 till +1)': the mean per question in percentage points, and its interval."""
+    """'−12 p.e. (−25 till +1; 30 frågor)': the mean per question in percentage points.
+
+    The interval only over at least MIN_PAIRS_FOR_INTERVAL questions.
+    """
     if difference is None:
         return "–"
     mean, low, high = (100 * value for value in (difference.mean, difference.low, difference.high))
-    return f"{_signed(mean)}{_NBSP}p.e. ({_signed(low)} till {_signed(high)})"
+    pairs = f"{difference.questions} {'fråga' if difference.questions == 1 else 'frågor'}"
+    if difference.questions < MIN_PAIRS_FOR_INTERVAL:
+        return f"{_signed(mean)}{NBSP}p.e. ({pairs}, för få för ett intervall)"
+    return f"{_signed(mean)}{NBSP}p.e. ({_signed(low)} till {_signed(high)}; {pairs})"
 
 
 def _verdict(row: QuestionRow) -> str:
@@ -418,26 +525,7 @@ def _question_sources(row: QuestionRow) -> str:
 
 
 def _calls(value: float | None) -> str:
-    if value is None:
-        return "inte sparat"
-    return str(int(value)) if value == int(value) else _decimal(value, 1)
-
-
-_NBSP = " "
-_MARKUP = str.maketrans({char: "\\" + char for char in "\\`*_[]<>|"})
-
-
-def _md(text: str) -> str:
-    return " ".join(text.split()).translate(_MARKUP)
-
-
-def _row(cells: Sequence[str]) -> str:
-    return "| " + " | ".join(cells) + " |"
-
-
-def _decimal(value: float, places: int = 1) -> str:
-    text = f"{value:.{places}f}".replace(".", ",")
-    return text.removesuffix(",0") if places == 1 else text
+    return "inte sparat" if value is None else plain_number(value)
 
 
 def _signed(value: float) -> str:
@@ -446,19 +534,8 @@ def _signed(value: float) -> str:
     return ("−" if rounded < 0 else "+") + str(abs(rounded))
 
 
-def _percent(part: int, whole: int) -> str:
-    return f"{round(100 * part / whole) if whole else 0}{_NBSP}%"
-
-
-def _seconds(value: float) -> str:
-    return f"{round(value)}{_NBSP}s"
-
-
 def _cost(dollars: tuple[float, float] | None) -> str:
-    if dollars is None:
-        return "–"
-    low, high = (f"{value:.2f}".replace(".", ",") for value in dollars)
-    return f"{high}{_NBSP}USD" if low == high else f"{low}–{high}{_NBSP}USD"
+    return "–" if dollars is None else dollar_range(*dollars)
 
 
 # --- Command line -----------------------------------------------------------------------------

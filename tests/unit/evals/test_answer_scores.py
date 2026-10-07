@@ -454,14 +454,16 @@ def asking(id: str, should_ask: bool | None) -> GoldQuestion:
 
 
 def asked_run(*questions: str) -> QuestionRun:
-    return replace(run(answer()), asked=questions, asked_options=tuple(OPTIONS for _ in questions))
+    """A run that reached the graph (its path was read), and asked `questions`."""
+    options = tuple(OPTIONS for _ in questions)
+    return replace(run(answer()), asked=questions, asked_options=options, model_calls=2)
 
 
 def test_an_ask_is_right_only_when_it_should_ask_asked_and_separates() -> None:
     right = score(asking("a01", True), asked_run("Vilket?"), None, None, ask_judgement=SEPARATES)
     mixed = score(asking("a02", True), asked_run("Vilket?"), None, None, ask_judgement=MIXES)
     unjudged = score(asking("a03", True), asked_run("Vilket?"), None, None)
-    silent = score(asking("a04", True), run(answer()), None, None, ask_judgement=SEPARATES)
+    silent = score(asking("a04", True), asked_run(), None, None, ask_judgement=SEPARATES)
 
     assert (right.asked, right.asked_right, right.unnecessary_ask) == (True, True, False)
     assert (mixed.asked_right, unjudged.asked_right) == (False, None)
@@ -471,11 +473,18 @@ def test_an_ask_is_right_only_when_it_should_ask_asked_and_separates() -> None:
 
 
 def test_not_asking_is_right_where_it_should_not_and_an_ask_there_is_unnecessary() -> None:
-    quiet = score(asking("a05", False), run(answer()), None, None)
+    quiet = score(asking("a05", False), asked_run(), None, None)
     needless = score(asking("a06", False), asked_run("Större eller Mindre?"), None, None)
     plain = score(asking("q01", None), asked_run("Vilket?"), None, None)
+    # A run that never reached the graph had no chance to ask, or not to.
+    broken = run(None, error="avtal-mcp: ConnectError")
+    lost = [
+        score(asking(id, should), broken, None, None)
+        for id, should in (("a07", True), ("a08", False))
+    ]
 
     assert (quiet.asked_right, quiet.unnecessary_ask) == (True, False)
+    assert [result.asked_right for result in lost] == [None, None]
     assert (needless.asked_right, needless.unnecessary_ask) == (False, True)
     assert (plain.asked_right, plain.unnecessary_ask, plain.should_ask) == (None, None, None)
 

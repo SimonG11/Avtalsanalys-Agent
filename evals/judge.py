@@ -6,7 +6,8 @@ What:
     lacks, what in it contradicts the gold answer, and why, in Swedish.
     `JUDGE_PROMPT` is the judge's instructions, `judge_messages` its request
     and `ModelJudge` the judge on a chat model; `make_judge_model` gives the
-    `ChatOpenAI` client of the judge model at a reasoning effort.
+    `ChatOpenAI` client of the judge model at a reasoning effort. `element`
+    wraps a text as data in a tag, as the ask judge does too.
 
 Why:
     The answer check proves that every quote is in its section and the
@@ -27,8 +28,13 @@ How:
     the agent asked the user and the measurement replied with the gold's
     clarification (`gold.GoldQuestion.clarification`), the gold answer
     assumes that reply, so the question's element has the question and the
-    clarification after it (CLARIFICATION_LEAD); the prompt stays the same
-    for every run. Every
+    clarification after it (CLARIFICATION_LEAD). When the gold says it
+    should ask and it did not (the baseline never can), the element has
+    the cases the question fits and the one the gold assumes instead
+    (CASES_LEAD, ASSUMED_LEAD), and rule 7 lets an answer that gives the
+    gold's answer for that case, said to be for it, have the core: not
+    asking is counted once, among the questions to the user, and not again
+    as a wrong answer. The prompt stays the same for every run. Every
     text is NFKC-normalised and every "<" in it escaped, so no text can end
     its element, and the prompt says that the elements are data. Any error,
     or a verdict that does not parse, gives None; the log names the error's
@@ -37,6 +43,7 @@ How:
 
 import logging
 import unicodedata
+from collections.abc import Sequence
 from typing import Any, Literal
 
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
@@ -57,6 +64,10 @@ MAX_RETRIES = 2
 Verdict = Literal["correct", "partly_correct", "incorrect"]
 # Before the user's reply to the agent's question, in the question's element.
 CLARIFICATION_LEAD = "Användarens svar när agenten frågade:"
+# Before the cases a question fits, when it was answered without asking which, and the one
+# the gold assumes.
+CASES_LEAD = "Frågan passar flera fall, och användaren fick inte frågan om vilket:"
+ASSUMED_LEAD = "Facit bygger på användarens svar:"
 ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 
 JUDGE_PROMPT = """\
@@ -81,7 +92,10 @@ det väsentliga.
 inte framgår, med eller utan var det regleras i stället; incorrect när svaret ändå anger \
 ett värde, en leverantör eller ett villkor som svar på frågan.
 6. Besvarar avtalen frågan enligt facit men svaret säger att det inte framgår: incorrect.
-7. Skriv på svenska, kort och konkret. I missing tar du upp det i kärnan som svaret \
+7. Står det i <fråga> vilka fall frågan passar och vilket fall facit bygger på, fick \
+användaren aldrig välja. Svaret har då kärnan om det ger facits svar för det fallet och \
+säger att svaret gäller det fallet; svar för de andra fallen är inget fel.
+8. Skriv på svenska, kort och konkret. I missing tar du upp det i kärnan som svaret \
 saknar, i wrong det i svaret som motsäger facit; annars lämnar du dem tomma. reason är en \
 mening om varför.
 
@@ -125,13 +139,20 @@ class ModelJudge:
         answer_text: str,
         config: RunnableConfig | None = None,
         clarification: str | None = None,
+        cases: Sequence[str] = (),
     ) -> Judgement | None:
         """The model's verdict on the answer, or None when there is none to read.
 
-        `clarification` is the user's reply to the agent's question, when the agent asked.
+        `clarification` is the user's reply to the agent's question, when the agent asked;
+        with `cases`, the reply the gold assumes to a question that was not asked.
         """
         messages = judge_messages(
-            question, gold_answer, answerable, answer_text, clarification=clarification
+            question,
+            gold_answer,
+            answerable,
+            answer_text,
+            clarification=clarification,
+            cases=cases,
         )
         try:
             result = await self._judge.ainvoke(messages, config=config)
@@ -172,9 +193,19 @@ def judge_messages(
     answer_text: str,
     *,
     clarification: str | None = None,
+    cases: Sequence[str] = (),
 ) -> list[BaseMessage]:
-    """The judge's messages: the prompt, and the question and both answers as data."""
-    if clarification is not None:
+    """The judge's messages: the prompt, and the question and both answers as data.
+
+    The clarification follows the question: as the reply the agent got, or, with
+    `cases`, as the case the gold assumes among those the question fits.
+    """
+    if clarification is not None and cases:
+        fits = "; ".join(case.strip() for case in cases)
+        question = (
+            f"{question.strip()}\n\n{CASES_LEAD} {fits}.\n{ASSUMED_LEAD} {clarification.strip()}"
+        )
+    elif clarification is not None:
         question = f"{question.strip()}\n\n{CLARIFICATION_LEAD} {clarification.strip()}"
     parts = [
         element("fråga", question),

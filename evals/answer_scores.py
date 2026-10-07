@@ -114,9 +114,12 @@ class QuestionResult:
     def asked_right(self) -> bool | None:
         """Asked when it should, with a question that separates; did not when it should not.
 
-        None when the gold does not say, and for an ask the ask judge did not judge.
+        None when the gold does not say, for an ask the ask judge did not judge, and
+        for a run that never reached the graph (it could not ask).
         """
         if self.should_ask is None:
+            return None
+        if not self.run.path_saved and not self.asked:
             return None
         if not self.should_ask:
             return not self.asked

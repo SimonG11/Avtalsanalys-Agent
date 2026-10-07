@@ -34,34 +34,47 @@ påstående, inte ett mätt resultat.
    Det är ett mätverktyg, och agenten ändras inte för det. `build_workflow` ger en graf som går
    att köra precis där agentens går: `create_agent` med samma strukturerade svar
    (`ToolStrategy(FinalAnswer)`), samma tillstånd och samma middleware, importerad från agentens
-   moduler: dagens datum i systemprompten, `AnswerCheck` med `VALIDATION_RETRIES`,
-   `ModelCallLimitMiddleware`, `AnswerOpenToolCalls` och `ToolErrorMiddleware`. Modellen får inga
-   verktyg, bara `FinalAnswer`, så den kan bara svara.
-2. **Stegen är de en noggrann person alltid tar, i samma ordning för varje fråga**
-   (`FixedRetrieval`, före första modellanropet):
+   moduler: `AnswerCheck` med `VALIDATION_RETRIES`, `ModelCallLimitMiddleware`,
+   `AnswerOpenToolCalls` och `ToolErrorMiddleware`, och dagens datum i baslinjens egen
+   systemprompt (punkt 3). Modellen får inga verktyg, bara `FinalAnswer`, så den kan bara svara.
+2. **Stegen är de en noggrann person alltid tar, i samma ordning för varje fråga**, före första
+   modellanropet och var och ett i en egen middleware (`fixed_steps`), så att LangGraph sparar
+   tillståndet efter varje steg och en körning som avbryts behåller stegen före:
    1. ett strukturerat modellanrop som läser frågan (`QueryPlan`): ramavtalsområde (ett av
       pilotens fyra, eller inget), delområde, avtalsnummer, leverantör, en sökfråga och en
-      sökfråga för Frågor och svar;
-   2. `search_register` när frågan nämner ett område, ett avtal eller en leverantör;
-   3. `search_documents` med sökfrågan och filtren, och `read_section` på de fem första olika
-      avsnitten, hela avsnitt och inte utdrag;
+      sökfråga för Frågor och svar. En sökfråga kortas till verktygets 500 tecken, och en som är
+      tom eller kortare än två tecken blir frågan;
+   2. `search_register` när frågan nämner ett område, ett delområde, ett avtal eller en
+      leverantör. Vägras anropet görs det om utan delområdet och sedan utan avtalet; har svaret
+      fler rader än en sida (`total`) hämtas resten med `offset`, högst 100 rader. Anger frågan
+      inget avtalsnummer och gav registret alla sina rader begränsar de sökningen, som agentens
+      regel 1 gör: till radernas enda avtal när frågan nämner en leverantör, annars till deras
+      enda upphandling när den nämner ett delområde;
+   3. `search_documents` med sökfrågan, området och frågans avtalsnummer eller registrets. Vägras
+      sökningen görs den om utan numret och sedan utan området. `read_section` på de fem första
+      olika avsnitten, hela avsnitt och inte utdrag;
    4. `find_amendments` på varje avsnitt som lästes, och `read_section` på högst fem ändrande
       avsnitt;
-   5. `search_documents` i Frågor och svar (`document_type` `questions_and_answers`) och
-      `read_section` på de tre första träffarna.
+   5. `search_documents` i Frågor och svar (`document_type` `questions_and_answers`) med filtren
+      från sökningen som svarade, och `read_section` på de tre första träffarna.
 
-   Det blir högst 21 verktygsanrop och 13 lästa avsnitt, ungefär dubbelt så många anrop som
-   agentens median (6,6), så baslinjen förlorar inte på att ha läst för lite. Varje steg står i
-   samtalet som agentens: ett AI-meddelande med stegets verktygsanrop och verktygens svar, gjorda
-   med avtal-mcp:s egna verktyg. Kontrollen, vägen i rapporten och modellen läser dem därför på
+   Det blir 21 verktygsanrop och 13 lästa avsnitt när inget anrop vägras och registret ryms på
+   en sida, och högst 29 anrop med omtagningarna och registrets sidor: ungefär tre gånger så
+   många anrop som agentens medel (6,6 per fråga, högst 14), så baslinjen förlorar inte på att
+   ha läst för lite. Omtagningarna och begränsningen är fasta regler, inte val: det agenten gör
+   när den läser ett fel eller `total`, gjort på samma sätt för varje fråga, så att baslinjen
+   inte förlorar på något annat än att inte välja sina steg. Varje steg står i samtalet som
+   agentens: ett AI-meddelande med stegets verktygsanrop och verktygens svar, gjorda med
+   avtal-mcp:s egna verktyg. Kontrollen, vägen i rapporten och modellen läser dem därför på
    samma sätt. Ett verktyg som svarar med fel noteras, och flödet går vidare.
 3. **Baslinjens systemprompt delar agentens regler för svaret ordagrant.** Rollen, regeln om den
    senaste lydelsen, reglerna om det som inte framgår och om text i dokument, och hela avsnittet
    "Svaret" klipps ur `SYSTEM_PROMPT` vid rubrikerna. Till det kommer att underlaget står i
    samtalet, att det inte finns några verktyg och ingen användare att fråga, och att ett datum som
-   måste räknas fram inte skrivs (det finns ingen `calculate_date`). Ändras rubrikerna i agentens
-   prompt går baslinjens prompt inte att bygga, så baslinjen svarar aldrig efter regler som
-   agenten inte längre har.
+   måste räknas fram inte skrivs (det finns ingen `calculate_date`). Ändras rubrikerna,
+   reglernas nummer eller meningen om den senaste lydelsen i agentens prompt går baslinjens
+   prompt inte att bygga, så baslinjen svarar aldrig efter regler som agenten inte längre har.
+   Rapportens hash gäller baslinjens prompt, frågans läsning (`PLAN_PROMPT`) och dess schema.
 4. **Läsningen av frågan räknas som ett modellanrop.** Den räknas in i
    `ModelCallLimitMiddleware`s räknare för tråden och körningen, så gränsen och rapporten tar med
    den, och dess tokens räknas med agentmodellens.
@@ -69,15 +82,24 @@ påstående, inte ett mätt resultat.
    baslinjen; bedömningen, domaren, källorna, registeruppgifterna och kostnaden är desamma.
    Rapporten heter `answers-<modell>-<resonemang>-workflow[-<etikett>]`, säger att det är
    baslinjen och listar stegen. `python -m evals.compare_answer_runs A.json B.json` jämför två
-   rapporter av samma guldfil och samma frågor (annars vägrar den): per kategori och totalt, med
-   rätt (rätt 1, delvis rätt 0,5, fel 0), andelen kontrollerade svar, facits källor, tid,
-   modellanrop och kostnad, och den parade skillnaden B−A med ett 95 %-intervall
-   (`metrics.paired_bootstrap`) för rätt och för facits källor.
+   rapporter av samma guldfil och samma frågor, bedömda av samma domare och mätta mot samma
+   avtal-mcp (annars vägrar den), och listar de inställningar där körningarna skiljer sig åt
+   (modell, resonemang, granskare, gränser). Den ger per kategori och totalt rätt (rätt 1,
+   delvis rätt 0,5, fel 0; en fråga utan svar, ett fel i körningen, räknas som fel, och ett svar
+   som domaren inte bedömde räknas inte), andelen kontrollerade svar, facits källor, tid,
+   modellanrop och kostnad, och den parade skillnaden B−A med antalet parade frågor för rätt och
+   för facits källor. Ett 95 %-intervall (`metrics.paired_bootstrap`) ges bara över minst tio
+   frågor: på tre frågor med samma tecken har percentilintervallet ingen bredd, fast ett
+   teckentest ger p = 0,25.
 6. **Oklara frågor i testsamlingens format.** En fråga kan säga om agenten ska fråga användaren
    (`should_ask`), vilka alternativ en bra motfråga ger (`options`) och användarens svar
    (`clarification`). Frågar agenten får den förtydligandet som svar. Domaren läser då
-   förtydligandet med frågan, eftersom facit bygger på det; frågar agenten inte bedöms svaret mot
-   frågan som den ställdes. En andra domare (samma modell och nivå) avgör om motfrågan låter
+   förtydligandet med frågan, eftersom facit bygger på det. Frågar den inte, som baslinjen
+   aldrig kan, läser domaren vilka fall frågan passar och vilket fall facit bygger på, och ett
+   svar som ger facits svar för det fallet och säger att det gäller det fallet har kärnan
+   (domarens regel 7). Annars räknades oförmågan att fråga två gånger: under Motfrågor och som
+   fel svar mot ett facit som bygger på ett förtydligande svaret aldrig fick. En andra domare
+   (samma modell och nivå) avgör om motfrågan låter
    användaren välja mellan de väntade alternativen, och en motfråga räknas som rätt bara då. För
    en kontrollfråga är det rätt att inte fråga, och en motfråga räknas som onödig. Rapporten får
    avsnittet Motfrågor. Baslinjen kan inte fråga och får 0 av de frågor där den borde.
@@ -93,8 +115,8 @@ påstående, inte ett mätt resultat.
 - Baslinjen är vår egen konstruktion. Ett annat arbetsflöde kunde göra bättre eller sämre ifrån
   sig, så jämförelsen gäller just detta: ett starkt, fast arbetsflöde med samma byggstenar.
   Gränserna (fem, fem och tre avsnitt) är valda, inte uppmätta.
-- Baslinjen gör två modellanrop per fråga men skickar fler lästa avsnitt i varje än agenten
-  brukar läsa. En provkörning av q01 mot ersättaren tog 30 sekunder, kostade 0,09 USD för
+- Baslinjen gör minst två modellanrop per fråga (fler när kontrollen skickar tillbaka utkastet)
+  men skickar fler lästa avsnitt i svarsanropet än agenten brukar läsa. En provkörning av q01 mot ersättaren tog 30 sekunder, kostade 0,09 USD för
   agentmodellen och granskaren och blev rätt; vad hela jämförelsen visar är inte mätt än.
 - Motfrågornas domare är en språkmodell, som svarsdomaren, och kan döma fel; dess skäl står i
   rapporten. Med fyra frågor där agenten ska fråga är talet grovt, och utkastet behöver godkännas

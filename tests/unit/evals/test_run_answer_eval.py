@@ -54,7 +54,7 @@ from evals.run_answer_eval import (
     run_settings,
     select_questions,
 )
-from evals.workflow_baseline import workflow_template
+from evals.workflow_baseline import PLAN_PROMPT, baseline_prompts, workflow_template
 
 SECRET = "sk-test-not-a-real-key"
 CORRECT = Judgement(verdict="correct", missing=[], wrong=[], reason="Samma som facit.")
@@ -108,12 +108,18 @@ class FakeJudge(Judge):
     def __init__(self) -> None:
         self.read: list[str] = []
         self.clarifications: list[str | None] = []
+        self.cases: list[tuple[str, ...]] = []
 
     async def judge(
-        self, question: GoldQuestion, answer: Answer, clarification: str | None = None
+        self,
+        question: GoldQuestion,
+        answer: Answer,
+        clarification: str | None = None,
+        cases: Sequence[str] = (),
     ) -> tuple[Judgement | None, Mapping[str, TokenUse]]:
         self.read.append(question.id)
         self.clarifications.append(clarification)
+        self.cases.append(tuple(cases))
         return CORRECT, {"judge-model": TokenUse(calls=1)}
 
 
@@ -684,14 +690,18 @@ def asked(*questions: str) -> QuestionRun:
 
 
 @pytest.mark.anyio
-async def test_the_judge_reads_the_clarification_only_when_the_agent_asked() -> None:
+async def test_the_judge_reads_the_clarification_as_the_reply_or_as_the_case_the_gold_assumes() -> (
+    None
+):
     judge = AskingJudge()
 
-    await judge_answer(judge, asking("a01", True), ANSWERED)
+    await judge_answer(judge, asking("a01", True), ANSWERED)  # should ask, did not
     await judge_answer(judge, asking("a01", True), asked("Vilket delområde?"))
+    await judge_answer(judge, asking("a02", False), ANSWERED)  # a control question
     await judge_answer(judge, gold("q01"), asked("Vilket avtal?"))  # no clarification in the gold
 
-    assert judge.clarifications == [None, "Delområde 2.", None]
+    assert judge.clarifications == ["Delområde 2.", "Delområde 2.", None, None]
+    assert judge.cases == [("Delområde 1", "Delområde 2"), (), (), ()]
 
 
 @pytest.mark.anyio
@@ -788,7 +798,8 @@ def test_the_mode_is_agent_by_default_and_names_the_prompt_measured(
     info = run_info(Settings(_env_file=None), args, None)
 
     assert info.mode == "workflow"
-    assert info.system_prompt_sha256 == hashlib.sha256(workflow_template().encode()).hexdigest()
+    assert info.system_prompt_sha256 == hashlib.sha256(baseline_prompts().encode()).hexdigest()
+    assert workflow_template() in baseline_prompts() and PLAN_PROMPT in baseline_prompts()
     assert info.system_prompt_sha256 != hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
 
 

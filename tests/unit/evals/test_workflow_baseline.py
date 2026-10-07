@@ -9,6 +9,7 @@ the reviewer. No test needs a network, an API key or a database.
 
 import json
 import uuid
+from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,9 @@ from evals.workflow_baseline import (
     MAX_ANSWERS,
     MAX_SECTIONS,
     PILOT_AREAS,
+    QUERY_CHARS,
     QUESTIONS_AND_ANSWERS,
+    REGISTER_ROWS,
     _hits,
     build_workflow,
     shared_rules,
@@ -121,7 +124,12 @@ def search_documents(
     document_type: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Sök i dokumenten."""
-    if document_type == QUESTIONS_AND_ANSWERS:  # g first: an amendment read already
+    return found(document_type)
+
+
+def found(document_type: str | None) -> tuple[str, dict[str, Any]]:
+    """The search's hits: HITS, or in Frågor och svar g first (an amendment read already)."""
+    if document_type == QUESTIONS_AND_ANSWERS:
         hits = [hit(*AMENDING)] + [hit(QA[n], 1, None) for n in "1234"]
     else:
         hits = [hit(*place) for place in HITS]
@@ -297,15 +305,17 @@ async def test_a_tool_error_is_recorded_and_the_workflow_goes_on() -> None:
 
     run = await ask(build(model, tools))
 
-    # The server has no search_register, c's section is held back, and find_amendments fails
-    # on each of the four sections that were read; every step after them is made all the same.
+    # The server has no search_register (asked again without the sub-area), c's section is
+    # held back, and find_amendments fails on each of the four sections that were read; every
+    # step after them is made all the same.
     errors = [(step.name, step.args.get("sha256")) for step in run.steps if step.error]
     assert errors == [
+        ("search_register", None),
         ("search_register", None),
         ("read_section", SHA["c"]),
         *[("find_amendments", SHA[f]) for f in "abde"],
     ]
-    assert run.tool_errors == 6
+    assert run.tool_errors == 7
     qa_reads = [step.args["sha256"] for step in run.steps[-4:-1]]
     assert qa_reads == [SHA["g"], QA["1"], QA["2"]]  # g was not read as an amendment this time
     assert run.steps[-1].name == "FinalAnswer"
@@ -325,6 +335,175 @@ async def test_a_plan_that_does_not_parse_searches_with_the_question_without_fil
     qa = next(s for s in run.steps[1:] if s.name == "search_documents")
     assert qa.args == {"query": QUESTION, "document_type": QUESTIONS_AND_ANSWERS}
     assert run.answer is not None and run.answer.status == "verified"
+
+
+def row(agreement: str) -> dict[str, Any]:
+    """A register row of the agreement, in its procurement (the number without the sequence)."""
+    return {"agreement_number": agreement, "procurement_number": agreement.rsplit("-", 1)[0]}
+
+
+def register_of(rows: list[dict[str, Any]], total: int | None = None) -> BaseTool:
+    """A search_register that pages through `rows` twenty at a time, as avtal-mcp's does."""
+
+    @tool("search_register", response_format="content_and_artifact")
+    def register(
+        framework_area: str | None = None,
+        sub_area: str | None = None,
+        agreement_number: str | None = None,
+        supplier: str | None = None,
+        offset: int = 0,
+    ) -> tuple[str, dict[str, Any]]:
+        """Sök i registret."""
+        page = rows[offset : offset + 20]
+        return structured({"rows": page, "total": len(rows) if total is None else total})
+
+    return register
+
+
+def searches(run: QuestionRun) -> list[Mapping[str, Any]]:
+    return [step.args for step in run.steps if step.name == "search_documents"]
+
+
+@pytest.mark.parametrize(
+    ("changes", "rows", "number"),
+    [
+        # A sub-area the register has in one procurement: the search keeps that procurement.
+        ({}, [row("23.3-5890-2023-001"), row("23.3-5890-2023-002")], "23.3-5890-2023"),
+        # A supplier with one agreement there: the search keeps that agreement.
+        (
+            {"supplier": "Consid", "sub_area": "Ledning av IT-projekt"},
+            [row("23.3-2940-2020-011")],
+            "23.3-2940-2020-011",
+        ),
+        # A sub-area in two procurements narrows nothing.
+        ({}, [row("23.3-5890-2023-001"), row("23.3-10639-2023-001")], None),
+    ],
+)
+@pytest.mark.anyio
+async def test_the_registers_one_procurement_or_agreement_narrows_the_search(
+    changes: dict[str, Any], rows: list[dict[str, Any]], number: str | None
+) -> None:
+    model = NamedModel(
+        script=[plan(**changes), final_answer("Tre månader [1].", [GOOD], call_id="c1")]
+    )
+    tools: list[BaseTool] = [register_of(rows), search_documents, read_section, find_amendments]
+
+    run = await ask(build(model, tools))
+
+    narrowed = {"agreement_number": number} if number else {}
+    main, qa = searches(run)
+    assert main == {"query": "uppsägningstid kontrakt", "framework_area": "IT-drift", **narrowed}
+    assert qa == {**main, "query": "uppsägning av kontrakt", "document_type": QUESTIONS_AND_ANSWERS}
+
+
+@pytest.mark.parametrize(("total", "offsets", "narrowed"), [(45, [20, 40], True), (250, [], False)])
+@pytest.mark.anyio
+async def test_the_register_is_read_page_by_page_up_to_its_cap(
+    total: int, offsets: list[int], narrowed: bool
+) -> None:
+    rows = [row(f"23.3-5890-2023-{n:03}") for n in range(1, total + 1)]
+    model = NamedModel(script=[plan(), final_answer("Tre månader [1].", [GOOD], call_id="c1")])
+    tools: list[BaseTool] = [register_of(rows), search_documents, read_section, find_amendments]
+
+    run = await ask(build(model, tools))
+
+    pages = [step.args.get("offset") for step in run.steps if step.name == "search_register"]
+    expected = offsets or list(range(20, REGISTER_ROWS, 20))
+    assert pages == [None, *expected]
+    # Only all of the register's rows narrow the search; 250 rows are more than are read.
+    assert ("agreement_number" in searches(run)[0]) is narrowed
+
+
+@pytest.mark.anyio
+async def test_a_refused_argument_is_dropped_and_the_steps_go_on_without_it() -> None:
+    @tool("search_register", response_format="content_and_artifact")
+    def register(
+        framework_area: str | None = None,
+        sub_area: str | None = None,
+        agreement_number: str | None = None,
+        supplier: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Sök i registret."""
+        if sub_area is not None:
+            raise ToolException(f"Inget delområde innehåller '{sub_area}'.")
+        return structured({"rows": [], "total": 0})
+
+    @tool("search_documents", response_format="content_and_artifact")
+    def documents(
+        query: str,
+        framework_area: str | None = None,
+        agreement_number: str | None = None,
+        document_type: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Sök i dokumenten."""
+        if agreement_number is not None:
+            raise ToolException(f"Numret {agreement_number} finns inte i registret.")
+        return found(document_type)
+
+    wrong = {"agreement_number": "23.3-9999-2023", "sub_area": "delområde 3 IT-säkerhet"}
+    draft = final_answer("Tre månader [1].", [GOOD], call_id="c1")
+    model = NamedModel(script=[plan(**wrong), draft])
+    tools: list[BaseTool] = [register, documents, read_section, find_amendments]
+
+    run = await ask(build(model, tools))
+
+    area = {"framework_area": "IT-drift"}
+    number = {"agreement_number": "23.3-9999-2023"}
+    query = {"query": "uppsägningstid kontrakt"}
+    assert [(step.name, step.args, step.error) for step in run.steps[:4]] == [
+        ("search_register", {**area, **wrong}, True),
+        ("search_register", {**area, **number}, False),
+        ("search_documents", {**query, **area, **number}, True),
+        ("search_documents", {**query, **area}, False),
+    ]
+    assert run.tools.count("read_section") == MAX_SECTIONS + 1 + MAX_ANSWERS
+    assert searches(run)[-1] == {
+        "query": "uppsägning av kontrakt",
+        **area,
+        "document_type": QUESTIONS_AND_ANSWERS,
+    }
+    assert run.answer is not None and run.answer.status == "verified"
+
+
+@pytest.mark.parametrize(
+    ("changes", "query", "qa_query"),
+    [
+        ({"search_query": "x" * 600, "qa_query": " a "}, "x" * QUERY_CHARS, "x" * QUERY_CHARS),
+        ({"search_query": "  ", "qa_query": ""}, QUESTION, QUESTION),
+    ],
+)
+@pytest.mark.anyio
+async def test_the_plans_queries_are_cut_and_a_short_one_is_the_question(
+    changes: dict[str, Any], query: str, qa_query: str
+) -> None:
+    model = NamedModel(
+        script=[plan(**changes), final_answer("Tre månader [1].", [GOOD], call_id="c1")]
+    )
+
+    run = await ask(build(model))
+
+    assert [args["query"] for args in searches(run)] == [query, qa_query]
+
+
+@pytest.mark.anyio
+async def test_a_crash_in_a_later_step_keeps_the_earlier_steps_and_the_plans_call() -> None:
+    @tool("find_amendments")
+    def amendments(
+        sha256: str, section_number: str | None = None, section_position: int | None = None
+    ) -> str:
+        """Hitta ändringar."""
+        raise RuntimeError("Anslutningen bröts.")
+
+    model = NamedModel(script=[plan(), final_answer("Tre månader [1].", [GOOD], call_id="c1")])
+    tools: list[BaseTool] = [search_register, search_documents, read_section, amendments]
+
+    run = await ask(build(model, tools))
+
+    assert run.error is not None and "Anslutningen bröts." in run.error
+    assert run.path_saved and run.model_calls == 1
+    names = ["search_register", "search_documents", *["read_section"] * MAX_SECTIONS]
+    assert [step.name for step in run.steps] == names
+    assert run.usage == {"the-agent-model": TokenUse(calls=1)}
 
 
 def test_the_limits_are_the_documented_ones() -> None:
@@ -362,6 +541,8 @@ def test_a_changed_system_prompt_stops_the_prompt_from_being_built() -> None:
         shared_rules(SYSTEM_PROMPT.replace("\n\nSvaret\n", "\n\nSvar\n"))
     with pytest.raises(ValueError, match="latest-wording"):
         shared_rules(SYSTEM_PROMPT.replace("Har det ändrats", "Om det ändrats"))
+    with pytest.raises(ValueError, match="rule 7"):
+        shared_rules(SYSTEM_PROMPT.replace("\n\nSvaret\n", "\n7. Ny regel.\n\nSvaret\n", 1))
 
 
 def test_the_plans_areas_are_the_gold_questions_areas() -> None:

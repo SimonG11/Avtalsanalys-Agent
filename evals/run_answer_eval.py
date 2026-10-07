@@ -23,8 +23,10 @@ What:
     For a gold question that says whether the agent should ask the user
     (`should_ask`), the agent's questions get the gold's clarification as
     the user's reply, the judge reads the clarification with the question
-    when the agent asked, and an ask judge (`ask_judge`) decides whether a
-    question it should ask separates the gold's options.
+    when the agent asked, and the question's cases and the one the gold
+    assumes when it should have asked and did not; an ask judge
+    (`ask_judge`) decides whether a question it should ask separates the
+    gold's options.
 
         uv run python -m evals.run_answer_eval
         uv run python -m evals.run_answer_eval --only q01 q21 --effort medium
@@ -58,7 +60,8 @@ How:
     whether its working tree had changes (`code_commit`, by git), else the
     commit AVTALSAGENT_COMMIT names (`measured_commit`; compose's `eval`
     container has no git), else unknown; and the sha256 of SYSTEM_PROMPT
-    (before the date is filled in) and of REVIEWER_PROMPT, so a report says
+    (before the date is filled in; in workflow mode of the baseline's
+    `baseline_prompts`) and of REVIEWER_PROMPT, so a report says
     which code and prompts it measured. The commit is the code of this
     process: the agent and the measurement, and avtal-mcp only over stdio.
 """
@@ -121,7 +124,7 @@ from evals.answer_scores import JudgedBy, QuestionResult, rule_judgement, score
 from evals.ask_judge import AskJudgement, ModelAskJudge
 from evals.gold import GoldError, GoldFile, GoldQuestion, load_gold
 from evals.judge import Judgement, ModelJudge, ReasoningEffort, make_judge_model
-from evals.workflow_baseline import build_workflow, workflow_template
+from evals.workflow_baseline import baseline_prompts, build_workflow
 
 _log = logging.getLogger("evals.answers")
 
@@ -145,7 +148,11 @@ class Judge:
         self._ask_judge = ask_judge
 
     async def judge(
-        self, question: GoldQuestion, answer: Answer, clarification: str | None = None
+        self,
+        question: GoldQuestion,
+        answer: Answer,
+        clarification: str | None = None,
+        cases: Sequence[str] = (),
     ) -> tuple[Judgement | None, Mapping[str, TokenUse]]:
         usage = UsageCounter()
         judgement = await self._judge.judge(
@@ -155,6 +162,7 @@ class Judge:
             answer.text,
             config={"callbacks": [usage]},
             clarification=clarification,
+            cases=cases,
         )
         return judgement, usage.by_model
 
@@ -225,13 +233,17 @@ async def judge_answer(
 
     When the agent asked the user, the judge reads the reply it got (the
     gold's clarification) with the question, since the gold answer assumes it.
+    When the gold says it should ask and it did not (the baseline cannot), the
+    judge reads the question's cases and the one the gold assumes, so an answer
+    for that case, said to be for it, is not wrong for want of asking (ADR 0024).
     """
     if run.answer is None or judge is None:
         return None, None, {}
     if (by_rule := rule_judgement(run)) is not None:
         return by_rule, "rule", {}
-    clarification = question.clarification if run.asked else None
-    judgement, usage = await judge.judge(question, run.answer, clarification)
+    clarification = question.clarification if run.asked or question.should_ask else None
+    cases = question.options if question.should_ask and not run.asked else ()
+    judgement, usage = await judge.judge(question, run.answer, clarification, cases)
     return judgement, "judge", usage
 
 
@@ -481,7 +493,7 @@ def run_info(settings: Settings, args: argparse.Namespace, judge_model: str | No
     """How the run is made; the prompt's hash is the baseline's own in workflow mode."""
     commit, uncommitted, source = measured_commit(Path(avtalsagent.__file__).parent)
     mode: Mode = args.mode
-    prompt = workflow_template() if mode == "workflow" else SYSTEM_PROMPT
+    prompt = baseline_prompts() if mode == "workflow" else SYSTEM_PROMPT
     return RunInfo(
         agent_model=settings.agent_model,
         agent_effort=settings.agent_reasoning_effort,

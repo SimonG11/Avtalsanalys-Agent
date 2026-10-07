@@ -802,6 +802,7 @@ def test_a_workflow_run_is_named_lists_its_steps_and_asks_in_none() -> None:
     assert "## Baslinjens väg" in markdown and "- **Baslinjens modellanrop per fråga:**" in markdown
     assert "Baslinjen frågade när den borde i 0 av 3 frågor" in markdown
     assert "- **Baslinje (fast arbetsflöde):** gpt-6.1-sol, resonemang low" in markdown
-    assert "baslinjens systemprompt" in markdown and "läsningen av frågan inräknad" in markdown
+    assert "baslinjens prompter" in markdown and "`PLAN_PROMPT` med `QueryPlan`" in markdown
+    assert "läsningen av frågan inräknad" in markdown
     assert overall_lines(never)[0].startswith("Answer evaluation, gpt-6.1-sol (low, workflow)")
     assert json.loads(report_json(never))["run"]["mode"] == "workflow"

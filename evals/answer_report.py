@@ -33,7 +33,8 @@ How:
     Pure functions over the results, `summarize` and `summarize_paths`.
     Numbers are written the Swedish way (a decimal comma, a no-break space
     before "%"), and text in a table is put on one line with markup
-    characters escaped. The cost is a range: cached input at no cost, and at
+    characters escaped (`report_text`, which the comparison of runs uses
+    too). The cost is a range: cached input at no cost, and at
     the full input price. A question's path shows each call with the
     arguments that say what it looked for (`_SHOWN_ARGS`), each cut to
     ARG_CHARS; a file's hash is shown by its first 12 characters, and a
@@ -81,6 +82,17 @@ from evals.answer_scores import (
     summarize_paths,
 )
 from evals.answer_steps import RESOLVE_REFERENCE, CheckRule, Rejection, Step, rule_counts
+from evals.report_text import (
+    decimal,
+    dollar_range,
+    in_dollars,
+    in_seconds,
+    md,
+    md_row,
+    percent,
+    plain_number,
+    thousands,
+)
 from evals.workflow_baseline import FIXED_STEPS
 
 VERDICT_NAMES = {"correct": "Rätt", "partly_correct": "Delvis rätt", "incorrect": "Fel"}
@@ -123,7 +135,8 @@ class RunInfo:
     commit: str | None = None  # the short sha of the agent's and the measurement's code
     commit_source: CommitSource | None = None
     uncommitted: bool = False  # by git: its working tree had changes that were not committed
-    # Of SYSTEM_PROMPT, or of the baseline's prompt in workflow mode, before the date is in.
+    # Of SYSTEM_PROMPT before the date is in, or in workflow mode of `baseline_prompts`: the
+    # baseline's prompt before the date is in, PLAN_PROMPT and QueryPlan's schema.
     system_prompt_sha256: str | None = None
     reviewer_prompt_sha256: str | None = None  # of REVIEWER_PROMPT
     mode: Mode = "agent"
@@ -270,15 +283,13 @@ def _result_json(result: QuestionResult) -> dict[str, Any]:
     }
 
 
-_NBSP = "\u00a0"  # between thousands and before "%": "13 175", "95 %"
-_MARKUP = str.maketrans({char: "\\" + char for char in "\\`*_[]<>|"})
 _UNJUDGED = "unjudged"
 
 
 def render_markdown(report: AnswerReport) -> str:
     """The Markdown report, in Swedish."""
     info = report.info
-    model = f"{_md(info.agent_model)}, resonemang {_md(info.agent_effort)}"
+    model = f"{md(info.agent_model)}, resonemang {md(info.agent_effort)}"
     if info.mode == "workflow":
         lines = [
             f"# Mätning av baslinjens svar (fast arbetsflöde): {model}",
@@ -322,7 +333,7 @@ def _md_summary(report: AnswerReport) -> list[str]:
         lines.append("- **Rätt enligt domaren:** ingen bedömning (körd utan domare).")
     else:
         line = (
-            f"- **Rätt enligt domaren:** {v['correct']} av {n} ({_percent(v['correct'], n)}); "
+            f"- **Rätt enligt domaren:** {v['correct']} av {n} ({percent(v['correct'], n)}); "
             f"delvis rätt {v['partly_correct']}, fel {v['incorrect']}"
         )
         if v[_UNJUDGED]:
@@ -355,13 +366,13 @@ def _md_summary(report: AnswerReport) -> list[str]:
     if s.citations:
         lines.append(
             f"- **Citat:** {s.verified_citations} av {s.citations} står ordagrant i sitt avsnitt "
-            f"({_percent(s.verified_citations, s.citations)}); alla citat är ordagranna i "
+            f"({percent(s.verified_citations, s.citations)}); alla citat är ordagranna i "
             f"{s.answers_all_verified} av {s.answers_with_citations} svar med citat."
         )
     if s.document_sources:
         lines.append(
             f"- **Facits källor citerade:** {s.sources_found} av {s.document_sources} "
-            f"({_percent(s.sources_found, s.document_sources)}); alla källor i "
+            f"({percent(s.sources_found, s.document_sources)}); alla källor i "
             f"{s.questions_all_sources} av {s.questions_with_sources} frågor."
         )
     if s.register_required:
@@ -394,14 +405,15 @@ def _md_summary(report: AnswerReport) -> list[str]:
     lines.append(f"- **Mål ur en hänvisning:** {_reads(paths)}.")
     lines.append(f"- **`resolve_reference`:** {_resolved(paths)}.")
     lines.append(
-        f"- **Tid per fråga:** median {_seconds(median(s.seconds))}, 90:e percentilen "
-        f"{_seconds(percentile(s.seconds, 0.9))}, längst {_seconds(max(s.seconds, default=0.0))}."
+        f"- **Tid per fråga:** median {in_seconds(median(s.seconds))}, 90:e percentilen "
+        f"{in_seconds(percentile(s.seconds, 0.9))}, "
+        f"längst {in_seconds(max(s.seconds, default=0.0))}."
     )
     if s.cost is not None and n:
         low, high = s.cost
         lines.append(
-            f"- **Kostnad:** {_dollars_range(low, high)} för agenten och granskaren, "
-            f"{_dollars_range(low / n, high / n)} per fråga (se Tokens och kostnad)."
+            f"- **Kostnad:** {dollar_range(low, high)} för agenten och granskaren, "
+            f"{dollar_range(low / n, high / n)} per fråga (se Tokens och kostnad)."
         )
     return [*lines, ""]
 
@@ -409,23 +421,24 @@ def _md_summary(report: AnswerReport) -> list[str]:
 def _md_run(report: AnswerReport) -> list[str]:
     info = report.info
     judge = (
-        f"{_md(info.judge_model)}, resonemang {_md(info.judge_effort or '')}"
+        f"{md(info.judge_model)}, resonemang {md(info.judge_effort or '')}"
         if info.judge_model
         else "ingen (--no-judge)"
     )
     if info.mode == "workflow":
         who = (
-            f"- **Baslinje (fast arbetsflöde):** {_md(info.agent_model)}, resonemang "
-            f"{_md(info.agent_effort)}, högst {info.model_call_limit} modellanrop per fråga "
+            f"- **Baslinje (fast arbetsflöde):** {md(info.agent_model)}, resonemang "
+            f"{md(info.agent_effort)}, högst {info.model_call_limit} modellanrop per fråga "
             f"(läsningen av frågan inräknad), högst {info.validation_retries} nya försök"
         )
         prompt = (
-            f"baslinjens systemprompt {_sha(info.system_prompt_sha256)} (`workflow_template`, "
-            "byggd av delar av agentens `SYSTEM_PROMPT`, innan dagens datum fylls i)"
+            f"baslinjens prompter {_sha(info.system_prompt_sha256)} (`workflow_template`, "
+            "byggd av delar av agentens `SYSTEM_PROMPT`, innan dagens datum fylls i, och "
+            "`PLAN_PROMPT` med `QueryPlan`)"
         )
     else:
         who = (
-            f"- **Agent:** {_md(info.agent_model)}, resonemang {_md(info.agent_effort)}, högst "
+            f"- **Agent:** {md(info.agent_model)}, resonemang {md(info.agent_effort)}, högst "
             f"{info.model_call_limit} modellanrop per körning av grafen (en fråga där agenten "
             f"frågar användaren är två körningar), högst {info.validation_retries} nya försök"
         )
@@ -436,14 +449,15 @@ def _md_run(report: AnswerReport) -> list[str]:
     return [
         "## Körning",
         "",
-        f"- **Tid:** {_moment(report.created_at)}, {_seconds(report.seconds)} totalt",
+        f"- **Tid:** {_moment(report.created_at)}, {in_seconds(report.seconds)} totalt",
         who,
-        f"- **Granskare:** {_md(info.reviewer_model)}, resonemang {_md(info.reviewer_effort)}",
+        f"- **Granskare:** {md(info.reviewer_model)}, resonemang {md(info.reviewer_effort)}",
         f"- **Domare:** {judge}",
-        f"- **avtal-mcp:** {_md(info.mcp)}",
-        f"- **Guldfil:** {_md(report.gold_path)} (sha256 `{report.gold_sha256[:12]}`), "
+        f"- **avtal-mcp:** {md(info.mcp)}",
+        f"- **Guldfil:** {md(report.gold_path)} (sha256 `{report.gold_sha256[:12]}`), "
         f"{len(report.results)} av {report.gold_questions} frågor",
-        f"- **Samtidiga frågor:** {info.concurrency}; tidsgräns {_seconds(info.timeout)} per fråga",
+        f"- **Samtidiga frågor:** {info.concurrency}; "
+        f"tidsgräns {in_seconds(info.timeout)} per fråga",
         f"- **Kod:** {_commit(info)}",
         f"- **Prompter, sha256:** {prompt}, granskarens prompt {_sha(info.reviewer_prompt_sha256)}",
         "",
@@ -484,7 +498,7 @@ def _commit(info: RunInfo) -> str:
             "ur samma installation"
         )
     return (
-        f"{commit}; gäller agenten och mätningen, medan avtal-mcp på {_md(info.mcp)} kan vara "
+        f"{commit}; gäller agenten och mätningen, medan avtal-mcp på {md(info.mcp)} kan vara "
         "en annan version eller den tillfälliga ersättaren"
     )
 
@@ -579,23 +593,23 @@ def _md_categories(results: Sequence[QuestionResult]) -> list[str]:
     lines = [
         "## Per kategori",
         "",
-        _row(["Kategori", "Frågor", "Rätt", "Delvis", "Fel", "Kontrollerat", "Källor", "Tid"]),
-        _row(["---", "---:", "---:", "---:", "---:", "---:", "---:", "---:"]),
+        md_row(["Kategori", "Frågor", "Rätt", "Delvis", "Fel", "Kontrollerat", "Källor", "Tid"]),
+        md_row(["---", "---:", "---:", "---:", "---:", "---:", "---:", "---:"]),
     ]
     for category, group in by_category(results).items():
         s = summarize(group)
         sources = f"{s.sources_found} av {s.document_sources}" if s.document_sources else "–"
         lines.append(
-            _row(
+            md_row(
                 [
-                    _md(category),
+                    md(category),
                     str(s.questions),
                     str(s.verdicts["correct"]),
                     str(s.verdicts["partly_correct"]),
                     str(s.verdicts["incorrect"]),
                     str(s.statuses["verified"]),
                     sources,
-                    _seconds(median(s.seconds)),
+                    in_seconds(median(s.seconds)),
                 ]
             )
         )
@@ -607,7 +621,7 @@ def _md_questions(results: Sequence[QuestionResult]) -> list[str]:
     lines = [
         "## Per fråga",
         "",
-        _row(
+        md_row(
             [
                 "Fråga",
                 "Kategori",
@@ -623,15 +637,15 @@ def _md_questions(results: Sequence[QuestionResult]) -> list[str]:
                 "Kostnad, högst",
             ]
         ),
-        _row(["---"] * 4 + ["---:"] * 8),
+        md_row(["---"] * 4 + ["---:"] * 8),
     ]
     for r in results:
         status = STATUS_NAMES[r.status] if r.status else "Fel i körningen"
         lines.append(
-            _row(
+            md_row(
                 [
-                    _md(r.id),
-                    _md(r.category),
+                    md(r.id),
+                    md(r.category),
                     _verdict_name(r),
                     status,
                     f"{r.verified_citations} av {r.citations}" if r.citations else "–",
@@ -640,8 +654,8 @@ def _md_questions(results: Sequence[QuestionResult]) -> list[str]:
                     str(r.run.check_retries),
                     str(len(r.run.tools)),
                     str(r.run.model_calls) if r.run.model_calls is not None else "–",
-                    _seconds(r.run.seconds),
-                    _dollars(r.cost[1]) if r.cost is not None else "–",
+                    in_seconds(r.run.seconds),
+                    in_dollars(r.cost[1]) if r.cost is not None else "–",
                 ]
             )
         )
@@ -655,7 +669,7 @@ def _md_questions(results: Sequence[QuestionResult]) -> list[str]:
     errors = [r for r in results if r.run.error]
     if errors:
         lines += ["Fel i körningen:", ""]
-        lines += [f"- **{_md(r.id)}:** {_md(r.run.error or '')}" for r in errors]
+        lines += [f"- **{md(r.id)}:** {md(r.run.error or '')}" for r in errors]
         lines.append("")
     return lines
 
@@ -698,8 +712,8 @@ def _md_asks(report: AnswerReport) -> list[str]:
         "",
         f"{who} {_asks_line(asks)}.",
         "",
-        _row(["Fråga", "Ska fråga", "Frågade", "Skiljer", "Motfrågan", "Svaret"]),
-        _row(["---", "---", "---", "---", "---", "---"]),
+        md_row(["Fråga", "Ska fråga", "Frågade", "Skiljer", "Motfrågan", "Svaret"]),
+        md_row(["---", "---", "---", "---", "---", "---"]),
     ]
     asked_results = [r for r in results if r.should_ask is not None]
     for r in asked_results:
@@ -710,9 +724,9 @@ def _md_asks(report: AnswerReport) -> list[str]:
         if r.unnecessary_ask:
             outcome = "onödig"
         lines.append(
-            _row(
+            md_row(
                 [
-                    _md(r.id),
+                    md(r.id),
                     "ja" if r.should_ask else "nej",
                     "ja" if r.asked else "nej",
                     separates,
@@ -730,7 +744,7 @@ def _md_asks(report: AnswerReport) -> list[str]:
         "",
     ]
     for r in asked_results:
-        line = f"- **{_md(r.id)}** "
+        line = f"- **{md(r.id)}** "
         line += "(ska fråga" if r.should_ask else "(ska svara utan att fråga"
         if r.expected_options:
             line += f"; väntade alternativ: {_listed(r.expected_options)[:-1]}"
@@ -739,11 +753,11 @@ def _md_asks(report: AnswerReport) -> list[str]:
             line += " Frågade inte."
         for number, question in enumerate(r.run.asked):
             offered = r.run.asked_options[number] if number < len(r.run.asked_options) else ()
-            line += f" Frågade: ”{_md(question)}”"
+            line += f" Frågade: ”{md(question)}”"
             line += f" Alternativ: {_listed(offered)}" if offered else " (inga alternativ)."
         if r.ask_judgement is not None:
             verdict = "skiljer" if r.ask_judgement.separates else "skiljer inte"
-            line += f" Domaren: {verdict}. {_md(r.ask_judgement.reason)}"
+            line += f" Domaren: {verdict}. {md(r.ask_judgement.reason)}"
         lines.append(line)
     return [*lines, ""]
 
@@ -755,11 +769,11 @@ def _md_paths(report: AnswerReport) -> list[str]:
         lines += [
             "Anrop till avtal-mcp per verktyg, i alla frågor:",
             "",
-            _row(["Verktyg", "Anrop", "Frågor"]),
-            _row(["---", "---:", "---:"]),
+            md_row(["Verktyg", "Anrop", "Frågor"]),
+            md_row(["---", "---:", "---:"]),
         ]
         lines += [
-            _row([_md(tool), str(n.calls), str(n.questions)]) for tool, n in paths.tools.items()
+            md_row([md(tool), str(n.calls), str(n.questions)]) for tool, n in paths.tools.items()
         ]
     else:
         lines.append("Agenten anropade inga verktyg i avtal-mcp.")
@@ -768,11 +782,11 @@ def _md_paths(report: AnswerReport) -> list[str]:
         lines += [
             "Nya försök efter regeln som underkände utkastet:",
             "",
-            _row(["Regel", "Utkast", "Frågor", "Fel"]),
-            _row(["---", "---:", "---:", "---:"]),
+            md_row(["Regel", "Utkast", "Frågor", "Fel"]),
+            md_row(["---", "---:", "---:", "---:"]),
         ]
         lines += [
-            _row([RULE_NAMES[rule], str(n.drafts), str(n.questions), str(n.problems)])
+            md_row([RULE_NAMES[rule], str(n.drafts), str(n.questions), str(n.problems)])
             for rule, n in paths.rejections.items()
         ]
         lines += [
@@ -810,7 +824,8 @@ def _model_calls(paths: PathSummary, info: RunInfo) -> str:
         return NOT_SAVED
     at_limit = sum(1 for count in calls if count >= limit)
     text = (
-        f"median {_number(median(calls))}, högst {max(calls)}, mot gränsen {limit} per körning; "
+        f"median {plain_number(median(calls))}, högst {max(calls)}, "
+        f"mot gränsen {limit} per körning; "
         f"{at_limit} av {len(calls)} frågor hade {limit} eller fler"
     )
     return text + _not_saved(paths)
@@ -822,7 +837,7 @@ def _reads(paths: PathSummary) -> str:
         return NOT_SAVED
     text = (
         f"{paths.reads_from_references} av {paths.reads} anrop till `read_section` "
-        f"({_percent(paths.reads_from_references, paths.reads)}) gick till ett mål ur ett "
+        f"({percent(paths.reads_from_references, paths.reads)}) gick till ett mål ur ett "
         f"tidigare svars hänvisningar, i {paths.questions_from_references} av "
         f"{paths.questions_saved} frågor, och {paths.reads_from_references_only} av dem till ett "
         "mål som ingen tidigare sökning hade gett, i "
@@ -849,20 +864,18 @@ def _md_path(result: QuestionResult) -> list[str]:
     """The question's path on one line, and each problem of each draft sent back below it."""
     run = result.run
     if not run.path_saved:
-        return [
-            f"- **{_md(result.id)}:** {NOT_SAVED}" + (" (fel i körningen)" if run.error else "")
-        ]
+        return [f"- **{md(result.id)}:** {NOT_SAVED}" + (" (fel i körningen)" if run.error else "")]
     about = [f"{run.model_calls} modellanrop"]
     if counts := rule_counts(run.rejections):
         about.append(
             "nya försök efter regel: "
             + ", ".join(f"{RULE_NAMES[rule]} {n}" for rule, n in counts.items())
         )
-    lines = [f"- **{_md(result.id)}** ({'; '.join(about)}): {_path(run)}"]
+    lines = [f"- **{md(result.id)}** ({'; '.join(about)}): {_path(run)}"]
     for number, rejection in enumerate(run.rejections, 1):
         lines += [
             f"  - Skäl till nytt försök {number}, {RULE_NAMES[problem.rule]}: "
-            f"{_md(_short(problem.text, PROBLEM_CHARS))}"
+            f"{md(_short(problem.text, PROBLEM_CHARS))}"
             for problem in rejection.problems
         ]
     return lines
@@ -900,9 +913,9 @@ def _step(step: Step, rejections: Iterator[Rejection], reserved: bool) -> str:
             return "FinalAnswer(med reservation)"
         return "FinalAnswer"
     mark = {"reference": "↪", "amendment": "Δ"}.get(step.target_from or "", "")
-    text = mark + _md(step.name)
+    text = mark + md(step.name)
     if (shown := _shown_args(step)) is not None:
-        text += f"({', '.join(_md(arg) for arg in shown)})"
+        text += f"({', '.join(md(arg) for arg in shown)})"
     return text + ("✗" if step.error else "")
 
 
@@ -974,7 +987,7 @@ def _md_usage(report: AnswerReport) -> list[str]:
     lines = [
         "## Tokens och kostnad",
         "",
-        _row(
+        md_row(
             [
                 "Modell",
                 "Roll",
@@ -986,7 +999,7 @@ def _md_usage(report: AnswerReport) -> list[str]:
                 "Kostnad",
             ]
         ),
-        _row(["---", "---", "---:", "---:", "---:", "---:", "---:", "---:"]),
+        md_row(["---", "---", "---:", "---:", "---:", "---:", "---:", "---:"]),
     ]
     info = report.info
     for role, usage in (("agent och granskare", summary.usage), ("domare", judge)):
@@ -997,21 +1010,21 @@ def _md_usage(report: AnswerReport) -> list[str]:
                 name = " och ".join(label for m, label in roles if m == model) or role
             dollars = cost_range({model: tokens})
             lines.append(
-                _row(
+                md_row(
                     [
-                        _md(model),
+                        md(model),
                         name,
-                        _n(tokens.calls),
-                        _n(tokens.input_tokens),
-                        _n(tokens.cached_input_tokens),
-                        _n(tokens.output_tokens),
-                        _n(tokens.reasoning_tokens),
-                        _dollars_range(*dollars) if dollars is not None else "–",
+                        thousands(tokens.calls),
+                        thousands(tokens.input_tokens),
+                        thousands(tokens.cached_input_tokens),
+                        thousands(tokens.output_tokens),
+                        thousands(tokens.reasoning_tokens),
+                        dollar_range(*dollars) if dollars is not None else "–",
                     ]
                 )
             )
     prices = "; ".join(
-        f"{_md(model)} {_decimal(price.input, 2)} / {_decimal(price.output, 2)}"
+        f"{md(model)} {decimal(price.input, 2)} / {decimal(price.output, 2)}"
         for model, price in PRICES.items()
     )
     lines += [
@@ -1032,9 +1045,9 @@ def _judge_failed(result: QuestionResult) -> bool:
 def _md_judgements(report: AnswerReport) -> list[str]:
     lines = ["## Bedömningar", ""]
     for r in report.results:
-        line = f"- **{_md(r.id)} {_verdict_name(r)}.**"
+        line = f"- **{md(r.id)} {_verdict_name(r)}.**"
         if r.judgement is not None:
-            line += f" {_md(r.judgement.reason)}"
+            line += f" {md(r.judgement.reason)}"
             if r.judgement.missing:
                 line += f" Saknas: {_listed(r.judgement.missing)}"
             if r.judgement.wrong:
@@ -1055,11 +1068,11 @@ def _md_answers(results: Sequence[QuestionResult]) -> list[str]:
     lines = ["## Svaren", ""]
     for r in results:
         lines += [
-            f"### {_md(r.id)}: {_md(r.category)}",
+            f"### {md(r.id)}: {md(r.category)}",
             "",
-            f"**Fråga:** {_md(r.question)}",
+            f"**Fråga:** {md(r.question)}",
             "",
-            f"**Facit:** {_md(r.gold_answer)}",
+            f"**Facit:** {md(r.gold_answer)}",
             "",
         ]
         answer = r.run.answer
@@ -1071,8 +1084,8 @@ def _md_answers(results: Sequence[QuestionResult]) -> list[str]:
             heading = " ".join(filter(None, (citation.section_number, citation.section_title)))
             mark = "✓" if citation.verified else "✗"
             lines.append(
-                f"- [{citation.id}] {_md(citation.file_title or citation.sha256[:12])}, "
-                f"{_md(heading)} {mark}"
+                f"- [{citation.id}] {md(citation.file_title or citation.sha256[:12])}, "
+                f"{md(heading)} {mark}"
             )
         if answer.citations:
             lines.append("")
@@ -1081,12 +1094,12 @@ def _md_answers(results: Sequence[QuestionResult]) -> list[str]:
 
 def _listed(items: Sequence[str]) -> str:
     """Items as one sentence: 'a; b.', without a second full stop after an item's own."""
-    return _md("; ".join(item.strip().rstrip(".;") for item in items)) + "."
+    return md("; ".join(item.strip().rstrip(".;") for item in items)) + "."
 
 
 def _quoted(text: str) -> list[str]:
     """Text as a Markdown block quote, its lines kept and markup characters escaped."""
-    return [f"> {_md(line)}" if line.strip() else ">" for line in text.strip().splitlines()]
+    return [f"> {md(line)}" if line.strip() else ">" for line in text.strip().splitlines()]
 
 
 def _sources_cell(result: QuestionResult) -> str:
@@ -1104,48 +1117,6 @@ def _register_cell(result: QuestionResult) -> str:
 
 def _verdict_name(result: QuestionResult) -> str:
     return VERDICT_NAMES[result.verdict] if result.verdict else UNJUDGED_NAME
-
-
-def _row(cells: Sequence[str]) -> str:
-    return "| " + " | ".join(cells) + " |"
-
-
-def _md(text: str) -> str:
-    """Text for a table cell or a line: on one line, with markup characters escaped."""
-    return " ".join(text.split()).translate(_MARKUP)
-
-
-def _decimal(value: float, places: int) -> str:
-    return f"{value:.{places}f}".replace(".", ",")
-
-
-def _number(value: float) -> str:
-    """A whole number as it is, else with one decimal: '7', '7,5'."""
-    return str(int(value)) if value == int(value) else _decimal(value, 1)
-
-
-def _percent(part: int, whole: int) -> str:
-    return f"{round(100 * part / whole) if whole else 0}{_NBSP}%"
-
-
-def _seconds(value: float) -> str:
-    return f"{round(value)}{_NBSP}s"
-
-
-def _dollars(value: float) -> str:
-    return f"{_decimal(value, 2 if value >= 0.1 else 3)}{_NBSP}USD"
-
-
-def _dollars_range(low: float, high: float) -> str:
-    """'0,12–0,26 USD'; one amount when both are the same as written."""
-    low_text, high_text = _dollars(low), _dollars(high)
-    if low_text == high_text:
-        return high_text
-    return f"{low_text.removesuffix(f'{_NBSP}USD')}–{high_text}"
-
-
-def _n(value: int) -> str:
-    return f"{value:,}".replace(",", _NBSP)
 
 
 def _moment(moment: datetime) -> str:

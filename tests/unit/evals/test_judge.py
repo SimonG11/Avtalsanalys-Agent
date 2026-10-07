@@ -17,6 +17,8 @@ from pydantic import SecretStr
 from avtalsagent.agent.model import MissingApiKeyError
 from avtalsagent.config import Settings
 from evals.judge import (
+    ASSUMED_LEAD,
+    CASES_LEAD,
     CLARIFICATION_LEAD,
     JUDGE_PROMPT,
     Judgement,
@@ -92,6 +94,20 @@ def test_the_clarification_follows_the_question_in_its_element() -> None:
         f"<fråga>\n{QUESTION}\n\n{CLARIFICATION_LEAD} Mindre, 2026.\n</fråga>\n\n"
     )
     assert CLARIFICATION_LEAD not in str(judge_messages(QUESTION, GOLD, True, "Åtta.")[1].content)
+
+
+def test_a_question_answered_without_asking_gets_its_cases_and_the_one_the_gold_assumes() -> None:
+    cases = ("IT-drift Mindre", " IT-drift Större ")
+    messages = judge_messages(QUESTION, GOLD, True, "Åtta.", clarification="Mindre.", cases=cases)
+
+    assert messages[0].content == JUDGE_PROMPT and "7. Står det i <fråga> vilka fall" in (
+        JUDGE_PROMPT
+    )
+    assert str(messages[1].content).startswith(
+        f"<fråga>\n{QUESTION}\n\n{CASES_LEAD} IT-drift Mindre; IT-drift Större.\n"
+        f"{ASSUMED_LEAD} Mindre.\n</fråga>\n\n"
+    )
+    assert CLARIFICATION_LEAD not in str(messages[1].content)
 
 
 def test_no_text_can_end_its_element() -> None:

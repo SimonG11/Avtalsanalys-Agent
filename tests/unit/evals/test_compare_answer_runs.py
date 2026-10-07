@@ -139,8 +139,14 @@ def test_two_reports_of_the_same_questions_are_compared_side_by_side(tmp_path: P
     assert f"| Rätt (poäng) | 4,5 av 5 (90{NBSP}%) | 1,5 av 4 (38{NBSP}%); 1 ej bedömda |" in (
         markdown
     )
-    assert f"| −50{NBSP}p.e. (−88 till −12) |" in markdown  # paired over q01-q04
-    assert f"| 0 av 5 (0{NBSP}%) | 0 av 5 (0{NBSP}%) | +0{NBSP}p.e. (+0 till +0) |" in markdown
+    # Paired over q01-q04, too few questions for an interval.
+    assert f"| −50{NBSP}p.e. (4 frågor, för få för ett intervall) |" in markdown
+    assert f"| 0 av 5 (0{NBSP}%) | 0 av 5 (0{NBSP}%) | +0{NBSP}p.e. (5 frågor, för få" in markdown
+    assert "- **Domare:** gpt-6-astra, resonemang medium; **avtal-mcp:** stdio" in markdown
+    assert (
+        "- **Körningarna:** samma modell, resonemang, granskare, domare, avtal-mcp och gränser"
+        in markdown
+    )
     assert f"| Tid per fråga (median) | 30{NBSP}s | 20{NBSP}s | – |" in markdown
     assert "## Per kategori" in markdown and "### enkel (3 frågor)" in markdown
     assert "| q02 | enkel | Rätt | Fel | ≠ |" in markdown
@@ -172,6 +178,78 @@ def test_reports_of_another_gold_file_or_other_questions_are_refused(tmp_path: P
         check_comparable(a, replace(b, gold_sha256="f" * 64))
     with pytest.raises(CompareError, match=r"only in A: q05; only in B: none"):
         check_comparable(a, replace(b, questions=b.questions[:4]))
+    with pytest.raises(CompareError, match=r"judged differently \(gpt-6-astra medium and"):
+        check_comparable(a, replace(b, judge_effort="high"))
+    with pytest.raises(CompareError, match="judged differently"):
+        check_comparable(a, replace(b, judge_model=None, judge_effort=None))  # --no-judge
+    with pytest.raises(CompareError, match="different avtal-mcp servers"):
+        check_comparable(a, replace(b, mcp="http://127.0.0.1:18011/mcp"))
+
+
+def test_the_settings_in_which_the_runs_differ_are_listed(tmp_path: Path) -> None:
+    a, b = (load_run(path) for path in reports(tmp_path))
+    assert (b.judge_model, b.reviewer_model, b.model_call_limit, b.timeout) == (
+        "gpt-6-astra",
+        "gpt-6-astra",
+        16,
+        600.0,
+    )
+
+    markdown = render_comparison(a, replace(b, agent_effort="medium", model_call_limit=20))
+
+    assert (
+        "- **Körningarna skiljer sig i:** resonemang (A: low, B: medium); "
+        "gräns för modellanrop (A: 16, B: 20)\n"
+    ) in markdown
+
+
+def failed(id: str, category: str) -> QuestionResult:
+    """A question whose run timed out: no answer, and no verdict."""
+    run = QuestionRun(
+        answer=None,
+        draft=None,
+        tools=(),
+        tool_errors=0,
+        asked=(),
+        check_retries=0,
+        refused_drafts=0,
+        seconds=600.0,
+        usage={},
+        error="tidsgränsen på 600 s nåddes",
+    )
+    return score(gold(id, category), run, None, None)
+
+
+def test_a_question_a_run_did_not_answer_counts_as_wrong(tmp_path: Path) -> None:
+    ids = [f"q{n:02}" for n in range(1, 13)]
+    agent = tuple(
+        failed(id, "enkel") if id in ("q11", "q12") else result(id, "enkel", "correct", 30.0)
+        for id in ids
+    )
+    workflow = tuple(result(id, "enkel", "correct", 20.0) for id in ids)
+    base = AnswerReport(
+        created_at=datetime(2026, 10, 7, tzinfo=UTC),
+        gold_path="evals/datasets/gold_sv.jsonl",
+        gold_sha256="7b4a" + "0" * 60,
+        gold_questions=30,
+        info=INFO,
+        seconds=60.0,
+        results=agent,
+    )
+    a = load_run(write(tmp_path, "a", base))
+    b = load_run(write(tmp_path, "b", replace(base, results=workflow)))
+
+    right = paired_difference(a.questions, b.questions, lambda row: row.score)
+    markdown = render_comparison(a, b)
+
+    # The two timeouts count as wrong for A, as A's own report counts them: B−A is +2/12.
+    assert right is not None and right.questions == 12
+    assert right.mean == pytest.approx(2 / 12)
+    assert f"| Rätt (poäng) | 10 av 12 (83{NBSP}%) | 12 av 12 (100{NBSP}%) | +17{NBSP}p.e. (" in (
+        markdown
+    )
+    assert "; 12 frågor) |" in markdown  # twelve pairs: the interval is shown
+    assert "| q11 | enkel | Fel i körningen | Rätt | ≠ |" in markdown
 
 
 def test_the_command_writes_the_comparison_or_stops_with_one_line(
@@ -205,9 +283,16 @@ def test_the_asks_numbers_are_compared_when_a_report_has_them(tmp_path: Path) ->
     never = asks | {"asked": 0, "separating": 0, "asked_unnecessarily": 0}
 
     markdown = render_comparison(replace(a, asks=asks), replace(b, asks=never))
+    unjudged = asks | {"separating": 0, "unjudged": 2}
+    agents = render_comparison(replace(a, asks=unjudged), replace(b, mode="agent", asks=asks))
 
     assert "| Frågade när den borde | 3 av 4 (2 skiljer) | 0 av 4 (0 skiljer) |" in markdown
     assert "| Frågade i onödan | 1 av 3 | 0 av 3 |" in markdown
+    assert "Baslinjen kan inte fråga." in markdown
+    assert "| Frågade när den borde | 3 av 4 (0 skiljer, 2 ej bedömda) | 3 av 4 (2 skiljer) |" in (
+        agents
+    )
+    assert "Baslinjen" not in agents  # two runs of the agent
 
 
 def test_a_report_made_before_the_mode_was_recorded_is_the_agents(tmp_path: Path) -> None:
