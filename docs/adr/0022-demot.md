@@ -1,6 +1,6 @@
 # ADR 0022: Demot: fem frågor, fyra ur testsamlingen, körda mot den riktiga databasen, och README:n som ingång
 
-**Status:** Föreslaget (M12).
+**Status:** Godkänt (PR #26, M12).
 
 ## Kontext
 
@@ -24,9 +24,9 @@ Det som styr besluten:
 ## Beslut
 
 1. **Fem demofrågor, en per sak agenten gör som ett workflow inte gör:** frågar när frågan är oklar
-   (en öppnare variant av q04), väljer registret i stället för dokumenten (q10), följer hänvisningar
-   i flera steg (q14), hittar en rättelse som ersätter klausulen (q21) och säger "framgår inte"
-   (q27). En reservfråga jämför leverantörer (q24).
+   (en öppnare variant av q04), väljer registret i stället för dokumenten (q10), tar sig fram i
+   flera steg utifrån det den just läst (q14), hittar en rättelse som ersätter klausulen (q21) och
+   säger "framgår inte" (q27). En reservfråga jämför leverantörer (q24).
 2. **Fyra av frågorna kommer ur testsamlingen**, så att de har ett facit och en mätning bakom sig.
    Demot visar då samma sak som mätningen, och ett fel live går att jämföra med facit. Den femte är
    en öppnare variant av q04, eftersom ingen testfråga fick agenten att fråga i mätningen.
