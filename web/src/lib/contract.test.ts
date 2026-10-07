@@ -40,6 +40,21 @@ describe("parseAnswer", () => {
     assert.match(parsed.kind === "invalid" ? parsed.problem : "", /^citations\.0\.page:/);
   });
 
+  it("accepts the fields the contract allows to be null", () => {
+    const word = { ...CITATION, page_title: null, section_number: null, page: null };
+    const parsed = parseAnswer({
+      answer: { text: "Framgår inte [1].", status: "no_answer", citations: [word] },
+    });
+    assert.equal(parsed.kind, "answer");
+  });
+
+  it("rejects an empty quote", () => {
+    const state = {
+      answer: { text: "x", status: "verified", citations: [{ ...CITATION, quote: "" }] },
+    };
+    assert.equal(parseAnswer(state).kind, "invalid");
+  });
+
   it("rejects an unknown status", () => {
     const parsed = parseAnswer({ answer: { text: "x", status: "maybe", citations: [] } });
     assert.equal(parsed.kind, "invalid");

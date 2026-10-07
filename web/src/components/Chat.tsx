@@ -7,12 +7,14 @@
  * scrolling. This component only adds what is ours: Swedish texts, the step renderer and the
  * example questions.
  *
- * How: `useRenderTool` with the name "*" makes AgentStep render every tool call; the answer
+ * How: `useRenderTool` with the name "*" makes AgentStep render every tool call except the one
+ * that hands in the answer (FinalAnswer, see lib/tools.ts); the answer
  * card is registered on the provider (see AgentApp). Labels CopilotKit shows are translated here.
  */
 import { CopilotChat, useConfigureSuggestions, useRenderTool } from "@copilotkit/react-core/v2";
 
 import { AGENT_ID } from "@/lib/agent";
+import { isHiddenTool } from "@/lib/tools";
 
 import { AgentStep } from "./AgentSteps";
 import type { AgentStepProps } from "./AgentSteps";
@@ -47,7 +49,12 @@ const EXAMPLE_QUESTIONS = [
 
 export function Chat() {
   useRenderTool(
-    { name: "*", agentId: AGENT_ID, render: (props: AgentStepProps) => <AgentStep {...props} /> },
+    {
+      name: "*",
+      agentId: AGENT_ID,
+      render: (props: AgentStepProps) =>
+        isHiddenTool(props.name) ? null : <AgentStep {...props} />,
+    },
     [],
   );
   useConfigureSuggestions(

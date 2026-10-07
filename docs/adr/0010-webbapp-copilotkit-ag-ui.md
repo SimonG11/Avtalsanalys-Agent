@@ -54,6 +54,8 @@ Det som avgör valet:
   känna CopilotKit.
 - CopilotKit och AG-UI ändras ofta. Versionerna är låsta exakt, och en uppgradering kräver att
   webbläsartesterna går igenom.
+- Word-filer (31 av pilotens 207 filer) har ingen PDF. För dem visar källpanelen citatet utan
+  dokumentet.
 - Svaren finns bara i webbläsaren och försvinner när sidan laddas om.
 
 ## Alternativ som valts bort

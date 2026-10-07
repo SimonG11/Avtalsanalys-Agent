@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { splitAnswerText } from "./answerText.ts";
-import { describeToolCall } from "./tools.ts";
+import { describeToolCall, isHiddenTool } from "./tools.ts";
 
 describe("describeToolCall", () => {
   it("gives a Swedish title and puts the main argument first", () => {
@@ -41,8 +41,28 @@ describe("describeToolCall", () => {
     });
   });
 
+  it("shows the question to the person with its options as a list", () => {
+    const description = describeToolCall(
+      "ask_user",
+      { question: "Vilket område?", options: ["IT-drift", "Bemanningstjänster"] },
+      "executing",
+    );
+    assert.deepEqual(description, {
+      title: "Frågar dig",
+      subject: "Vilket område?",
+      details: [["alternativ", "IT-drift, Bemanningstjänster"]],
+    });
+  });
+
   it("copes with arguments that are still streaming", () => {
     assert.deepEqual(describeToolCall("get_outline", undefined, "inProgress").details, []);
+  });
+});
+
+describe("isHiddenTool", () => {
+  it("hides the call that hands in the answer, and nothing else", () => {
+    assert.equal(isHiddenTool("FinalAnswer"), true);
+    assert.equal(isHiddenTool("search_documents"), false);
   });
 });
 
@@ -54,6 +74,15 @@ describe("splitAnswerText", () => {
       { kind: "text", text: "Tre månader " },
       { kind: "citation", id: 1 },
       { kind: "text", text: ", skriftligt " },
+      { kind: "citation", id: 1 },
+      { kind: "citation", id: 2 },
+      { kind: "text", text: "." },
+    ]);
+  });
+
+  it("reads adjacent markers as separate citations", () => {
+    assert.deepEqual(splitAnswerText("Skriftligt [1][2].", ids), [
+      { kind: "text", text: "Skriftligt " },
       { kind: "citation", id: 1 },
       { kind: "citation", id: 2 },
       { kind: "text", text: "." },

@@ -13,6 +13,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { documentTitle, locationLabel } from "@/lib/citation";
 import type { Citation } from "@/lib/contract";
 import type { QuoteMatch } from "@/lib/highlight";
 
@@ -36,17 +37,16 @@ export function SourcePanel({ citation, onClose }: { citation: Citation; onClose
   const onMatch = useCallback((kind: QuoteMatch["kind"]) => setMatch(kind), []);
 
   const note = match ? MATCH_NOTES[match] : null;
+  const location = locationLabel(citation);
 
   return (
     <aside className={styles.panel} aria-label="Källa" data-testid="source-panel">
       <header className={styles.header}>
         <div>
           <p className={styles.eyebrow}>Källa {citation.id}</p>
-          <h2 className={styles.title}>{citation.file_title}</h2>
-          <p className={styles.meta}>{citation.page_title}</p>
-          <p className={styles.meta}>
-            Avsnitt {citation.section_number} {citation.section_title} · sida {citation.page}
-          </p>
+          <h2 className={styles.title}>{documentTitle(citation)}</h2>
+          {citation.page_title && <p className={styles.meta}>{citation.page_title}</p>}
+          {location && <p className={styles.meta}>{location}</p>}
         </div>
         <button type="button" className={styles.close} onClick={onClose} aria-label="Stäng källan">
           ×

@@ -11,6 +11,7 @@
  * draws it. Clicking a source opens it in the source panel through OpenSourceContext.
  */
 import { splitAnswerText } from "@/lib/answerText";
+import { sourceLabel } from "@/lib/citation";
 import type { Answer, AnswerStatus, Citation } from "@/lib/contract";
 
 import { useOpenSource } from "./SourceContext";
@@ -28,6 +29,18 @@ const STATUS_HELP: Record<AnswerStatus, string> = {
   no_answer: "Agenten hittade inget i avtalen som besvarar frågan.",
 };
 
+/** Help for the two statuses that read differently when the answer has no sources, or has. */
+function statusHelp(answer: Answer): string {
+  const hasSources = answer.citations.length > 0;
+  if (answer.status === "with_reservation" && !hasSources) {
+    return "Svaret har inga källor i avtalstexten att kontrollera mot, till exempel uppgifter ur registret.";
+  }
+  if (answer.status === "no_answer" && hasSources) {
+    return "Agenten hittade inget svar i avtalen. Källorna visar var frågan regleras.";
+  }
+  return STATUS_HELP[answer.status];
+}
+
 export function AnswerCard({ answer }: { answer: Answer }) {
   const openSource = useOpenSource();
   const byId = new Map(answer.citations.map((citation) => [citation.id, citation]));
@@ -39,7 +52,7 @@ export function AnswerCard({ answer }: { answer: Answer }) {
         <span className={`${styles.badge} ${styles[answer.status]}`}>
           {STATUS_LABELS[answer.status]}
         </span>
-        <span className={styles.help}>{STATUS_HELP[answer.status]}</span>
+        <span className={styles.help}>{statusHelp(answer)}</span>
       </header>
 
       <p className={styles.text}>
@@ -64,10 +77,7 @@ export function AnswerCard({ answer }: { answer: Answer }) {
               >
                 <span className={styles.sourceNumber}>{citation.id}</span>
                 <span className={styles.sourceBody}>
-                  <span className={styles.sourceTitle}>
-                    {citation.file_title}, avsnitt {citation.section_number}{" "}
-                    {citation.section_title}, s. {citation.page}
-                  </span>
+                  <span className={styles.sourceTitle}>{sourceLabel(citation)}</span>
                   <span className={styles.quote}>”{citation.quote}”</span>
                   {!citation.verified && (
                     <span className={styles.unverified}>
@@ -90,7 +100,7 @@ function CitationRef({ citation, onOpen }: { citation: Citation; onOpen: (c: Cit
       type="button"
       className={citation.verified ? styles.ref : `${styles.ref} ${styles.refUnverified}`}
       onClick={() => onOpen(citation)}
-      title={`${citation.file_title}, avsnitt ${citation.section_number}, s. ${citation.page}`}
+      title={sourceLabel(citation)}
       data-testid={`ref-${citation.id}`}
     >
       {citation.id}

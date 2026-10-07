@@ -45,6 +45,8 @@
 .text {
   margin: 0;
   line-height: 1.6;
+  /* The answer is plain text: paragraphs are separated by a blank line, list items by "- ". */
+  white-space: pre-line;
 }
 
 .ref {

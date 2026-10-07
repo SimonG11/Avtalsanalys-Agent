@@ -15,11 +15,15 @@ import { z } from "zod";
 export const CitationSchema = z.object({
   id: z.number().int().positive(),
   sha256: z.string().regex(/^[0-9a-f]{64}$/, "sha256 must be 64 lowercase hex characters"),
+  // Empty when the cited section could not be read.
   file_title: z.string(),
-  page_title: z.string(),
-  section_number: z.string(),
+  // Null when no agreement page links to the file.
+  page_title: z.string().nullable(),
+  // Null for a section without a number, e.g. the text before the first heading.
+  section_number: z.string().nullable(),
   section_title: z.string(),
-  page: z.number().int().positive(),
+  // Null for a Word file, which has no pages.
+  page: z.number().int().positive().nullable(),
   quote: z.string().min(1),
   verified: z.boolean(),
 });

@@ -30,7 +30,18 @@ export const TOOL_LABELS: Record<string, ToolLabel> = {
   search_register: { running: "Söker i registret", done: "Sökte i registret" },
   find_amendments: { running: "Letar efter ändringar", done: "Letade efter ändringar" },
   calculate_date: { running: "Räknar ut datum", done: "Räknade ut datum" },
+  ask_user: { running: "Frågar dig", done: "Fick svar" },
 };
+
+/**
+ * Tool calls that are not steps. The agent hands in its answer by calling FinalAnswer; the
+ * answer is shown from the state, so the call and its result are hidden.
+ */
+const HIDDEN_TOOLS = new Set(["FinalAnswer"]);
+
+export function isHiddenTool(name: string): boolean {
+  return HIDDEN_TOOLS.has(name);
+}
 
 /** Swedish names for the arguments the tools take; other arguments keep their own name. */
 const ARGUMENT_LABELS: Record<string, string> = {
@@ -40,21 +51,23 @@ const ARGUMENT_LABELS: Record<string, string> = {
   document_type: "dokumenttyp",
   sha256: "dokument",
   section_number: "avsnitt",
+  section_position: "plats i filen",
   reference: "hänvisning",
   supplier: "leverantör",
-  organisation_number: "orgnr",
-  start_date: "från",
-  months: "månader",
-  days: "dagar",
+  org_number: "orgnr",
+  valid_on: "gäller den",
   limit: "antal",
+  offset: "hoppar över",
+  options: "alternativ",
 };
 
 /** The arguments that best say what a call is about, shown first and without a label. */
 const MAIN_ARGUMENT: Record<string, string> = {
   search_documents: "query",
-  search_register: "query",
+  search_register: "supplier",
   read_section: "section_number",
   resolve_reference: "reference",
+  ask_user: "question",
 };
 
 export interface ToolCallDescription {
@@ -87,12 +100,15 @@ export function describeToolCall(
   return { title, subject, details };
 }
 
-/** Long hashes are shortened; lists and objects are written compactly. */
+/** Long hashes are shortened, lists of words joined; other objects are written compactly. */
 function formatValue(key: string, value: unknown): string {
   if (typeof value === "string") {
     return key === "sha256" && value.length > 12 ? `${value.slice(0, 8)}…` : value;
   }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+    return value.join(", ");
+  }
   return JSON.stringify(value);
 }
 

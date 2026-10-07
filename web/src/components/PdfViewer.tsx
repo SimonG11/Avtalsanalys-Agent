@@ -7,8 +7,10 @@
  *
  * How: react-pdf (PDF.js) draws the page and an invisible text layer on top of it. When the
  * text layer's items are loaded, lib/highlight.ts finds the quote among them, and
- * `customTextRenderer` wraps the matching characters in <mark>. PDF.js needs a browser, so
- * SourcePanel loads this module without server rendering.
+ * `customTextRenderer` wraps the matching characters in <mark>. A citation without a page (a
+ * Word file) opens the document at its first page. A document the API has no PDF of (Word files
+ * again, where the API answers 404) gets a note instead of the viewer. PDF.js needs a browser,
+ * so SourcePanel loads this module without server rendering.
  */
 import { useCallback, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
@@ -28,7 +30,8 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 
 export interface PdfViewerProps {
   url: string;
-  page: number;
+  /** The cited page, or null when it is not known. */
+  page: number | null;
   quote: string;
   width: number;
   /** Called with how well the quote was found, so the panel can say so. */
@@ -37,6 +40,8 @@ export interface PdfViewerProps {
 
 export default function PdfViewer({ url, page, quote, width, onMatch }: PdfViewerProps) {
   const [match, setMatch] = useState<QuoteMatch | null>(null);
+  const [noPdf, setNoPdf] = useState(false);
+  const pageNumber = page ?? 1;
 
   const onGetTextSuccess = useCallback(
     ({ items }: { items: TextItemLike[] }) => {
@@ -58,20 +63,39 @@ export default function PdfViewer({ url, page, quote, width, onMatch }: PdfViewe
       file={url}
       suspense={false}
       loading={<p className={styles.status}>Hämtar dokumentet…</p>}
-      error={<p className={styles.error}>Dokumentet kunde inte hämtas från API:t.</p>}
+      onLoadError={(error) => setNoPdf(isMissing(error))}
+      error={
+        noPdf ? (
+          <p className={styles.status} data-testid="no-pdf">
+            Det finns ingen PDF av dokumentet, till exempel för en Word-fil. Citatet står ovan.
+          </p>
+        ) : (
+          <p className={styles.error}>Dokumentet kunde inte hämtas från API:t.</p>
+        )
+      }
     >
+      {page === null && (
+        <p className={styles.status}>Källan anger ingen sida, så dokumentet visas från början.</p>
+      )}
       <Page
-        pageNumber={page}
+        pageNumber={pageNumber}
         width={width}
         suspense={false}
         loading={<p className={styles.status}>Ritar sidan…</p>}
-        error={<p className={styles.error}>Sidan {page} finns inte i dokumentet.</p>}
+        error={<p className={styles.error}>Sidan {pageNumber} finns inte i dokumentet.</p>}
         onGetTextSuccess={onGetTextSuccess}
         customTextRenderer={customTextRenderer}
         onRenderTextLayerSuccess={scrollToMark}
       />
     </Document>
   );
+}
+
+/** Whether PDF.js failed because the file does not exist (the API answered 404). */
+function isMissing(error: Error): boolean {
+  const status = (error as { status?: unknown }).status;
+  const missing = (error as { missing?: unknown }).missing;
+  return status === 404 || missing === true;
 }
 
 /** Brings the first highlighted line into view once the text layer is drawn. */

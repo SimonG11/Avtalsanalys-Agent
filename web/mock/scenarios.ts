@@ -7,9 +7,14 @@
  *
  * How: `planRun` reads the last user question and picks a scenario by keyword:
  *   - termination ("uppsägning", "säga upp") and an area (IT-drift ...) -> a verified answer
- *   - termination without an area -> the agent asks which area first (ask_user interrupt)
+ *   - termination without an area -> the agent asks which area first: it calls the ask_user
+ *     tool, which stops the run with an interrupt, and the run that resumes it gives the tool's
+ *     result (the person's answer) before it goes on
  *   - "vite" -> an answer with a reservation and one unverified citation
+ *   - "bilaga" -> no answer, with a source in a Word file (no page, no PDF) and a list in the text
+ *   - "avtalsnummer" -> an answer from the register: a reservation and no sources
  *   - anything else -> no answer
+ * Before an answer the agent calls FinalAnswer, as the real agent does, which the web app hides.
  * The question is sent as ag-ui-langgraph does with `emit_interrupt_outcome=True`: the older
  * on_interrupt event and the AG-UI standard outcome on RUN_FINISHED. "[legacy]" in the question
  * sends only the older event (ag-ui-langgraph's default) and "[outcome]" only the standard one
@@ -38,6 +43,11 @@ type InterruptShape = "both" | "legacy" | "outcome";
 
 const AREAS = ["IT-drift", "Programvaror och tjänster", "Bemanningstjänster"];
 
+const ASK_AREA = { question: "Vilket ramavtalsområde gäller frågan?", options: AREAS };
+
+/** A Word file the mock has no PDF of, so the PDF route answers 404 for it. */
+const WORD_FILE_SHA256 = "e".repeat(64);
+
 /** The text of the last user message, whether it is a string or a list of parts. */
 export function lastUserQuestion(messages: readonly Message[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -63,6 +73,20 @@ export function resumeAnswer(input: RunAgentInput): string | null {
   const command: unknown = (input.forwardedProps as Record<string, unknown> | undefined)?.command;
   if (typeof command === "object" && command !== null && "resume" in command) {
     return String((command as { resume: unknown }).resume ?? "");
+  }
+  return null;
+}
+
+/** The id of the ask_user call that is still waiting for its result, if there is one. */
+export function pendingAskUser(messages: readonly Message[]): string | null {
+  const answered = new Set(
+    messages.flatMap((message) => (message.role === "tool" ? [message.toolCallId] : [])),
+  );
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== "assistant") continue;
+    const call = message.toolCalls?.find((toolCall) => toolCall.function.name === "ask_user");
+    if (call && !answered.has(call.id)) return call.id;
   }
   return null;
 }
@@ -96,6 +120,12 @@ class RunBuilder {
 
   /** One model turn that calls one tool, then the tool's result (as create_agent does). */
   toolCall(name: string, args: Record<string, unknown>, result: unknown): void {
+    const toolCallId = this.callTool(name, args);
+    this.toolResult(toolCallId, JSON.stringify(result));
+  }
+
+  /** The model's tool call, streamed: start, the arguments in pieces, end. */
+  private callTool(name: string, args: Record<string, unknown>): string {
     const messageId = this.nextId("ai");
     const toolCallId = this.nextId("call");
     const argsJson = JSON.stringify(args);
@@ -118,8 +148,17 @@ class RunBuilder {
       delta: argsJson.slice(half),
     } as BaseEvent);
     this.push({ type: EventType.TOOL_CALL_END, toolCallId } as BaseEvent);
+    this.newMessages.push({
+      id: messageId,
+      role: "assistant",
+      content: "",
+      toolCalls: [{ id: toolCallId, type: "function", function: { name, arguments: argsJson } }],
+    });
+    return toolCallId;
+  }
 
-    const content = JSON.stringify(result);
+  /** The tool's answer to a call, which may have been made in an earlier run. */
+  toolResult(toolCallId: string, content: string): void {
     const toolMessageId = this.nextId("tool");
     this.push(
       {
@@ -131,15 +170,12 @@ class RunBuilder {
       } as BaseEvent,
       700,
     );
-    this.newMessages.push(
-      {
-        id: messageId,
-        role: "assistant",
-        content: "",
-        toolCalls: [{ id: toolCallId, type: "function", function: { name, arguments: argsJson } }],
-      },
-      { id: toolMessageId, role: "tool", toolCallId, content },
-    );
+    this.newMessages.push({ id: toolMessageId, role: "tool", toolCallId, content });
+  }
+
+  /** The agent hands in its answer for the citation check, as the real agent does. */
+  finalAnswer(answer: Record<string, unknown>): void {
+    this.toolCall("FinalAnswer", answer, "Svaret är lämnat för kontroll.");
   }
 
   state(snapshot: Record<string, unknown>): void {
@@ -151,6 +187,14 @@ class RunBuilder {
       type: EventType.MESSAGES_SNAPSHOT,
       messages: [...this.input.messages, ...this.newMessages],
     } as BaseEvent);
+  }
+
+  /**
+   * The agent calls ask_user. The tool stops the run with an interrupt (`interrupt`), and its
+   * result, the person's answer, comes in the run that resumes it (see `pendingAskUser`).
+   */
+  askUser(value: { question: string; options: string[] }): void {
+    this.callTool("ask_user", value);
   }
 
   interrupt(value: { question: string; options: string[] }, shape: InterruptShape): void {
@@ -236,7 +280,7 @@ function noticePeriodAnswer(context: MockContext, area: string) {
     text:
       `I ramavtalet för ${area} får kunden säga upp kontraktet med tre månaders uppsägningstid, ` +
       "och uppsägningen ska vara skriftlig [1]. Vid väsentligt avtalsbrott får en part säga upp " +
-      "kontraktet med omedelbar verkan [2].",
+      "kontraktet med omedelbar verkan [2]. Båda reglerna står under 6.21 [1][2].",
     status: "verified",
     citations: [
       citation(context, {
@@ -264,6 +308,7 @@ function noticePeriodAnswer(context: MockContext, area: string) {
 }
 
 function answerNoticePeriod(run: RunBuilder, context: MockContext, area: string): void {
+  const answer = noticePeriodAnswer(context, area);
   run.step("research_agent", () => {
     run.toolCall(
       "search_documents",
@@ -278,8 +323,67 @@ function answerNoticePeriod(run: RunBuilder, context: MockContext, area: string)
       { sha256: context.documentSha256, section_number: "6.21.9" },
       { section_number: "6.21.9", page: 2, text: "Kunden har rätt att säga upp Kontraktet ..." },
     );
+    run.finalAnswer(answer);
   });
-  run.step("finalize", () => run.state({ answer: noticePeriodAnswer(context, area) }));
+  run.step("finalize", () => run.state({ answer }));
+}
+
+/** No answer, but a source that says where the question is regulated: a Word file. */
+function answerAttachment(run: RunBuilder): void {
+  run.step("research_agent", () => {
+    run.toolCall(
+      "search_documents",
+      { query: "säkerhetsnivå avrop bilaga" },
+      { hits: [{ sha256: WORD_FILE_SHA256, section_number: null, section_title: "Avropsbilaga" }] },
+    );
+  });
+  run.step("finalize", () =>
+    run.state({
+      answer: {
+        text:
+          "Avtalen säger inte vilken säkerhetsnivå som gäller. Den bestäms i avropsbilagan, " +
+          "som kunden skriver själv vid avropet [1].\n\nAvropsbilagan ska ange:\n" +
+          "- krav på säkerhetsnivå\n- kontaktpersoner",
+        status: "no_answer",
+        citations: [
+          {
+            id: 1,
+            sha256: WORD_FILE_SHA256,
+            file_title: "Exempelbilaga Avropsförfrågan (fiktiv)",
+            page_title: null,
+            section_number: null,
+            section_title: "Avropsbilaga",
+            page: null,
+            quote: "Kunden anger säkerhetsnivå och kontaktpersoner i avropsbilagan.",
+            verified: true,
+          },
+        ],
+      },
+    }),
+  );
+}
+
+/** An answer from the register: nothing in the agreement text to quote. */
+function answerFromRegister(run: RunBuilder): void {
+  run.step("research_agent", () => {
+    run.toolCall(
+      "search_register",
+      { framework_area: "IT-drift" },
+      {
+        rows: [{ agreement_number: "00.0-0000-2026-001 (fiktivt)", framework_area: "IT-drift" }],
+        total: 1,
+      },
+    );
+  });
+  run.step("finalize", () =>
+    run.state({
+      answer: {
+        text: "Exempelavtalet för IT-drift har avtalsnummer 00.0-0000-2026-001 (fiktivt).",
+        status: "with_reservation",
+        citations: [],
+      },
+    }),
+  );
 }
 
 export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[] {
@@ -297,7 +401,9 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
   }
 
   if (resumed !== null) {
-    // The person answered which area the question is about.
+    // The person answered which area the question is about: ask_user returns the answer.
+    const pending = pendingAskUser(input.messages);
+    if (pending) run.step("research_agent", () => run.toolResult(pending, resumed));
     answerNoticePeriod(run, context, resumed || AREAS[0]);
   } else {
     // A new question: the previous answer no longer applies.
@@ -309,7 +415,14 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
       answerNoticePeriod(run, context, area);
     } else if (aboutTermination) {
       run.step("research_agent", () => {
-        run.toolCall("search_register", { query: "uppsägning" }, { framework_areas: AREAS });
+        run.toolCall(
+          "search_documents",
+          { query: "uppsägningstid kontrakt" },
+          {
+            hits: AREAS.map((area) => ({ section_title: "Uppsägning", framework_areas: [area] })),
+          },
+        );
+        run.askUser(ASK_AREA);
       });
       run.messagesSnapshot();
       const shape: InterruptShape = lower.includes("[legacy]")
@@ -317,8 +430,12 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
         : lower.includes("[outcome]")
           ? "outcome"
           : "both";
-      run.interrupt({ question: "Vilket ramavtalsområde gäller frågan?", options: AREAS }, shape);
+      run.interrupt(ASK_AREA, shape);
       return run.events;
+    } else if (lower.includes("bilaga")) {
+      answerAttachment(run);
+    } else if (lower.includes("avtalsnummer")) {
+      answerFromRegister(run);
     } else if (lower.includes("vite")) {
       run.step("research_agent", () => {
         run.toolCall(

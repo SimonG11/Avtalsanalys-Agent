@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { EventType } from "@ag-ui/core";
 import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
 
+import { parseAnswer } from "../src/lib/contract.ts";
 import { findQuote } from "../src/lib/highlight.ts";
 import { PAGES, buildFixturePdf } from "./fixture-pdf.ts";
 import { planRun } from "./scenarios.ts";
@@ -64,6 +65,20 @@ describe("planRun", () => {
     assert.deepEqual(firstState?.snapshot, { answer: null });
   });
 
+  it("gives answers that follow the contract", () => {
+    const all = [
+      ...questions,
+      "Vilken säkerhetsnivå gäller? Står det i en bilaga?",
+      "Vilket avtalsnummer har IT-drift?",
+    ];
+    for (const question of all) {
+      const snapshots = events(input(question)).filter(
+        (event) => event.type === EventType.STATE_SNAPSHOT,
+      );
+      assert.equal(parseAnswer(snapshots.at(-1)?.snapshot).kind, "answer", question);
+    }
+  });
+
   it("cites only quotes that are on the cited page of the fixture, unless unverified", () => {
     for (const question of questions) {
       for (const citation of finalAnswer(input(question)).citations) {
@@ -107,6 +122,32 @@ describe("planRun", () => {
     assert.equal(list.at(-1)?.type, EventType.RUN_ERROR);
     assert.ok(!list.some((event) => event.type === EventType.STATE_SNAPSHOT));
     assert.ok(!list.some((event) => event.type === EventType.RUN_FINISHED));
+  });
+
+  it("calls ask_user and gives its result, the answer, in the run that resumes", () => {
+    const question = "Vilken uppsägningstid gäller för ett kontrakt?";
+    const asked = events(input(question));
+    const start = asked.find(
+      (event) => event.type === EventType.TOOL_CALL_START && event.toolCallName === "ask_user",
+    );
+    assert.ok(start);
+    const toolCallId = start.toolCallId as string;
+    assert.ok(
+      !asked.some((e) => e.type === EventType.TOOL_CALL_RESULT && e.toolCallId === toolCallId),
+    );
+
+    const snapshot = asked.findLast((event) => event.type === EventType.MESSAGES_SNAPSHOT);
+    const messages = snapshot?.messages as RunAgentInput["messages"];
+    const resumed = events(
+      input(question, {
+        messages,
+        resume: [{ interruptId: "i1", status: "resolved", payload: "IT-drift" }],
+      }),
+    );
+    const result = resumed.find(
+      (event) => event.type === EventType.TOOL_CALL_RESULT && event.toolCallId === toolCallId,
+    );
+    assert.equal(result?.content, "IT-drift");
   });
 
   it("continues with the answer from either resume channel", () => {
