@@ -242,6 +242,21 @@ gång fäller jobbet i stället för att låta det vänta i timmar.
 
 57 nya enhetstester och 5 integrationstester. Inget test anropar språkmodellen.
 
+## Tankar i strömmen
+
+2026-10-07, efter M12 ([ADR 0025](../adr/0025-tankar-och-farre-motfragor.md)). Agentmodellen ger
+en sammanfattning av sitt resonemang, och `POST /agui` strömmar den som adaptern gör: för varje
+modellanrop med en sammanfattning `REASONING_START`, `REASONING_MESSAGE_START`,
+`REASONING_MESSAGE_CONTENT` (delar av texten), `REASONING_MESSAGE_END` och `REASONING_END`, före
+verktygsanropen från samma anrop. En sammanfattning i flera delar ger ett sådant block per del.
+`MESSAGES_SNAPSHOT` har varje sammanfattning som ett meddelande med rollen `reasoning` före
+modellens meddelande, med OpenAI:s id (`rs_…`) och delarna åtskilda av en radbrytning. Skickar
+webbappen tillbaka historiken med dem läggs inget till två gånger. `AvtalAguiAgent` är oförändrad:
+en ögonblicksbild av tillståndet är fortfarande bara `answer`, svaret strömmas aldrig som text och
+granskarens anrop strömmas inte. `ask_user` har nu alltid 2-5 alternativ (`options`), och agenten
+frågar mer sällan. `tests/unit/api/test_api_reasoning.py` kör appen med modellen som
+`make_agent_model` bygger den, mot en låtsad OpenAI som strömmar som den riktiga.
+
 ## Kända begränsningar
 
 - **Ingen inloggning.** Den som når API:t och känner till ett tråd-id kan fortsätta tråden. Portarna
