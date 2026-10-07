@@ -120,16 +120,18 @@ påstående, inte ett mätt resultat.
 - Baslinjen gör minst två modellanrop per fråga (fler när kontrollen skickar tillbaka utkastet) men
   skickar fler lästa avsnitt i svarsanropet än agenten brukar läsa. En provkörning av q01 mot
   ersättaren tog 30 sekunder, kostade 0,09 USD för agentmodellen och granskaren och blev rätt.
-- **Resultat (2026-10-07, mot ersättaren, med agentens prompt från ADR 0025).** Agenten svarade
-  rätt på 28 av 30 (`low`) och 29 av 30 (`medium`), baslinjen på 24 och 24,5. B−A är −13 p.e.
-  (95 %-intervall −32 till +3) på `low` och −15 p.e. (−28 till −3) på `medium`, så bara på
-  `medium` är skillnaden utöver slumpen. Facits källor: 27 och 31 av 36 för agenten mot 15 av 36
-  för baslinjen (−32 och −38 p.e., intervallen utesluter 0). Alla citat stod ordagrant i båda.
-  Agenten vinner på flerstegsfrågor och jämförelser, genom att söka igen, begränsa med registret
-  och läsa innehållsförteckningar, men följde aldrig en hänvisning; på enkla uppslagningar är
-  baslinjen lika bra (8–9 av 9). Baslinjen var snabbare (median 29–30 s mot 38–42 s) och kostade
-  ungefär lika mycket. Agenten frågade aldrig, och testsamlingen har inga oklara frågor, så
-  motfrågorna är inte mätta. Siffrorna och stickproven står i
+- **Resultat (2026-10-07, mot ersättaren, med agenten från grenen `claude/tankar-fragor-2gc1kx`,
+  ADR 0025 där).** Agenten svarade rätt på 28 av 30 (`low`) och 29 av 30 (`medium`), baslinjen
+  på 24 och 24,5. B−A är −13 p.e. (95 %-intervall −32 till +3) på `low` och −15 p.e. (−28 till
+  −3) på `medium`, så bara på `medium` är skillnaden utöver slumpen. Facits källor: 27 och 31 av
+  36 för agenten mot 15 av 36 för baslinjen (−32 och −38 p.e.; räknas samma klausul i en annan
+  fil på samma avtalssida blir det −22 och −24 p.e., och på `low` innehåller intervallet då 0).
+  Alla citat stod ordagrant i båda. Agenten vinner på flerstegsfrågor och jämförelser, genom att
+  söka igen, begränsa med registret och läsa innehållsförteckningar, men följde aldrig en
+  hänvisning; på enkla uppslagningar är baslinjen lika bra eller något bättre (8 och 9 av 9 mot
+  agentens 7,5 och 8,5). Baslinjen var snabbare (median 29–30 s mot 38–42 s) och kostade ungefär
+  lika mycket. Agenten frågade aldrig, och testsamlingen har inga oklara frågor, så motfrågorna
+  är inte mätta. Siffrorna och stickproven står i
   [steg 11](../steg/11-utvardering.md#resultat-agenten-mot-baslinjen), och rapporterna, som inte
   ligger i repot (`evals/reports/` ignoreras), i
   `/mnt/project-files/case-tokentek/implementering/matning-2026-10-07/`. Jämförelsen bör köras

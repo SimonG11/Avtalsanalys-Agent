@@ -378,14 +378,15 @@ förtydligandet och svarade rätt; baslinjen på a01 svarade fel. Utkastet med d
 ### Resultat: agenten mot baslinjen
 
 Jämförelsen kördes 2026-10-07 på de 30 testfrågorna, för agenten och baslinjen med
-resonemangsnivån `low` och `medium`, mot ersättaren för avtal-mcp (ingen Postgres). Agentens
-prompt är den från grenen `claude/tankar-fragor-2gc1kx` (PR "tankar och färre frågor", ADR
-0025 på den grenen): den nya regel 4 och sammanfattningar av resonemanget. Den grenen var
-sammanslagen med denna i körningen (commit 7aa6519, inga ändringar som inte var incheckade).
-Alla fyra körningarna hade samma agentmodell (`gpt-6.1-sol`), granskare (`gpt-6-astra`, `low`),
-domare (`gpt-6-astra`, `medium`, samma prompter) och gränser, fyra frågor åt gången. Alla 120
-frågor blev klara: inga fel, ingen tidsgräns, inget svar med reservation, och alla bedömdes. B−A
-är baslinjen minus agenten i procentenheter (p.e.), parat på frågan, med 95 %-intervall.
+resonemangsnivån `low` och `medium`, mot ersättaren för avtal-mcp (ingen Postgres). Agenten är
+den från grenen `claude/tankar-fragor-2gc1kx` (ADR 0025 på den grenen): den nya regel 4 i
+prompten, `ask_user` med 2–5 alternativ och sammanfattningar av resonemanget
+(`AGENT_REASONING_SUMMARY`). I körningen var den grenen sammanslagen med den här (commit 7aa6519,
+utan oincheckade ändringar). Alla fyra körningarna hade samma agentmodell (`gpt-6.1-sol`),
+granskare (`gpt-6-astra`, `low`), domare (`gpt-6-astra`, `medium`, samma prompter) och gränser,
+fyra frågor åt gången. Alla 120 frågor blev klara: inga fel, ingen tidsgräns, inget svar med
+reservation, och alla bedömdes. B−A är baslinjen minus agenten i procentenheter (p.e.), parat på
+frågan, med 95 %-intervall.
 
 `low`:
 
@@ -412,7 +413,7 @@ frågor blev klara: inga fel, ingen tidsgräns, inget svar med reservation, och 
 | Kostnad, agent och granskare | 2,28–5,59 USD | 2,74–3,41 USD | – |
 
 Rätt är över 30 frågor och facits källor över de 22 frågor som har källor i dokumenten. Domaren
-kostade 0,45–0,49 USD per körning, och alla fyra körningarna med domaren 11,82–19,69 USD.
+kostade 0,44–0,48 USD per körning, och alla fyra körningarna med domaren 11,82–19,69 USD.
 
 Rätt per kategori, B−A (varje kategori har 3–9 frågor, för få för ett intervall):
 
@@ -427,36 +428,40 @@ Rätt per kategori, B−A (varje kategori har 3–9 frågor, för få för ett i
 **Vad siffrorna säger.**
 
 - Agenten svarade rätt på 4–4,5 frågor fler än baslinjen. På `medium` utesluter intervallet 0, på
-  `low` inte (−32 till +3), så där kan skillnaden i rätt svar vara slump. Skillnaden i facits
-  källor är tydlig på båda nivåerna: agenten citerar den källa facit bygger på i nästan dubbelt så
-  många fall.
+  `low` inte (−32 till +3), så där kan skillnaden i rätt svar vara slump. Agenten citerar fler av
+  facits källor (27 och 31 av 36 mot 15), men en del av skillnaden kommer av att källor räknas på
+  plats (se Kända begränsningar); räknas samma klausul i en annan fil utesluter intervallet 0 bara
+  på `medium`.
 - Skillnaden kommer från flerstegsfrågorna och jämförelserna. På enkla uppslagningar är baslinjen
   lika bra eller något bättre (8–9 av 9), eftersom den alltid läser fem avsnitt och skriver
   fullständigare svar.
 - Agenten är långsammare (median 38–42 s mot 29–30 s) och gör fler modellanrop (5–6 mot 2).
   Kostnaden är ungefär densamma; vilken som är billigast beror på priset för cachad indata, som
-  saknas i prislistan (omkring 84 % av agentens indata var cachad, 12–19 % av baslinjens).
-- `medium` ändrar nästan inget för agenten. Skillnaden är en fråga (q06), lika stor som skillnaden
-  mellan två körningar i M11, och modellen resonerade knappt: 924 resonemangstokens i 159 anrop
-  (omkring sex per anrop), mot 53 i 168 på `low`.
+  saknas i prislistan (81–84 % av agentens indata var cachad, 12–19 % av baslinjens).
+- `medium` ändrar nästan inget för agenten. Skillnaden är en fråga, q06, som var fel i alla tre
+  körningarna på `low` i M11 och i denna men rätt på `medium`; det kan bero på nivån, men en
+  körning på `medium` räcker inte för att säga det. Modellen resonerade knappt: 924
+  resonemangstokens i 159 anrop (omkring sex per anrop), mot 53 i 168 på `low`.
 
 **Stickprov.** Var agenten vinner (q19 och q25 prövade mot facit):
 
 - **q19:** agenten tog fram innehållsförteckningen (`get_outline`) för Pulsens prisbilaga, läste
   avsnittet med leverantörernas namn och prisavsnittet bredvid, och fann 1 071,70 kr. Baslinjen
   läste bilagans regler men inte de två avsnitten och svarade att det inte går att avgöra.
-- **q25:** agenten sökte i varje delområde med dess avtalsnummer (23.3-1688-2024-001 och -010)
-  och läste 1.6 i båda: 600 miljoner och 1,4 miljarder kr. Baslinjens registeranrop vägrades för
-  ett sammanslaget delområde; den sökte i hela området och läste den äldre Ansökningsinbjudan
-  1.5.3 (1,2 och 1,6 miljarder kr), frågans fälla. Granskaren släppte igenom svaret, eftersom
-  citatet stöder texten.
+- **q25:** agenten slog upp delområdena i registret och begränsade sökningen med det (på
+  `medium` till ett avtalsnummer ur vartdera delområdet, 23.3-1688-2024-001 och -010; på `low`
+  till upphandlingen 23.3-1688-2024) och läste 1.6 i båda huvuddokumenten: 600 miljoner och 1,4
+  miljarder kr. Baslinjens registeranrop vägrades för ett sammanslaget delområde; den sökte i
+  hela området och läste den äldre Ansökningsinbjudan 1.5.3 (1,2 och 1,6 miljarder kr), frågans
+  fälla. Granskaren släppte igenom svaret, eftersom citatet stöder texten.
 - **q17:** baslinjens läsning av frågan lade "Verksamhetens IT-behov" i Programvaror och
   tjänster, så allt den läste var i fel område, och den gav inget svar. Agenten fann rätt avtal
   i registret.
-- **q15:** agenten sökte en gång till ("Småland öarna Gotlands län") för att placera Visby;
-  baslinjen kan inte ta det andra steget.
-- **q01 och q26 (`low`):** baslinjens enda sökfråga missade, och båda blev rätt på `medium`.
-  Det är variation mellan körningar, inte en skillnad mellan agent och arbetsflöde.
+- **q15:** agenten sökte en gång till för att placera Visby (på `low` "Småland öarna Gotlands
+  län", på `medium` "Gotland Visby Småland rangordning"); baslinjen kan inte ta det andra steget.
+- **q01 och q26 (`low`):** baslinjens sökning i dokumenten gav inte avsnittet med svaret (9.25.4
+  respektive vägledningens 2.5 med Redpill Linpros pris), och båda blev rätt på `medium`. Det är
+  variation mellan körningar, inte en skillnad mellan agent och arbetsflöde.
 
 Var agenten förlorar:
 
@@ -505,13 +510,16 @@ Rapporterna (fyra körningar och tre jämförelser) ligger utanför repot, efter
   riktiga databasen innan den visas.
 - **Motfrågornas domare är en modell**, och med fyra frågor där agenten ska fråga är talet grovt.
 - **En körning per fråga och läge.** Intervallet tar hänsyn till antalet frågor, inte till att
-  svaren varierar mellan körningar. Enskilda frågor skiftade mellan `low` och `medium` (q06 för
-  agenten, q01 och q26 för baslinjen).
+  svaren varierar mellan körningar. Enskilda frågor skiftade mellan `low` och `medium`: q01, q18,
+  q26 och q29 för baslinjen, och q06 för agenten (fel i alla fyra körningarna på `low`, tre i M11
+  och denna).
 - **Två körningar åt gången.** Körningarna gick två och två (åtta frågor åt gången mot samma
   ersättare), så tiderna går att jämföra inom ett par men sämre mellan nivåerna.
-- **Facits källor räknas på plats**, så skillnaden i källor är något överskattad: ett svar som
-  citerar samma klausul i Licenser 7.17 i stället för facits Programvarulösningar 6.17 (q08)
-  räknas som 0 av 1.
+- **Facits källor räknas på plats**, och det drabbar mest baslinjen: den citerar ofta samma
+  klausul ur Upphandlingsdokumentet eller Anbudsinbjudan i stället för facits Allmänna villkor
+  eller Avropsrutin (q02, q03, q14 och q16 på `low`; q03, q07, q14, q15 och q16 på `medium`),
+  agenten bara i q17 på `low`. Räknas de blir B−A för källorna −22 p.e. (−45 till +1) på `low`
+  och −24 p.e. (−40 till −11) på `medium`, i stället för −32 och −38.
 - **Baslinjens rapport använder agentens ord** på några ställen ("där agenten svarade att det
   inte framgår", "Modellanrop: agentens"). Raden om "framgår inte" räknar bara status Inget svar,
   inte kontrollerade svar som säger att det avgörande inte går att fastställa, och raden om mål
