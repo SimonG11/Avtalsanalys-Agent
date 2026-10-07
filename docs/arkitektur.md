@@ -29,6 +29,12 @@
 >   `resolve_reference`, `list_documents`, `search_register`). Servern byggs med MCP SDK:t 1.x
 >   (`langchain-mcp-adapters` kräver det), verktygen visar bara det som sökindexet visar, och
 >   testerna anropar servern i minnet i stället för över stdio ([M6](steg/06-verktyg.md)).
+> - [ADR 0013](adr/0013-agenten.md): agenten är en enda `create_agent`-graf. Stegen runt loopen
+>   (nollställningen per fråga och valideringen) är middleware i stället för noder i en yttre graf,
+>   så att webbappen ser agentens steg medan den väntar på användaren. Svaret lämnas med verktyget
+>   `FinalAnswer`, och citatkontrollen läser själv varje citerat avsnitt genom avtal-mcp. Ett
+>   underkänt svar får ett nytt försök (`CITATION_RETRIES`, standard 1), sedan levereras det med
+>   reservation ([M7](steg/07-agent.md)).
 
 ---
 
