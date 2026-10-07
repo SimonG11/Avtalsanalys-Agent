@@ -22,9 +22,11 @@ Ett beslut ändras aldrig i efterhand. Ändras beslutet skrivs en ny ADR som ers
 | [0015](0015-valideringskedjan.md) | Valideringskedjan: registeruppgifter mot registret, en granskarmodell och två nya försök | Godkänt (PR #13) |
 | [0016](0016-datumrakning.md) | `calculate_date`: datumräkning med svenska helgdagar, och registerregeln räknar om steget | Godkänt (PR #17) |
 | [0017](0017-andringar.md) | `find_amendments` och regeln om senaste lydelsen: ändringar ur steg 4:s hänvisningar | Godkänt (PR #18) |
-| [0018](0018-andringar-efter-granskningen.md) | Ändringar efter granskningen: Kammarkollegiets meddelanden, fler ändringsord och frågans datum | Föreslaget (PR efter #18) |
+| [0018](0018-andringar-efter-granskningen.md) | Ändringar efter granskningen: Kammarkollegiets meddelanden, fler ändringsord och frågans datum | Godkänt (PR #20) |
 | [0019](0019-matning-av-svaren.md) | Mätningen av agentens svar: samma körning som API:t, en domare mot facit och kostnaden som intervall | Godkänt (PR #21) |
 | [0022](0022-demot.md) | Demot: fem frågor, fyra ur testsamlingen, körda mot den riktiga databasen, och README:n som ingång | Föreslaget (M12) |
+| [0020](0020-omrankning.md) | Omrankning: mätt med två modeller, inte inbyggd | Föreslaget |
+| [0021](0021-sparning-med-langfuse.md) | Spårning med Langfuse: en spårning per fråga, samtalet som session, avstängd utan nycklar | Godkänt (PR #24) |
 
 Mall: *Status*, *Kontext* (problemet), *Beslut*, *Konsekvenser* (vad vi vinner och vad det kostar),
 *Alternativ som valts bort*.

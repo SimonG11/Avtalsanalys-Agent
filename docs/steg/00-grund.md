@@ -98,6 +98,12 @@ Körs vid varje push och pull request. Tre jobb, vart och ett svarar på en frå
 `uv sync --locked` i CI stoppar om `uv.lock` inte stämmer med `pyproject.toml`, så ingen kan
 lägga till ett beroende utan att låsa det.
 
+Senare har CI vuxit till fem jobb. `compose` bygger och startar nu hela systemet i
+`docker-compose.yml` (databasen, avtal-mcp, API:t och webbappen) på både amd64 och arm64, som på
+en Mac med Apple-processor ([M9](09-api.md)). `web` kör webbappens kontroller, enhetstester och
+webbläsartester, och `web-docker` samma webbläsartester mot webbappens containrar
+([M10](10-webbapp.md)). Jobben och deras frågor står överst i `ci.yml`.
+
 ### 9. Beslut och dokumentation: `docs/`
 
 - `docs/adr/0001`–`0005` beskriver de fem grundbesluten: workflow för inläsning och agent för

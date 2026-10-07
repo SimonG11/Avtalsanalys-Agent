@@ -10,9 +10,16 @@
  * How: `useRenderTool` with the name "*" makes AgentStep render every tool call except the one
  * that hands in the answer (FinalAnswer, see lib/tools.ts), which gets AnswerCheck instead; the
  * answer card is registered on the provider (see AgentApp). Labels CopilotKit shows are
- * translated here.
+ * translated here, and so is the line it shows while the model reasons between steps
+ * ("Thinking…", then "Thought for a few seconds"), which is not among its labels.
  */
-import { CopilotChat, useConfigureSuggestions, useRenderTool } from "@copilotkit/react-core/v2";
+import type { ComponentProps } from "react";
+import {
+  CopilotChat,
+  CopilotChatReasoningMessage,
+  useConfigureSuggestions,
+  useRenderTool,
+} from "@copilotkit/react-core/v2";
 
 import { AGENT_ID } from "@/lib/agent";
 import { ANSWER_TOOL } from "@/lib/tools";
@@ -68,8 +75,31 @@ export function Chat() {
     [],
   );
 
-  return <CopilotChat agentId={AGENT_ID} labels={LABELS} input={{ addMenuButton: NoAddMenu }} />;
+  return (
+    <CopilotChat
+      agentId={AGENT_ID}
+      labels={LABELS}
+      input={{ addMenuButton: NoAddMenu }}
+      messageView={MESSAGE_VIEW}
+    />
+  );
 }
+
+/**
+ * The header of a reasoning message in Swedish. CopilotKit builds its English label inside the
+ * component, so the header gets a label of its own: "Tänker …" while the model reasons and
+ * "Tänkte efter" afterwards.
+ */
+function ReasoningHeader(props: ComponentProps<typeof CopilotChatReasoningMessage.Header>) {
+  return (
+    <CopilotChatReasoningMessage.Header
+      {...props}
+      label={props.isStreaming ? "Tänker …" : "Tänkte efter"}
+    />
+  );
+}
+
+const MESSAGE_VIEW = { reasoningMessage: { header: ReasoningHeader } };
 
 /** The chat takes no attachments, so the input's "+" menu is left out. */
 function NoAddMenu() {

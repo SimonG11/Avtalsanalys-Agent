@@ -61,6 +61,10 @@ def test_defaults_match_docker_compose_and_adr_0005() -> None:
     assert settings.agent_model == "gpt-6.1-sol"
     assert settings.reviewer_model == "gpt-6-astra"
     assert settings.extraction_model == "gpt-6-luna"
+    # Tracing is off without Langfuse's keys (ADR 0021); with them it goes to Cloud EU.
+    assert settings.langfuse_public_key is None
+    assert settings.langfuse_secret_key is None
+    assert settings.langfuse_base_url == "https://cloud.langfuse.com"
 
 
 def test_values_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:

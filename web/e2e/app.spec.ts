@@ -47,6 +47,9 @@ test("answers with verified sources and opens the cited page with the quote mark
   await expect(card).toContainText("Verifierat");
   await expect(card).toContainText("tre månaders uppsägningstid");
   await expect(check).toHaveCount(0);
+  // The model reasoned before its first step; CopilotKit's line for that is in Swedish.
+  await expect(page.getByText("Tänkte efter")).toBeVisible();
+  await expect(page.getByText(/Thought for|Thinking/)).toHaveCount(0);
   await expect(card.getByTestId("reservations")).toHaveCount(0);
 
   await card.getByTestId("ref-1").first().click();
@@ -60,6 +63,7 @@ test("answers with verified sources and opens the cited page with the quote mark
   await expect(marks.first()).toContainText("Kunden har rätt att säga upp Kontraktet");
   await expect(marks.last()).toContainText("Uppsägningen ska vara skriftlig");
   await expect(page.getByTestId("match-note")).toHaveCount(0);
+  await expect(page.getByTestId("page-note")).toHaveCount(0);
 
   await panel.getByRole("button", { name: "Stäng källan" }).click();
   await expect(panel).toHaveCount(0);
@@ -142,6 +146,23 @@ test("shows the reservations and says when a quote is not on the page", async ({
   const panel = page.getByTestId("source-panel");
   await expect(panel).toContainText("Kunde inte kontrolleras mot avtalstexten");
   await expect(page.getByTestId("match-note")).toHaveText("Citatet hittades inte i sidans text.");
+  await expect(page.getByTestId("page-note")).toHaveCount(0);
+});
+
+test("opens a quote further down a section on the page it is on", async ({ page }) => {
+  await ask(page, "Vilket vite gäller vid försenad leverans?");
+
+  // Source 3's section starts on page 3, the page the citation names; the quote is on page 4.
+  await page.getByTestId("answer-card").getByTestId("ref-3").click();
+  const panel = page.getByTestId("source-panel");
+  await expect(panel).toContainText("Avsnitt 7.2 Vite vid försenad leverans · sida 3");
+  await expect(page.getByTestId("page-note")).toHaveText(
+    "Citatet står på sida 4. Avsnittet börjar på sida 3.",
+  );
+  const marks = panel.locator("mark.quote-mark");
+  await expect(marks).toHaveCount(2);
+  await expect(marks.first()).toContainText("Vitet ska betalas inom trettio (30) dagar");
+  await expect(page.getByTestId("match-note")).toHaveCount(0);
 });
 
 test("keeps earlier answers when a new question is asked", async ({ page }) => {

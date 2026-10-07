@@ -12,8 +12,8 @@
  *   - termination without an area -> the agent asks which area first: it calls the ask_user
  *     tool, which stops the run with an interrupt, and the run that resumes it gives the tool's
  *     result (the person's answer) before it goes on
- *   - "vite" -> the check rejects the first draft; the second has a reservation and one
- *     unverified citation
+ *   - "vite" -> the check rejects the first draft; the second has a reservation, one
+ *     unverified citation and one quote on the page after its section's first page
  *   - "bilaga" -> no answer, with a source in a Word file (no page, no PDF) and a list in the text
  *   - "avtalsnummer" -> a verified answer from the register: no quotes, but the register rows
  *     it rests on, with one agreement written two ways (-001 and -01)
@@ -128,6 +128,22 @@ class RunBuilder {
     this.push({ type: EventType.STEP_STARTED, stepName: name } as BaseEvent);
     body();
     this.push({ type: EventType.STEP_FINISHED, stepName: name } as BaseEvent, 50);
+  }
+
+  /**
+   * The model reasons before it acts. The backend asks for no summary of the reasoning, so the
+   * reasoning message is empty: CopilotKit shows only that the model thinks.
+   */
+  reason(): void {
+    const messageId = this.nextId("reasoning");
+    this.push({ type: EventType.REASONING_START, messageId } as BaseEvent);
+    this.push({
+      type: EventType.REASONING_MESSAGE_START,
+      messageId,
+      role: "reasoning",
+    } as BaseEvent);
+    this.push({ type: EventType.REASONING_MESSAGE_END, messageId } as BaseEvent, 600, 300);
+    this.push({ type: EventType.REASONING_END, messageId } as BaseEvent);
   }
 
   /** One model turn that calls one tool, then the tool's result (as create_agent does). */
@@ -379,6 +395,7 @@ function answerNoticePeriod(
 ): void {
   let answer = noticePeriodAnswer(context, area);
   run.step("research_agent", () => {
+    run.reason();
     run.toolCall(
       "search_documents",
       { query: "uppsägningstid kontrakt", framework_area: area },
@@ -571,7 +588,8 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
           text:
             "Vid försenad leverans har kunden rätt till vite med 0,5 procent av det avropade " +
             "värdet per påbörjad vecka, högst tio procent [1]. Om vitet också gäller " +
-            "delleveranser kunde inte bekräftas [2].",
+            "delleveranser kunde inte bekräftas [2]. Vitet ska betalas inom 30 dagar från " +
+            "kravet [3].",
           status: "with_reservation",
           citations: [
             citation(context, {
@@ -585,6 +603,17 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
               verified: true,
             }),
             quote2,
+            // The section starts on page 3, the page a citation names; the quote is on page 4.
+            citation(context, {
+              id: 3,
+              section_number: "7.2",
+              section_title: "Vite vid försenad leverans",
+              page: 3,
+              quote:
+                "Vitet ska betalas inom trettio (30) dagar från det att Kunden har framställt " +
+                "krav på vite.",
+              verified: true,
+            }),
           ],
           reservations: [
             "Citat 2 kunde inte kontrolleras mot avtalstexten.",

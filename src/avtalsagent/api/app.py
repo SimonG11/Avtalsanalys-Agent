@@ -26,8 +26,10 @@ How:
     session to avtal-mcp once and closes it (`open_mcp_tools`;
     MCP_TRANSPORT=streamable_http in the container), and opens the
     checkpointer (`open_checkpointer`; CHECKPOINTER=postgres in the
-    container) and the document lookup. It puts `AgentRuns` and the lookup
-    on `app.state`, where the routes read them. `GET /health` answers
+    container) and the document lookup, after the tracing (`open_tracing`,
+    off without Langfuse's keys), which closes last and so sends what is
+    left. It puts `AgentRuns` and the lookup on `app.state`, where the
+    routes read them. `GET /health` answers
     without touching the database or avtal-mcp: it says the process serves
     HTTP, which is what a container's health check asks.
 """
@@ -55,10 +57,12 @@ from avtalsagent.api.documents import DatabaseDocumentFiles, DocumentFiles
 from avtalsagent.api.documents import router as documents_router
 from avtalsagent.config import Settings, get_settings
 from avtalsagent.db.session import create_db_engine, session_factory
+from avtalsagent.observability.tracing import Tracing, open_tracing
 from avtalsagent.validation.review import AnswerReviewer
 
 OpenCheckpointer = Callable[[Settings], AbstractAsyncContextManager[BaseCheckpointSaver[str]]]
 OpenDocuments = Callable[[Settings], AbstractContextManager[DocumentFiles]]
+OpenTracing = Callable[[Settings], AbstractContextManager[Tracing]]
 
 
 @contextmanager
@@ -79,6 +83,7 @@ def create_app(
     open_tools: OpenTools = open_mcp_tools,
     open_saver: OpenCheckpointer = open_checkpointer,
     open_documents: OpenDocuments = open_document_files,
+    open_trace: OpenTracing = open_tracing,
 ) -> FastAPI:
     """The API; the agent and its connections open when the app starts (see the module)."""
 
@@ -90,9 +95,10 @@ def create_app(
         async with open_tools(current):  # avtal-mcp answers; each run opens its own session
             pass
         async with AsyncExitStack() as stack:
+            tracing = stack.enter_context(open_trace(current))  # closed last: sends what is left
             checkpointer = await stack.enter_async_context(open_saver(current))
             app.state.documents = stack.enter_context(open_documents(current))
-            app.state.runs = AgentRuns(current, model, reviewer, checkpointer, open_tools)
+            app.state.runs = AgentRuns(current, model, reviewer, checkpointer, open_tools, tracing)
             yield
 
     app = FastAPI(

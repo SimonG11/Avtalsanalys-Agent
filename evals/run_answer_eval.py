@@ -59,6 +59,7 @@ from typing import Any
 
 import anyio
 from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from avtalsagent.agent.__main__ import CommandError, describe_failure
@@ -70,6 +71,8 @@ from avtalsagent.agent.reviewer import make_reviewer
 from avtalsagent.agent.schemas import Answer
 from avtalsagent.config import Settings, get_settings
 from avtalsagent.ingestion.__main__ import configure_logging, positive_int
+from avtalsagent.observability.tracing import OFF as TRACING_OFF
+from avtalsagent.observability.tracing import Tracing, open_tracing
 from avtalsagent.validation.review import AnswerReviewer
 from evals.answer_report import (
     AnswerReport,
@@ -130,6 +133,7 @@ async def ask_question(
     checkpointer: BaseCheckpointSaver[str],
     question: GoldQuestion,
     timeout: float,
+    trace: RunnableConfig | None = None,
 ) -> QuestionRun:
     """One question on its own MCP session and graph, as one run of the API."""
     started = time.monotonic()
@@ -142,6 +146,7 @@ async def ask_question(
                 thread_id=f"eval-{question.id}-{uuid.uuid4()}",
                 timeout=timeout,
                 redact=settings.redact,
+                trace=trace,
             )
     except Exception as error:  # the session to avtal-mcp failed; the run goes on
         if stops_the_run(error):
@@ -198,12 +203,17 @@ async def evaluate(
     timeout: float,
     judge: Judge | None,
     info: RunInfo,
+    tracing: Tracing = TRACING_OFF,
 ) -> AnswerReport:
-    """Ask the agent every question, `concurrency` at a time, and score the answers."""
+    """Ask the agent every question, `concurrency` at a time, and score the answers.
+
+    With tracing on, each question is a trace named by its id, and the run their session.
+    """
     model = make_agent_model(settings)  # without a key, before a server is started
     reviewer = make_reviewer(settings)
     await check_mcp(settings)
     created_at = datetime.now(UTC)
+    session = f"eval-{created_at:%Y%m%dT%H%M%S}" + (f"-{info.label}" if info.label else "")
     started = time.monotonic()
     results: list[QuestionResult | None] = [None] * len(questions)
     limiter = anyio.CapacityLimiter(concurrency)
@@ -214,7 +224,12 @@ async def evaluate(
         async def one(index: int, question: GoldQuestion) -> None:
             nonlocal done
             async with limiter:
-                run = await ask_question(settings, model, reviewer, checkpointer, question, timeout)
+                trace = tracing.run_config(
+                    name=question.id, session_id=session, tags=["eval", question.category]
+                )
+                run = await ask_question(
+                    settings, model, reviewer, checkpointer, question, timeout, trace=trace
+                )
                 judgement, judged_by, judge_usage = await judge_answer(judge, question, run)
             result = score(question, run, judgement, judged_by, judge_usage)
             results[index] = result
@@ -365,17 +380,19 @@ def main(argv: Sequence[str] | None = None) -> None:
             else None
         )
         check_writable(args.out)  # before the questions are paid for
-        report = asyncio.run(
-            evaluate(
-                settings,
-                gold,
-                questions,
-                concurrency=args.concurrency,
-                timeout=args.timeout,
-                judge=judge,
-                info=run_info(settings, args, judge_model),
+        with open_tracing(settings) as tracing:
+            report = asyncio.run(
+                evaluate(
+                    settings,
+                    gold,
+                    questions,
+                    concurrency=args.concurrency,
+                    timeout=args.timeout,
+                    judge=judge,
+                    info=run_info(settings, args, judge_model),
+                    tracing=tracing,
+                )
             )
-        )
         markdown, data = write_reports(report, args.out)
     except BaseException as error:  # Ctrl-C and the errors the user can act on; others go on
         failure = describe_failure(error, settings)
