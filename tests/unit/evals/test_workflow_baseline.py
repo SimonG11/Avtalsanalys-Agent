@@ -543,6 +543,7 @@ def test_the_prompt_repeats_the_agents_own_answer_rules_word_for_word() -> None:
     assert rules.latest_wording.startswith("Har det ändrats, bygg svaret på den senaste lydelsen")
     assert rules.not_in_material.startswith("Svara på det som framgår")
     assert "Du kan inte anropa några verktyg själv" in template
+    assert "svara för vart och ett och säg vad som avgör" in template
     assert "{" not in template
     assert workflow_prompt(TODAY).endswith("\n\nDagens datum: 2026-10-07.")
 

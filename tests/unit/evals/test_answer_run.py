@@ -292,7 +292,11 @@ async def test_a_clarification_is_the_reply_and_each_questions_options_are_kept(
     model = NamedModel(
         script=[
             tool_call("ask_user", {"question": "Vilket delområde?", "options": ["1", "2"]}, "c1"),
-            tool_call("ask_user", {"question": "Och  kontraktet?"}, "c2"),
+            tool_call(
+                "ask_user",
+                {"question": "Och  kontraktet?", "options": ["Högst  ett år", "Längre"]},
+                "c2",
+            ),
             final_answer("Tre månader [1].", [GOOD], call_id="c3"),
         ]
     )
@@ -307,7 +311,7 @@ async def test_a_clarification_is_the_reply_and_each_questions_options_are_kept(
     )
 
     assert run.asked == ("Vilket delområde?", "Och kontraktet?")
-    assert run.asked_options == (("1", "2"), ())
+    assert run.asked_options == (("1", "2"), ("Högst ett år", "Längre"))
     replies = [
         m.content for m in model.calls[2] if isinstance(m, ToolMessage) and m.name == "ask_user"
     ]

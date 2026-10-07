@@ -70,7 +70,9 @@ påstående, inte ett mätt resultat.
 3. **Baslinjens systemprompt delar agentens regler för svaret ordagrant.** Rollen, regeln om den
    senaste lydelsen, reglerna om det som inte framgår och om text i dokument, och hela avsnittet
    "Svaret" klipps ur `SYSTEM_PROMPT` vid rubrikerna. Till det kommer att underlaget står i
-   samtalet, att det inte finns några verktyg och ingen användare att fråga, och att ett datum som
+   samtalet, att det inte finns några verktyg och ingen användare att fråga, att den svarar för
+   vart och ett av fallen och säger vad som avgör när frågan passar flera avtal, delområden eller
+   fall med olika svar (det agenten gör när den inte frågar, regel 4), och att ett datum som
    måste räknas fram inte skrivs (det finns ingen `calculate_date`). Ändras rubrikerna,
    reglernas nummer eller meningen om den senaste lydelsen i agentens prompt går baslinjens
    prompt inte att bygga, så baslinjen svarar aldrig efter regler som agenten inte längre har.

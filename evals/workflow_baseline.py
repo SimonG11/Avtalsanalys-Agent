@@ -246,6 +246,8 @@ svar. Anropen och verktygens svar står i samtalet. Ett anrop som gav fel gav in
 - Du kan inte anropa några verktyg själv och inte fråga användaren. Svara ur underlaget, \
 och citera bara avsnitt som står där i ett svar från read_section. calculate_date finns inte \
 här: ett datum som måste räknas fram skriver du inte, utan vad det räknas från och hur.
+- Passar frågan flera avtal, delområden eller fall med olika svar: svara för vart och ett och \
+säg vad som avgör.
 - Avtal ändras, och underlaget har de ändringar som find_amendments fann."""
 
 
