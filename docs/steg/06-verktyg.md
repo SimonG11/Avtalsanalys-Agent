@@ -4,7 +4,8 @@
 ([ADR 0003](../adr/0003-mcp-som-verktygslager.md)) med sex läsande verktyg ovanpå registret (M1),
 avsnitten och hänvisningarna (M3–M4) och sökningen (M5). Verktygen ska bara kunna läsa, aldrig
 visa något som inläsningen håller tillbaka, och ge svar med de fält som svarets citat behöver.
-Besluten och varför står i [ADR 0012](../adr/0012-avtal-mcp.md).
+Besluten och varför står i [ADR 0012](../adr/0012-avtal-mcp.md). Efter M8 kom två verktyg till,
+`calculate_date` (avsnitt 8b) och `find_amendments` (avsnitt 8c), så avtal-mcp har nu åtta.
 
 **Klart när:** de sex verktygen svarar genom MCP, varje verktyg har tester utan språkmodell
 (enhetstester utan databas och integrationstester mot Postgres), och servern startar över HTTP och

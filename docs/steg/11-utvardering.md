@@ -67,9 +67,31 @@ en enskild fråga kan bli rätt den ena gången och fel den andra.
 Domarens bedömningar av de 27 rätta svaren prövades i stickprov (q11, q15, q16, q19, q24, q28,
 q29) mot facit: alla stämmer. Varje bedömning står med sitt skäl i rapporten.
 
-Siffrorna gäller ersättaren för avtal-mcp. Den har samma data som pilotens databas och samma
-verktygsscheman, men söker i minnet och inte med Postgres. Med den riktiga databasen kan svaren
-skilja sig något; mätningen körs där med ett kommando (se Kommandon).
+Siffrorna ovan gäller ersättaren för avtal-mcp. Den har samma data som pilotens databas och samma
+verktygsscheman, men söker i minnet och inte med Postgres.
+
+**Mot Postgres.** Samma mätning kördes 2026-10-07 mot den riktiga databasen, efter hela
+inläsningen med Simons godkännanden, med samma modeller och fyra frågor åt gången:
+
+| Mått | Mot Postgres |
+|---|---|
+| Rätt enligt domaren | **28 av 30** (93 %); delvis rätt 1 (q18), fel 1 (q06) |
+| Status | Kontrollerat 29, Inget svar 1 (q27) |
+| Frågor som avtalen inte besvarar (q27–q30) | 4 av 4 fick ett rätt "framgår inte" |
+| Citat som står ordagrant i sitt avsnitt | 71 av 71 |
+| Facits källor citerade | 27 av 36 (75 %); alla källor i 14 av 22 frågor |
+| Facits avtal bland svarens registerrader | 17 av 17, inga avtal utöver facit |
+| Nya försök | 1 fråga (q08), 1 nytt försök |
+| Verktygsanrop per fråga | 6,7 i medel, högst 16 (q15) |
+| Tid per fråga | median 34 s, 90:e percentilen 48 s, längst 61 s (q15) |
+| Kostnad per fråga, agent och granskare | 0,066–0,18 USD (1,99–5,37 USD för alla 30) |
+| Domarens kostnad | 0,43 USD för alla 30 |
+| Hela körningen | 5 minuter |
+
+Samma två svar som med ersättaren var inte rätt, av samma skäl: q06 (tio arbetsdagar ur
+vägledningen i stället för 15 ur huvuddokumentet) och q18 (utan "exklusive moms"). q26 blev rätt,
+som i körning 2. Med Postgres var svaren något snabbare och behövde färre nya försök, men en
+körning räcker inte för att säga att skillnaden är verklig.
 
 ## Flödet
 
@@ -186,8 +208,8 @@ ställs, så en körning som har kostat pengar inte går förlorad på slutet.
   q19 citerade samma mening i en annan fil), så 78 procent är en undre gräns.
 - **Kostnaden är ett intervall**, eftersom priset för cachad indata saknas i prislistan. Omkring 84
   procent av agentens indata var cachad.
-- **Ersättaren i stället för databasen.** Siffrorna ovan är mot ersättaren; kör samma mätning mot
-  den riktiga databasen innan siffrorna visas som systemets.
+- **Ersättaren och databasen.** De två första körningarna är mot ersättaren och den tredje mot
+  Postgres. De ger samma bild, men varje körning är en enda körning per fråga.
 
 ## Så verifierar du M11 själv
 

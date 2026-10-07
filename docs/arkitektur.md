@@ -58,6 +58,9 @@
 >   API:t (`evals/run_answer_eval.py`, tjänsten `eval` i Docker Compose). En domarmodell jämför
 >   varje svar med facit, källorna och registerraderna räknas på plats, och kostnaden anges som ett
 >   intervall eftersom priset för cachad indata saknas ([M11](steg/11-utvardering.md)).
+> - [ADR 0020](adr/0020-omrankning.md): ingen omrankning. Qwen3-Reranker-0.6B och
+>   bge-reranker-v2-m3 mättes på testfrågorna; ingen gav en säker vinst, och båda kostar
+>   sekunder per avsnitt på processorn ([steg 5](steg/05-sokning.md)).
 
 ---
 
