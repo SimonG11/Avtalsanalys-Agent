@@ -152,7 +152,7 @@ def _resolve_title(corpus: Corpus, index: DocumentIndex, mention: ReferenceMenti
     )
     if reference:
         return reference
-    searched = question_targets(corpus, index) if log else own_targets(index, None)
+    searched = question_targets(corpus, index, mention) if log else own_targets(index, None)
     return title_not_found(index, mention, searched)
 
 

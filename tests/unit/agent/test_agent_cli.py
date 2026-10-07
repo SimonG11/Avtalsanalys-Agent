@@ -324,8 +324,9 @@ def test_a_verified_answer_is_printed_with_its_sources() -> None:
         "",
         "Tre månader [1].",
         "",
-        "Kontrollerat: varje citat står ordagrant i det avsnitt det anger och inget citerat "
-        "avsnitt har en ändring som svaret missar, och granskningen fann stöd för svaret.",
+        "Kontrollerat: varje citat står ordagrant i det avsnitt det anger och ändringar som "
+        "säkert gäller ett citerat avsnitt är också citerade, och granskningen fann stöd för "
+        "svaret.",
         "",
         "Källor:",
         "[1] Allmänna villkor (IT-drift Större, fler än 200 anställda), 6.21.9 Uppsägning, s. 14 ✓",
@@ -426,9 +427,9 @@ def test_a_verified_answer_from_both_names_both_checks() -> None:
     )
 
     assert cli.status_line(answer) == (
-        "Kontrollerat: varje citat står ordagrant i det avsnitt det anger, inget citerat avsnitt "
-        "har en ändring som svaret missar och uppgifterna ur registret stämmer, och granskningen "
-        "fann stöd för svaret."
+        "Kontrollerat: varje citat står ordagrant i det avsnitt det anger, ändringar som säkert "
+        "gäller ett citerat avsnitt är också citerade och uppgifterna ur registret stämmer, och "
+        "granskningen fann stöd för svaret."
     )
 
 

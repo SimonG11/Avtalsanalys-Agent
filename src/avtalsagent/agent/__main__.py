@@ -328,7 +328,7 @@ def status_line(answer: Answer) -> str:
         checked = []
         if answer.citations:
             checked.append("varje citat står ordagrant i det avsnitt det anger")
-            checked.append("inget citerat avsnitt har en ändring som svaret missar")
+            checked.append("ändringar som säkert gäller ett citerat avsnitt är också citerade")
         if answer.register_facts:
             checked.append("uppgifterna ur registret stämmer")
         listed = ", ".join(checked[:-1]) + f" och {checked[-1]}" if len(checked) > 1 else checked[0]

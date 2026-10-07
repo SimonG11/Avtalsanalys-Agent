@@ -2,8 +2,8 @@
 
 What:
     `find_amendments` returns the sections that change a section, or a whole
-    file: sections of an amendment and answers in a questions-and-answers
-    log, each with what it changes (the section, or the whole file), the
+    file: sections of an amendment, and answers and Kammarkollegiet's messages
+    in a questions-and-answers log, each with what it changes (the section, or the whole file), the
     reference as written, its status, its date and the text around the
     reference, newest first. Amending sections the tools may not show are
     counted, not listed. `excerpt`, `answer_date` and `newest_first` are its
@@ -16,7 +16,7 @@ Why:
     tender documents. An answer built on the old wording is wrong even when
     every quote is exact. Step 4 marks these references (`replaces`: a
     replacement verb in an amendment, or in a log's answer after "Publikt
-    svar"), so the tool reads them backwards from the section asked about
+    svar" or message), so the tool reads them backwards from the section asked about
     (ADR 0017) instead of keeping a table of its own. The agent reads each
     amending section with `read_section` and cites it with the section it
     changes; the latest-wording rule of the answer check calls the tool the
@@ -33,8 +33,8 @@ How:
     agreement page is listed once. An amending section the tools may not
     show, or one that changes a held-back section of the file, is counted
     once in `held_back`, as `references.py` counts the targets it leaves out.
-    A log's answer is dated by its TendSign stamps (`answer_date`), an
-    amendment by its file's version date, else its publication date, else
+    A log's answer or message is dated by its TendSign stamps (`answer_date`),
+    an amendment by its file's version date, else its publication date, else
     the date avropa.se last updated the file.
 """
 
@@ -95,17 +95,17 @@ def find_amendments(
 ) -> AmendmentResult:
     """Hitta ändringar av ett avsnitt eller ett dokument.
 
-    En ändring är ett avsnitt i ett ändringsdokument eller ett svar i Frågor och svar som
-    ersätter, stryker eller lägger till text. Ange dokumentets sha256 och avsnittet som till
-    read_section; du får då ändringarna av avsnittet och av hela dokumentet. Utan avsnitt får
-    du ändringarna av dokumentet och alla dess avsnitt. amending är avsnittet där ändringen
-    står och amended det som ändras; ett amended utan section_position är hela dokumentet.
-    excerpt är texten runt hänvisningen raw. Status ambiguous betyder att hänvisningen har
-    flera möjliga mål, så ändringen kan gälla ett annat dokument: läs den och avgör. dated är
-    svarets eller ändringsdokumentets datum, och de nyaste kommer först. Läs ändringen med
-    read_section, bygg svaret på den senaste lydelsen och citera både avsnittet och ändringen.
-    held_back räknar ändringar som saknas för att de, eller avsnittet de ändrar, hålls tillbaka
-    i granskningen.
+    En ändring är ett avsnitt i ett ändringsdokument, eller ett svar eller meddelande i
+    Frågor och svar, som ersätter, stryker eller lägger till text. Ange dokumentets sha256 och
+    avsnittet som till read_section; du får då ändringarna av avsnittet och av hela
+    dokumentet. Utan avsnitt får du ändringarna av dokumentet och alla dess avsnitt. amending
+    är avsnittet där ändringen står och amended det som ändras; ett amended utan
+    section_position är hela dokumentet. excerpt är texten runt hänvisningen raw. Status
+    ambiguous betyder att hänvisningen har flera möjliga mål, så ändringen kan gälla ett annat
+    dokument: läs den och avgör. dated är svarets eller ändringsdokumentets datum, och de
+    nyaste kommer först. Läs ändringen med read_section, bygg svaret på den senaste lydelsen
+    och citera både avsnittet och ändringen. held_back räknar ändringar som saknas för att de,
+    eller avsnittet de ändrar, hålls tillbaka i granskningen.
     """
     visibility = load_visibility(session)
     position: int | None = None

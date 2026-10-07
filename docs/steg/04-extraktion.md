@@ -121,13 +121,13 @@ Microsofts volymavtal av `171a3cacf5fd`. IBM:s volymavtal 6765/05 har inget inl�
 Täckningen ger ett fynd per grupp av avtal som täcks av samma filer, så de 33 avtalen i
 Bemanningstjänster är en notering och inte 33.
 
-**Hänvisningar.** Steg 4 hittade 14 756 hänvisningar i avsnitten och följde dem till fil och
+**Hänvisningar.** Steg 4 hittade 14 757 hänvisningar i avsnitten och följde dem till fil och
 avsnitt bland filerna på samma avtalssidor.
 
 | | Upplösta | I måttet | Andel |
 |---|---:|---:|---:|
-| Med språkmodellen | 7 518 | 10 079 | **74,6 %** |
-| Bara med regler | 7 409 | 10 079 | 73,5 % |
+| Med språkmodellen | 7 519 | 10 080 | **74,6 %** |
+| Bara med regler | 7 410 | 10 080 | 73,5 % |
 
 Måttet är upplösta delat med alla hänvisningar utom lagar och standarder (2 456), "fråga N" i en
 frågelogg (303), listpunkter (643) och självhänvisningar (1 275). En listpunkt är ett helt tal efter
@@ -144,7 +144,7 @@ avtalssidan (mest anbudsblanketter som "bilaga Kvalitet i utförande"), 1 152 fl
 | Form | I måttet | Upplösta |
 |---|---:|---:|
 | Avsnittsrubrik ("enligt avsnitt Avtalsbrott och påföljder") | 3 870 | 91,6 % |
-| Avsnittsnummer ("punkt 6.21.9", "enligt 10.4") | 1 890 | 85,1 % |
+| Avsnittsnummer ("punkt 6.21.9", "enligt 10.4") | 1 891 | 85,1 % |
 | Dokumentnamn ("Allmänna villkor") | 2 933 | 70,0 % |
 | Bilaga med nummer ("bilaga 3") | 118 | 46,6 % |
 | Bilaga med namn ("bilaga Priser") | 1 268 | 20,4 % |
@@ -169,23 +169,34 @@ den, utan anrop. Mappen `data/` är inte med i repot: andelen med språkmodellen
 `OPENAI_API_KEY` och den cachen (eller nya anrop, vars svar kan skilja sig). Utan nyckel ger
 rapporten bara andelen med regler.
 
-**Ändringar.** En hänvisning i ett tillägg, eller i Kammarkollegiets svar i en frågelogg, markeras
-(`replaces`) när meningen ändrar det den pekar på: den har ett ord för ändring ("ersätter",
-"utgår", "strykas", "gör följande tillägg", "texten som gäller") och ingen negation ("ändrar
+**Ändringar.** En hänvisning i ett tillägg, eller där Kammarkollegiet skriver i en frågelogg,
+markeras (`replaces`) när meningen ändrar det den pekar på. I en logg är det svaret efter "Publikt
+svar" och hela "Publikt informationsmeddelande", som saknar fråga. Meningen har ett ord för ändring
+("ersätter", "utgår i sin helhet", "strykas", "justerar", "gör följande tillägg", "texten som
+gäller", "utgår" sist i meningen eller "Tillägg till" först i den) och ingen negation ("ändrar
 inte", "gäller utan ändringar"). "ändras" efter "om" är ett villkor och "tas bort" efter "kan" en
-möjlighet, inte en ändring. En punkt före liten bokstav eller citattecken avslutar ett nummer, inte
-meningen ("Punkt 2a. i Registreringen ersätts"). I ett svar räknas också nästa mening, fram till
-nästa hänvisning, eftersom svaret ofta först anger avsnittet och sedan ändringen. Av de 2 977
-hänvisningarna i urvalets tillägg och frågeloggar (utom lagar) markeras 39, 16 i tillägg och 23 i
-svar, och alla 39 lästes. Microsofts tillägg anger i titeln vilka bilagor de ändrar ("Bilaga 5
-Tillägg och förtydligande till bilagorna 5.1-5.4"), och bara filerna på samma avtalssida räknas.
-Ett avsnittsnummer i ett sådant tillägg slås upp i de bilagorna först, utan bokstaven i slutet
-("Punkt 2a" är punkt a i avsnitt 2; R1a), och en rubrik som tillägget inte har söks i dem före
-sidans andra filer (R4a). Det ändrade 7 hänvisningar i körningen 2026-10-07: 'Punkten "Övrigt"'
-leder till avsnittet Övrigt i bilaga 4.1 och 7.1 (4, tidigare flertydiga mellan fyra bilagor), och
-"Punkt 2a" och "Punkten 3" i bilaga 5 är flertydiga mellan bilagorna 5.1–5.4 i stället för att
-saknas eller leda till tilläggets egen listpunkt 3. Andelen bara med regler gick från 7 406 till
-7 409 upplösta.
+möjlighet, inte en ändring; "utgår" inne i en mening är oftast ett vite som ska betalas ("utgår vite
+med 2 500 SEK"). En punkt före liten bokstav eller citattecken avslutar ett nummer, inte meningen
+("Punkt 2a. i Registreringen ersätts"). I ett svar eller meddelande räknas också nästa mening, fram
+till nästa hänvisning, eftersom Kammarkollegiet ofta först anger avsnittet och sedan ändringen. Av
+de 2 978 hänvisningarna i urvalets tillägg och frågeloggar (utom lagar) markeras 60: 16 i tillägg,
+27 i svar och 17 i meddelanden. Alla 60 lästes.
+
+Microsofts tillägg anger i titeln vilka bilagor de ändrar ("Bilaga 5 Tillägg och förtydligande till
+bilagorna 5.1-5.4"), och bara filerna på samma avtalssida räknas. Ett avsnittsnummer i ett sådant
+tillägg slås upp i de bilagorna först, utan bokstaven i slutet ("Punkt 2a" är punkt a i avsnitt 2;
+R1a), och en rubrik som tillägget inte har söks i dem före sidans andra filer (R4a). Det ändrade 7
+hänvisningar: 'Punkten "Övrigt"' leder till avsnittet Övrigt i bilaga 4.1 och 7.1 (4, tidigare
+flertydiga mellan fyra bilagor), och "Punkt 2a" och "Punkten 3" i bilaga 5 är flertydiga mellan
+bilagorna 5.1–5.4 i stället för att saknas eller leda till tilläggets egen listpunkt 3.
+
+En fråga kan inte gälla ett dokument som publicerades efter den. Loggen `20c753d88340` heter
+"Frågor och svar - Upphandlingsdokument", men frågorna från mars 2022 gäller Ansökningsinbjudan
+(publicerad 2022-02-25): Upphandlingsdokumentet kom 2022-06-14. R1q och R4q hoppar därför över
+filen som loggens titel anger när den publicerades efter frågans datum, och 28 hänvisningar i
+loggen leder nu till Ansökningsinbjudan. Ett nummer efter "justerar" läses som ett avsnittsnummer
+("Kammarkollegiet justerar 4.1.2, punkt 9", 1 hänvisning). I körningen 2026-10-07 gick andelen bara
+med regler från 7 406 till 7 410 upplösta.
 
 ## Flödet
 
@@ -386,6 +397,10 @@ en i taget, och för mönstren i steg 4 också alternativen i dem.
   2a. i Registreringen" förblir flertydig mellan bilagorna 5.1–5.4, eftersom ordet
   "Registreringen" inte läses. Ett tillägg vars titel inte anger bilagor (IBM:s "Volymavtal")
   kopplas inte till dem.
+- **En fråga utan tidsstämpel** (36 avsnitt i loggarna) kan inte dateras, så filen som loggens
+  titel anger gäller också när den kom senare. Svaret i `20c753d88340` §21 ändrar 4.2.4
+  bokstaven L i Ansökningsinbjudan men leder till 4.2.4 i Upphandlingsdokumentet, ett annat
+  avsnitt.
 - **IBM:s volymavtal** är en .doc-fil som steg 1 inte hämtar, så avtalet 6765/05 har inget
   huvuddokument.
 - **Språkmodellens svar** kan variera mellan körningar utan cache. Cachen gör dem fasta, och 2 av

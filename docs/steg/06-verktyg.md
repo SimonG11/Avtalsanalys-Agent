@@ -261,14 +261,14 @@ godtas också.
 
 ### 8c. `tools/find_amendments.py` (efter `calculate_date`)
 
-`find_amendments` visar vad som ändrar ett avsnitt eller en fil: avsnitt i ändringsdokument och
-svar i Frågor och svar som ersätter, stryker eller lägger till text, som "Rättelse. Texten som
-gäller är följande för punkt 3.2: …" (7a765d649e25 §9). Det finns ingen egen tabell för
-ändringar ([ADR 0017](../adr/0017-andringar.md)). Verktyget läser steg 4:s hänvisningar
-baklänges, i en fråga mot `document_reference`, `reference_target`, `document_metadata` och
-`document_section`: hänvisningar med `replaces`, med status `resolved` eller `ambiguous`, i en fil
-av typen `amendment` eller `questions_and_answers`, som pekar på avsnittet eller på hela filen.
-Utan avsnitt kommer ändringarna av filen och av alla dess avsnitt.
+`find_amendments` visar vad som ändrar ett avsnitt eller en fil: avsnitt i ändringsdokument, och
+svar och Kammarkollegiets meddelanden i Frågor och svar, som ersätter, stryker eller lägger till
+text, som "Rättelse. Texten som gäller är följande för punkt 3.2: …" (7a765d649e25 §9). Det finns
+ingen egen tabell för ändringar ([ADR 0017](../adr/0017-andringar.md)). Verktyget läser steg 4:s
+hänvisningar baklänges, i en fråga mot `document_reference`, `reference_target`,
+`document_metadata` och `document_section`: hänvisningar med `replaces`, med status `resolved`
+eller `ambiguous`, i en fil av typen `amendment` eller `questions_and_answers`, som pekar på
+avsnittet eller på hela filen. Utan avsnitt kommer ändringarna av filen och av alla dess avsnitt.
 
 - **Målet** hittas som i `read_section` (`find_section`, eller `require_file` för en hel fil),
   med samma fel: en okänd fil, ett okänt avsnitt och ett avsnitt som hålls tillbaka går inte att
@@ -280,10 +280,10 @@ Utan avsnitt kommer ändringarna av filen och av alla dess avsnitt.
 - **Det som hålls tillbaka** visas inte men räknas i `held_back`, en gång per ändrande avsnitt:
   ett ändrande avsnitt som verktygen inte får visa, och, när hela filen efterfrågas, en ändring av
   ett avsnitt i filen som hålls tillbaka.
-- **Datum.** Ett svar i Frågor och svar dateras med den senaste TendSign-stämpeln i avsnittet,
-  utom utskriftens ("Utskrivet: 2022-10-13 09:20"). Svaret ges efter frågan, men läsordningen
-  blandar stämplarna: i 20c753d88340 §2 står båda efter "Publikt svar", frågans först, och i
-  39d8c1efe373 §15 står båda före. Av pilotens 1 391 svar har 50 en senare stämpel än den
+- **Datum.** Ett svar eller meddelande i Frågor och svar dateras med den senaste TendSign-stämpeln
+  i avsnittet, utom utskriftens ("Utskrivet: 2022-10-13 09:20"). Svaret ges efter frågan, men
+  läsordningen blandar stämplarna: i 20c753d88340 §2 står båda efter "Publikt svar", frågans först,
+  och i 39d8c1efe373 §15 står båda före. Av pilotens 1 391 svar har 34 en senare stämpel än den
   första efter "Publikt svar", och i 80 står alla stämplar före rubriken. Ett ändringsdokument
   dateras med filens versionsdatum, annars publiceringsdatumet, annars när avropa.se senast
   uppdaterade det.

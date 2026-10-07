@@ -23,7 +23,11 @@ Why:
 How:
     R1q and R4q look on each page that links the log, in order:
     (a) the file the log's own link title names: "Frågor och svar -
-        Ansökningsinbjudan" is about the link "Ansökningsinbjudan" of the page;
+        Ansökningsinbjudan" is about the link "Ansökningsinbjudan" of the page.
+        Not a file published after the question: 20c753d88340, "Frågor och svar -
+        Upphandlingsdokument", has the questions of March 2022 about the
+        Ansökningsinbjudan 6b6040e2dc2c (2022-02-25), and the Upphandlingsdokument
+        11db2f3d1852 came out on 2022-06-14;
     (b) the procurement documents of the page that have the number or heading:
         RESOLVED when only one does, AMBIGUOUS when several do.
     `reference_resolver.resolve` passes every AMBIGUOUS reference of a log whose
@@ -109,11 +113,17 @@ def resolve_question_number(
     procurement document there. NUMBER_MISSING when none has the number.
     """
     found = by_page(
-        corpus, index, _candidates(corpus, index, lambda file: [file.numbered(mention.key)])
+        corpus,
+        index,
+        _candidates(corpus, index, mention, lambda file: [file.numbered(mention.key)]),
     )
     outcome = page_outcome(index, mention, found, "R1q")
     return outcome or make_reference(
-        index, mention, ReferenceStatus.NUMBER_MISSING, "R1q", question_targets(corpus, index)
+        index,
+        mention,
+        ReferenceStatus.NUMBER_MISSING,
+        "R1q",
+        question_targets(corpus, index, mention),
     )
 
 
@@ -126,7 +136,7 @@ def resolve_question_title(
     then looked up as in any other file (R4).
     """
     found = by_page(
-        corpus, index, _candidates(corpus, index, lambda file: _titled(file, mention.key))
+        corpus, index, _candidates(corpus, index, mention, lambda file: _titled(file, mention.key))
     )
     return page_outcome(index, mention, found, "R4q")
 
@@ -134,12 +144,22 @@ def resolve_question_title(
 def _candidates(
     corpus: Corpus,
     index: DocumentIndex,
+    mention: ReferenceMention,
     lookup: Callable[[DocumentIndex], Iterable[int | None]],
 ) -> Callable[[str], list[Candidate]]:
-    """The sections `lookup` finds on a page: in the file the log names (a), else (b)."""
+    """The sections `lookup` finds on a page: in the file the log names (a), else (b).
+
+    (a) leaves out a file published after the question, when the question has a date.
+    """
+    day = question_date(index.sections[mention.section].text)
 
     def select(page: str) -> list[Candidate]:
-        for files in (_named_by_log(corpus, index, page), procurement_files(corpus, index, page)):
+        named = [
+            sha256
+            for sha256 in _named_by_log(corpus, index, page)
+            if not _published_after(corpus, sha256, day)
+        ]
+        for files in (named, procurement_files(corpus, index, page)):
             found: list[Candidate] = [
                 (sha256, position)
                 for sha256 in files
@@ -151,6 +171,12 @@ def _candidates(
         return []
 
     return select
+
+
+def _published_after(corpus: Corpus, sha256: str, day: date | None) -> bool:
+    """Whether the file came out after `day`; False when either date is unknown."""
+    published = corpus.files[sha256].document.metadata.published_on
+    return day is not None and published is not None and published > day
 
 
 def _titled(index: DocumentIndex, text: str) -> tuple[int, ...]:
@@ -174,14 +200,23 @@ def _named_by_log(corpus: Corpus, index: DocumentIndex, page: str) -> list[str]:
     )
 
 
-def question_targets(corpus: Corpus, index: DocumentIndex) -> tuple[ReferenceTarget, ...]:
+def question_targets(
+    corpus: Corpus, index: DocumentIndex, mention: ReferenceMention
+) -> tuple[ReferenceTarget, ...]:
     """The file a log's number or title was searched in, when it is known.
 
-    The file the log's title names, or the page's only procurement document.
+    The file the log's title names, unless it came out after the question, or the
+    page's only procurement document.
     """
+    day = question_date(index.sections[mention.section].text)
     found: dict[str, list[Candidate]] = {}
     for page in corpus.pages_of(index):
-        files = _named_by_log(corpus, index, page) or procurement_files(corpus, index, page)
+        named = [
+            sha256
+            for sha256 in _named_by_log(corpus, index, page)
+            if not _published_after(corpus, sha256, day)
+        ]
+        files = named or procurement_files(corpus, index, page)
         if len(files) == 1:
             found[page] = [(files[0], None)]
     return targets_by_page(found) if found else ()
