@@ -26,6 +26,7 @@ Ett beslut ändras aldrig i efterhand. Ändras beslutet skrivs en ny ADR som ers
 | [0019](0019-matning-av-svaren.md) | Mätningen av agentens svar: samma körning som API:t, en domare mot facit och kostnaden som intervall | Godkänt (PR #21) |
 | [0020](0020-omrankning.md) | Omrankning: mätt med två modeller, inte inbyggd | Föreslaget |
 | [0021](0021-sparning-med-langfuse.md) | Spårning med Langfuse: en spårning per fråga, samtalet som session, avstängd utan nycklar | Godkänt (PR #24) |
+| [0022](0022-demot.md) | Demot: fem frågor, fyra ur testsamlingen, körda mot den riktiga databasen, och README:n som ingång | Föreslaget (M12) |
 
 Mall: *Status*, *Kontext* (problemet), *Beslut*, *Konsekvenser* (vad vi vinner och vad det kostar),
 *Alternativ som valts bort*.
