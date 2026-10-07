@@ -289,7 +289,12 @@ godkännande gäller bara fyndet med den allvarlighetsgraden: blir en notering k
 körning hålls dokumentet tillbaka igen. Skäl och granskare får inte vara tomma, och filen får inga
 andra tabeller än `[[accepted]]`; annars stoppar `load_accepted` körningen. Ett godkänt fynd står
 kvar i rapporten men håller inte tillbaka något. En post som inte matchar något fynd i körningen
-listas, så att gamla poster syns. Filen är tom tills Simon beslutar.
+listas, så att gamla poster syns. Simon godkände 2026-10-07 nio avvikelser, med skäl i filen:
+fyra leverantörskort och en prisbilaga med ÅF Digital Solutions AB eller Tieto Sweden AB där
+registret har AFRY Sweden AB och Tieto AB, Microsofts irländska bolag i volymavtalet, en
+leverantörs avtalsnummer i sidhuvudet på IT-säkerhets huvuddokument, ett felskrivet diarienummer i
+en prisbilaga och IT-drift Mindres nummer citerat i IT-drift Störres upphandlingsdokument.
+Avropsmallen med ett okänt diarienummer och IBM:s skannade volymavtal ligger kvar i karantän.
 
 ### 6. `ingestion/pipeline.py` och `ingestion/report.py`
 

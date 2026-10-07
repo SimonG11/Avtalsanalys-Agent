@@ -7,14 +7,15 @@ the scanned section 7.16 of e04bad6a0ced (missing_text, QUARANTINE, section 1),
 ÅF Digital Solutions AB as the party of the AFRY card 7a49e1a61b31
 (supplier_party, QUARANTINE), the supplier name written differently in
 b0f5951c99b2 (supplier_party, NOTE) and IBM's 6765/05, whose main document is
-not fetched (coverage, REPORT). The acceptances are made up: no deviation of
-the pilot has been accepted, and accepted_findings.toml is empty. So are the
+not fetched (coverage, REPORT). The acceptances are made up, and so are the
 two register editions for the card 14aa1cc8ee3d (23.3-2940-20:026), which
 states 2022-12-01 - 2024-11-30 and an extension of at most 24 months: one that
 starts the agreement later (NOTE), one that ends it beyond the extension
-(QUARANTINE).
+(QUARANTINE). TestRepositoryFile reads the repository's accepted_findings.toml,
+where Simon accepted the first and the third of these findings on 2026-10-07.
 """
 
+import re
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
@@ -222,11 +223,27 @@ date = 2026-10-07
 
 
 class TestRepositoryFile:
-    def test_it_accepts_nothing_yet(self) -> None:
-        path = REPOSITORY / "accepted_findings.toml"
+    def test_it_releases_the_pilot_findings_simon_accepted(self) -> None:
+        # Simon accepted nine quarantine findings of the pilot on 2026-10-07, these two among them.
+        entries = load_accepted(REPOSITORY / "accepted_findings.toml")
 
-        assert path.is_file()
-        assert load_accepted(path) == {}
+        found = apply_accepted([MICROSOFT_IRELAND, AF_DIGITAL], entries)
+
+        assert not any(finding.quarantines for finding in found)
+        for finding in (MICROSOFT_IRELAND, AF_DIGITAL):
+            assert entries[finding.key].reviewer == "Simon (SimonG11)"
+            assert entries[finding.key].accepted_on == date(2026, 10, 7)
+
+    def test_every_key_has_the_form_of_a_finding_key(self) -> None:
+        # A mistyped key releases nothing; the report would only list it as unused.
+        checks = {check.CHECK for check in step5_validate.DOCUMENT_CHECKS} | {"coverage"}
+        severities = {severity.value for severity in Severity}
+
+        for key in load_accepted(REPOSITORY / "accepted_findings.toml"):
+            check, severity, place_and_subject = key.split(":", 2)
+            assert check in checks, key
+            assert severity in severities, key
+            assert re.fullmatch(r"([0-9a-f]{64}|https://\S+|-):\S.*", place_and_subject), key
 
     def test_the_example_in_its_header_loads(self, tmp_path: Path) -> None:
         # The commented example shows the format; uncommented, it must be a valid entry.

@@ -32,3 +32,57 @@
 #
 # Filen granskas som kod: varje ändring går genom en pull request, så att historiken
 # visar vem som godkände vad och varför.
+
+[[accepted]]
+key = "procurement_number:quarantine:18309f4961d3ac5090a22c24688307cf0b8e58015c15252e823a4358d967a17f:23.3-5890-2023"
+reason = "Upphandlingsdokumentet är IT-drift 2023, område Större: 23.3-10639-2023 står på s. 1 och i varje sidhuvud. 23.3-5890-2023 står en enda gång, i de allmänna villkoren på s. 47, och är enligt registret IT-drift Mindre, så villkorstexten citerar systerområdets nummer och dokumentet hör till rätt upphandling."
+reviewer = "Simon (SimonG11)"
+date = 2026-10-07
+
+[[accepted]]
+key = "procurement_number:quarantine:185c8246e53629ad0123a81439ba76c7c6ed97d28c3887a829a282bc6f204488:23.3-1688-2024"
+reason = "Prisbilagan har rubriken ”23.3-1688-2024 IT-konsulttjänster - IT-säkerhet”, men dess åtta leverantörer och organisationsnummer stämmer i samma ordning med registrets avtal 23.3-8321-2024-001 till -008 (IT-säkerhet). 23.3-1688-2024 är enligt registret upphandlingen för delområde 1 och 5, så numret i rubriken är fel och bilagan hör till IT-säkerhet."
+reviewer = "Simon (SimonG11)"
+date = 2026-10-07
+
+[[accepted]]
+key = "agreement_number:quarantine:65d611d12eabd54c4d481a023d0f1aa932f18f1e34f97e7989b4d228d57623ef:23.3-8321-2024-001"
+reason = "Huvuddokumentet för IT-säkerhet är gemensamt för alla leverantörer: i texten står avtalsnumret som 23.3-8321-2024-XXX och leverantören som ”Leverantörens namn” (s. 3). Bara sidhuvudet på s. 2-20 har 23.3-8321-2024-001, Castra Group AB:s avtal i registret, så filen är troligen gjord ur Castras exemplar och numret är inte dokumentets eget."
+reviewer = "Simon (SimonG11)"
+date = 2026-10-07
+
+[[accepted]]
+key = "org_numbers:quarantine:171a3cacf5fd42094d4d46bf49211224476200ca1dae00227d9c55e85df2b9d3:502052-1307"
+reason = "Volymavtalet med Dnr 23.5-3718-2024 och avtalsperiod 2024-05-01 - 2027-04-30 är enligt s. 1 ingånget med Microsoft Ireland Operations Ltd, 502052-1307, och registret har samma diarienummer och period med Microsoft AB, 556233-4804. Det är samma avtal: Microsofts irländska bolag är avtalspart, medan registret anger det svenska bolaget."
+reviewer = "Simon (SimonG11)"
+date = 2026-10-07
+
+[[accepted]]
+key = "org_numbers:quarantine:8d679cb2ebef30f5a5882db883ade31822ffdeea0b770c5c7b6a81668e1f3999:556866-4444"
+reason = "Prisbilagan för delområde 1 (23.3-1688-2024) listar nio leverantörer: de åtta första stämmer i ordning med registrets avtal 23.3-1688-2024-001 till -008, och den nionde, ÅF Digital Solutions AB (556866-4444), står där registret har avtal -009 med AFRY Sweden AB (556224-8012). ÅF heter numera AFRY (registret har till exempel ÅF-Infrastructure AB som tidigare namn på AFRY Infrastructure AB), så det är samma leverantör under ett annat bolag i koncernen."
+reviewer = "Simon (SimonG11)"
+date = 2026-10-07
+
+[[accepted]]
+key = "supplier_party:quarantine:7a49e1a61b31d207f4193d1e3b2fcbc7277a7730d090095527c441967f57d1b8:556866-4444"
+reason = "Ramavtalet 23.3-2940-20:033 är tecknat av ÅF Digital Solutions AB (556866-4444) och signerat 2022-11-29, och registret har samma avtalsnummer och startdag 2022-12-01 med AFRY Sweden AB (556224-8012). ÅF heter numera AFRY, så avtalet har troligen gått över till AFRY Sweden AB efter tecknandet; avropa.se länkar dokumentet från just det avtalets leverantörskort."
+reviewer = "Simon (SimonG11)"
+date = 2026-10-07
+
+[[accepted]]
+key = "supplier_party:quarantine:ee6107229c37264e5184d5e7dcac266cea9b7a0acbf6032de305964f5eea3d89:556866-4444"
+reason = "Ramavtalet 23.3-2940-20:018 är tecknat av ÅF Digital Solutions AB (556866-4444) och signerat 2022-11-29, och registret har samma avtalsnummer och startdag 2022-12-01 med AFRY Sweden AB (556224-8012). ÅF heter numera AFRY, så avtalet har troligen gått över till AFRY Sweden AB efter tecknandet; avropa.se länkar dokumentet från just det avtalets leverantörskort."
+reviewer = "Simon (SimonG11)"
+date = 2026-10-07
+
+[[accepted]]
+key = "supplier_party:quarantine:a09791e460a4dedbe580771fe22379e28a87340f76a82583769117d4994cedfc:556052-7466"
+reason = "Ramavtalet 23.3-2940-20:017 är tecknat av Tieto Sweden AB (556052-7466) och signerat 2022-11-25 och 2022-11-29, och registret har samma avtalsnummer och startdag 2022-12-01 med Tieto AB (559435-9001). Avtalet har troligen gått över till Tieto AB, ett annat bolag, efter tecknandet; avropa.se länkar dokumentet från just det avtalets leverantörskort."
+reviewer = "Simon (SimonG11)"
+date = 2026-10-07
+
+[[accepted]]
+key = "supplier_party:quarantine:f5823eb882275d160981aaca22bca42e5a6a1846cbd13a4adff2da1e464769ea:556052-7466"
+reason = "Ramavtalet 23.3-2940-20:032 är tecknat av Tieto Sweden AB (556052-7466) och signerat 2022-11-25 och 2022-11-29, och registret har samma avtalsnummer och startdag 2022-12-01 med Tieto AB (559435-9001). Avtalet har troligen gått över till Tieto AB, ett annat bolag, efter tecknandet; avropa.se länkar dokumentet från just det avtalets leverantörskort."
+reviewer = "Simon (SimonG11)"
+date = 2026-10-07
