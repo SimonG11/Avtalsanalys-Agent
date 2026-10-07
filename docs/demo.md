@@ -133,8 +133,8 @@ tjänsten, inte agenten: se felsökningen nedan.
 särskild ersättning, letade efter ändringar, läste prisbilagan för rangordnade IT-tjänster, som
 hänvisar arbete utanför Arbetsdag till avsnittet Särskild ersättning, och läste definitionen av
 Arbetsdag i 9.2. I webbappen tog den sju steg och läste inte prisbilagan. I två senare körningar
-tog den tio och nio steg, och i den med tio läste den prisbilagan mellan 9.9.2 och 9.2
-([steg 12](steg/12-demo.md)). Ordningen och stegen kan variera.
+tog den tio och nio steg ([steg 12](steg/12-demo.md)), och i den med tio läste den prisbilagan
+mellan 9.9.2 och 9.2. Ordningen och stegen kan variera.
 
 **Visa:**
 - Stegen. Ingen enskild sökning ger svaret: det bygger på 9.9.2 och definitionen i 9.2, som står
@@ -149,8 +149,8 @@ tog den tio och nio steg, och i den med tio läste den prisbilagan mellan 9.9.2 
 ersättning och i en definition på ett annat ställe, och ingen enskild sökning ger båda. Vilka
 avsnitt agenten läser, och när, avgör den utifrån det den just har läst, så vägen kan skilja sig
 mellan körningar: ibland läser den prisbilagan på vägen, ibland inte. Inläsningen kopplade 7 519
-av 10 080 hänvisningar till sina mål, men en definition är ingen hänvisning, så den måste agenten
-söka upp."
+av 10 080 hänvisningar till sina mål, men en definition är ingen hänvisning, så den får agenten
+leta upp själv."
 
 **Om någon pekar på systemprompten:** raden om `calculate_date` säger "Gäller det arbetsdagar, läs
 först hur avtalet definierar Arbetsdag." Säg: "Ja, prompten säger att definitionen av Arbetsdag

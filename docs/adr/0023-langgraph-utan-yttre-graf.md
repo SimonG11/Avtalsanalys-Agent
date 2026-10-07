@@ -24,7 +24,8 @@ med sex andra ramverk. Agno fanns inte med.
 
 LangGraph och LangChains `create_agent` är fortfarande ramverket. Punkt 1 uppfyller ADR 0002:s
 krav på paus och omstart så som ADR 0002 skrev. Punkt 2–4 är det som bygget visade: hur det
-första kravet uppfylls utan den yttre grafen, och två integrationer.
+första kravet uppfylls utan den yttre grafen (valideringen och svaret med reservation; inskyddet
+byggdes inte, se [arkitekturplanen](../arkitektur.md)), och två integrationer.
 
 1. **Checkpointern med interrupt och återupptagning bär `ask_user`.** Verktyget anropar LangGraphs
    `interrupt()`, som sparar körningen i checkpointern och avslutar den, och användarens svar

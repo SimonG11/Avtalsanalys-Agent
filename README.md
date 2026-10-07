@@ -77,9 +77,11 @@ riktiga databasen (q-numren är frågor i testsamlingen):
   arbetsdagar. Det agenten själv avgör är vilka avsnitt den läser och när, utifrån det den just
   har läst. Inläsningen kopplade 7 519 av 10 080 hänvisningar till sina mål (74,6 %; lagar och
   standarder, "fråga N", listpunkter och självhänvisningar räknas inte,
-  [steg 4](docs/steg/04-extraktion.md)), och `read_section` visar dem. Resten, och definitioner,
-  som inte är hänvisningar, kan agenten bara hitta genom att söka, och bara om de finns bland
-  dokumenten. Agenten använde nio verktygsanrop i mätningen och sju till tio steg i webbappen.
+  [steg 4](docs/steg/04-extraktion.md)), och `read_section` visar dem. För resten listar
+  verktygen flera möjliga mål eller bara måldokumentet, eller så finns målet inte bland de hämtade
+  filerna. Definitioner är inga hänvisningar: dem får agenten söka upp eller hitta med
+  `get_outline`, och bara om de finns bland dokumenten. Agenten använde nio verktygsanrop i
+  mätningen och sju till tio steg i webbappen.
 - **En rättelse ersätter klausulen (q21):** upphandlingsdokumentet säger att sju anbud antas.
   Kammarkollegiets rättelse i frågor-och-svar-loggen säger åtta. Agenten letar efter ändringar av
   varje avsnitt den citerar, som systemprompten säger, och kontrollen underkänner ett svar som citerar den ändrade punkten utan
