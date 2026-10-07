@@ -24,6 +24,11 @@
 >   `text-embedding-3-large` (1 536 dimensioner) och BM25 som räknas i Python och lagras som
 >   pgvector `sparsevec`, sammanslagna med RRF över avsnitt med samma text. Postgres fulltext och
 >   omrankningen används inte i MVP:n; valen bygger på mätningen i [M5](steg/05-sokning.md).
+> - [ADR 0012](adr/0012-avtal-mcp.md): avtal-mcp har sex verktyg i MVP:n, med engelska namn från
+>   kontraktet med webbappen (`search_documents`, `read_section`, `get_outline`,
+>   `resolve_reference`, `list_documents`, `search_register`). Servern byggs med MCP SDK:t 1.x
+>   (`langchain-mcp-adapters` kräver det), verktygen visar bara det som sökindexet visar, och
+>   testerna anropar servern i minnet i stället för över stdio ([M6](steg/06-verktyg.md)).
 
 ---
 

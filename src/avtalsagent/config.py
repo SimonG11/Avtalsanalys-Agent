@@ -91,6 +91,13 @@ class Settings(BaseSettings):
     # Sections a search returns when the caller sets no limit.
     search_limit: int = Field(default=8, gt=0)
 
+    # The tool layer avtal-mcp (M6, mcp_server/; ADR 0012): where the agent reaches it, the
+    # port it listens on, and the Host headers it accepts (DNS rebinding protection; "mcp:8001"
+    # is its name in docker compose, the others are this machine).
+    mcp_url: str = "http://localhost:8001/mcp"
+    mcp_port: int = Field(default=8001, gt=0, lt=65536)
+    mcp_allowed_hosts: list[str] = ["localhost:*", "127.0.0.1:*", "mcp:8001"]
+
     log_level: str = "INFO"
 
     @property
