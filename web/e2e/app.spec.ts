@@ -10,8 +10,9 @@ async function ask(page: Page, question: string): Promise<void> {
   const input = page.getByPlaceholder("Ställ en fråga om ramavtalen…");
   await input.fill(question);
   await input.press("Enter");
-  // The input is cleared once the question has gone to the agent.
-  await expect(input).toHaveValue("");
+  // The input is cleared once the question has gone to the agent. Found by test id, since the
+  // placeholder changes as soon as the agent asks something back.
+  await expect(page.getByTestId("composer-input")).toHaveValue("");
 }
 
 /** Opens a question's timeline, which folds into one line once the answer is there. */

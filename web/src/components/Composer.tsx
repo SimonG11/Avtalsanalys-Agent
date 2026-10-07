@@ -64,6 +64,7 @@ export function Composer({
         rows={1}
         placeholder={placeholder}
         aria-label={placeholder}
+        data-testid="composer-input"
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
