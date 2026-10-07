@@ -19,11 +19,11 @@ Det som styr besluten:
   mycket som "uppsägningstid". Med `plainto_tsquery` (alla ord måste finnas) gav 13 av 30 naturliga
   frågor ingen träff alls.
 - **Samma text står i många dokument.** Allmänna villkor trycks om i upphandlingsdokument och
-  avropsstöd. Av de 10 773 avsnitt som indexeras har 6 365 minst en kopia, i 1 333 grupper. I 464
+  avropsstöd. Av de 11 448 avsnitt som indexeras har 7 012 minst en kopia, i 1 377 grupper. I 479
   av grupperna har kopiorna olika nummer, som "Prismodeller", som är 6.17 i ett villkor, 2.16 i
   ett annat och 7.16 i ett upphandlingsdokument. Utan gruppering fyller kopiorna träfflistan.
-- **Urvalet är litet:** 13 178 bitar (chunks) som karantänen släpper igenom, från 207 filer. Det
-  fullständiga registret blir några gånger större.
+- **Urvalet är litet:** 13 935 bitar (chunks) som karantänen släpper igenom, från 207 filer, sedan
+  Simon godkände nio avvikelser 2026-10-07. Det fullständiga registret blir några gånger större.
 - **Mätningen ska kunna upprepas utan databas**, och den ska mäta exakt det som körs i produktion.
 - **Demon körs på en MacBook** (M1/M2) om några dagar. En lokal embeddingmodell tar timmar på en
   processor, en API-modell under en minut för urvalet.
@@ -40,7 +40,7 @@ Det som styr besluten:
    som saknas och sparar cachen efter varje omgång, så en avbruten körning behåller det den gjort.
 3. **Vektorgrenen är en exakt sökning**, utan HNSW- eller IVFFlat-index: `ORDER BY embedding <#>
    :fråga`, pgvectors negativa inre produkt, som för vektorer med längd 1 är minus cosinuslikheten.
-   13 000 vektorer är millisekunder att gå igenom, och en exakt sökning ger samma rangordning som
+   14 000 vektorer är millisekunder att gå igenom, och en exakt sökning ger samma rangordning som
    mätningen.
 4. **Ordgrenen är BM25, beräknad i Python och lagrad som pgvector `sparsevec`.**
    - `retrieval/swedish_text.py` delar texten i ord och behåller diarie-, avtals- och
@@ -87,10 +87,10 @@ Det som styr besluten:
 
 ## Mätningen
 
-22 sökfrågor med filter, 13 178 bitar, embeddings med API:ets egna dimensioner. Träff@k är
-andelen av frågornas källor som finns bland de k första avsnittsgrupperna; "alla@10" är andelen
-frågor där alla källor finns bland de tio första. Hela tabellen och metoden står i
-[M5](../steg/05-sokning.md).
+22 sökfrågor med filter, 13 178 bitar (mätt före godkännandet 2026-10-07, med karantänen från
+M4), embeddings med API:ets egna dimensioner. Träff@k är andelen av frågornas källor som finns
+bland de k första avsnittsgrupperna; "alla@10" är andelen frågor där alla källor finns bland de
+tio första. Hela tabellen och metoden står i [M5](../steg/05-sokning.md).
 
 | Sökning | träff@1 | träff@5 | träff@10 | träff@20 | MRR@10 | nDCG@10 | alla@10 |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -112,6 +112,10 @@ frågor där alla källor finns bland de tio första. Hela tabellen och metoden 
   bland de tio första. Vi behåller standardvärdet 60.
 - **Filtren betyder mycket:** utan dem sjunker hybridens träff@10 från 0,86 till 0,82 och nDCG@10
   från 0,73 till 0,67.
+- **Med de nio godkända avvikelserna** (13 935 bitar) har hybriden med 1 536 dimensioner
+  fortfarande högst MRR@10 (0,77, lika med 3 072-hybriden, mot 0,72 för 1 024-hybriden), medan
+  1 024-hybriden och vektorsökningen med 3 072 dimensioner har högre träff@10 (0,86 mot 0,84;
+  före godkännandet var det bara 1 024-hybriden). Besluten står kvar.
 
 ## Konsekvenser
 

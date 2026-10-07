@@ -12,22 +12,24 @@ vektorsökning, BM25 och hybriden.
 ## Resultat
 
 Mätt 2026-10-06 på urvalet från M4 (207 filer, fyra ramavtalsområden), med samma karantän som M4
-ger: 12 filer och 3 avsnitt hålls tillbaka.
+gav: 12 filer och 4 avsnitt hölls tillbaka. Mätningen gjordes före 2026-10-07, då Simon godkände
+nio av avvikelserna i `accepted_findings.toml`; sedan dess hålls 3 filer och 4 avsnitt tillbaka,
+och indexet byggs som i den högra kolumnen nedan.
 
 **Indexet.**
 
-| | Antal |
-|---|---:|
-| Bitar som indexeras | 13 178 |
-| Bitar i karantän | 801 |
-| Filer med bitar i indexet | 195 |
-| Unika texter som bäddas in | 13 046 |
-| Ordstammar i BM25-indexet | 15 097 |
-| Stammar per bit i medel | 77 |
-| Avsnitt i indexet | 10 773 |
-| Avsnittsgrupper (avsnitt med samma text är en grupp) | 5 741 |
-| Grupper med kopior | 1 333 |
-| Grupper där kopiorna har olika nummer | 464 |
+| | Vid mätningen | Med de nio godkända |
+|---|---:|---:|
+| Bitar som indexeras | 13 178 | 13 935 |
+| Bitar i karantän | 801 | 44 |
+| Filer med bitar i indexet | 195 | 204 |
+| Unika texter som bäddas in | 13 046 | 13 803 |
+| Ordstammar i BM25-indexet | 15 097 | 15 162 |
+| Stammar per bit i medel | 77 | 76 |
+| Avsnitt i indexet | 10 773 | 11 448 |
+| Avsnittsgrupper (avsnitt med samma text är en grupp) | 5 741 | 5 813 |
+| Grupper med kopior | 1 333 | 1 377 |
+| Grupper där kopiorna har olika nummer | 464 | 479 |
 
 Att bädda in urvalet med `text-embedding-3-large` tar omkring en halv minut med fyra anrop
 samtidigt och kostar under 1 USD. Steg 6 skickar ett anrop i taget, så det tar några minuter.
@@ -62,7 +64,7 @@ källor som alla behövs.
 - *alla@10*: andelen frågor där alla källor finns bland de tio första.
 
 Frågorna har sina filter (ramavtalsområde eller avtal), som agenten kommer att sätta.
-Embeddings med API:ets egna dimensioner.
+Embeddings med API:ets egna dimensioner, på de 13 178 bitarna före godkännandet.
 
 | Sökning | träff@1 | träff@3 | träff@5 | träff@10 | träff@20 | träff@50 | MRR@10 | nDCG@10 | alla@10 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -121,9 +123,14 @@ missas är det agenten ska klara med fler steg:
 - Filtren betyder mest: utan dem kommer andra ramavtals text med samma ord före.
 - k = 10 flyttar upp en källa i en fråga. Skillnaden är för liten för att byta bort standardvärdet
   60.
-- Om Simon godkänner de nio avvikelserna blir 757 bitar till sökbara. Sökningen blir något sämre
-  på de här frågorna, eftersom fler kopior och liknande texter konkurrerar; ingen av frågorna har
-  sin källa i de nio filerna.
+- Simon godkände de nio avvikelserna 2026-10-07, så 757 bitar till blev sökbara och indexet byggs
+  nu med 13 935 bitar. Sökningen blev något sämre på de här frågorna, eftersom fler kopior och
+  liknande texter konkurrerar; ingen av frågorna har sin källa i de nio filerna. Med de nio
+  godkända har hybriden med 1 536 dimensioner fortfarande högst MRR@10 (0,77, lika med
+  3 072-hybriden, mot 0,72 för 1 024-hybriden, 0,63 för vektorsökningen med 1 536 och 0,62 för
+  BM25), men 1 024-hybriden och vektorsökningen med 3 072 dimensioner hittar fler källor bland de
+  tio första (träff@10 0,86 mot 0,84; före godkännandet var det bara 1 024-hybriden). Valet står
+  kvar på samma grund som förut.
 - Den första mätningen gjordes med 3 072-vektorer som kortades till 1 024 och 1 536. Det gav
   nästan samma vektorer (cosinus 0,996–0,999 mot API:ets egna) men en annan ordning i några
   frågor, så siffrorna ovan kommer från API:ets egna dimensioner, som produktionen använder.
