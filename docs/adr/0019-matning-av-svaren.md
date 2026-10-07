@@ -1,6 +1,6 @@
 # ADR 0019: Mätningen av agentens svar: samma körning som API:t, en domare mot facit och kostnaden som intervall
 
-**Status:** Föreslaget (PR för den förenklade M11).
+**Status:** Godkänt (PR #21, den förenklade M11).
 Förenklar utvärderingen i arkitekturplanens avsnitt 8 inför presentationen
 (`plan-mot-presentationen.md`, punkt 4). DeepEval i CI och fler frågor kommer efter
 presentationen.
