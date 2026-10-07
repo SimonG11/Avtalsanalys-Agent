@@ -46,16 +46,20 @@ How:
     (`describe_failure`); the OpenAI key and the database password are
     never printed. Before the questions, `run_info` notes what is measured:
     the commit of the repository the agent's code is imported from, and
-    whether its working tree had changes (`code_commit`, by git; unknown
-    without git), and the sha256 of SYSTEM_PROMPT (before the date is filled
-    in) and of REVIEWER_PROMPT, so a report says which code and prompts it
-    measured.
+    whether its working tree had changes (`code_commit`, by git), else the
+    commit AVTALSAGENT_COMMIT names (`measured_commit`; compose's `eval`
+    container has no git), else unknown; and the sha256 of SYSTEM_PROMPT
+    (before the date is filled in) and of REVIEWER_PROMPT, so a report says
+    which code and prompts it measured. The commit is the code of this
+    process: the agent and the measurement, and avtal-mcp only over stdio.
 """
 
 import argparse
 import asyncio
 import hashlib
 import logging
+import os
+import re
 import subprocess
 import sys
 import time
@@ -85,7 +89,9 @@ from avtalsagent.observability.tracing import OFF as TRACING_OFF
 from avtalsagent.observability.tracing import Tracing, open_tracing
 from avtalsagent.validation.review import AnswerReviewer
 from evals.answer_report import (
+    COMMIT_VARIABLE,
     AnswerReport,
+    CommitSource,
     RunInfo,
     check_writable,
     overall_lines,
@@ -367,6 +373,30 @@ def code_commit(where: Path) -> tuple[str | None, bool]:
     return head.strip() or None, bool(status.strip())
 
 
+_COMMIT_SHA = re.compile(r"[0-9a-fA-F]{4,40}")
+
+
+def measured_commit(where: Path) -> tuple[str | None, bool, CommitSource | None]:
+    """The commit measured, whether its tree had changes, and where the commit came from.
+
+    By git at `where` (`code_commit`); where git cannot tell, from
+    AVTALSAGENT_COMMIT, which compose's `eval` container is given with
+    `docker compose run -e AVTALSAGENT_COMMIT=$(git rev-parse --short HEAD)`.
+    Whether that tree had changes cannot be told then. A value that is no
+    commit sha is left out, with a warning.
+    """
+    commit, uncommitted = code_commit(where)
+    if commit is not None:
+        return commit, uncommitted, "git"
+    given = os.environ.get(COMMIT_VARIABLE, "").strip()
+    if not given:
+        return None, False, None
+    if not _COMMIT_SHA.fullmatch(given):
+        _log.warning("%s is not a commit sha (4 to 40 hex digits); left out", COMMIT_VARIABLE)
+        return None, False, None
+    return given, False, "environment"
+
+
 def _git(where: Path, *args: str) -> str:
     done = subprocess.run(
         ["git", "-C", str(where), *args],
@@ -383,7 +413,7 @@ def sha256_of(text: str) -> str:
 
 
 def run_info(settings: Settings, args: argparse.Namespace, judge_model: str | None) -> RunInfo:
-    commit, uncommitted = code_commit(Path(avtalsagent.__file__).parent)
+    commit, uncommitted, source = measured_commit(Path(avtalsagent.__file__).parent)
     return RunInfo(
         agent_model=settings.agent_model,
         agent_effort=settings.agent_reasoning_effort,
@@ -398,6 +428,7 @@ def run_info(settings: Settings, args: argparse.Namespace, judge_model: str | No
         timeout=float(args.timeout),
         label=args.label,
         commit=commit,
+        commit_source=source,
         uncommitted=uncommitted,
         system_prompt_sha256=sha256_of(SYSTEM_PROMPT),
         reviewer_prompt_sha256=sha256_of(REVIEWER_PROMPT),

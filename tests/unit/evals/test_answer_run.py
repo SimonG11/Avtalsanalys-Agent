@@ -15,15 +15,16 @@ import httpx2
 import openai
 import pytest
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult, LLMResult
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 
 from avtalsagent.agent.checkpointer import serializer
-from avtalsagent.agent.graph import AvtalAgent, build_agent
+from avtalsagent.agent.graph import ANSWER_SUBMITTED, AvtalAgent, build_agent
 from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.agent.middleware import NO_DRAFT_TEXT
+from avtalsagent.agent.schemas import Answer
 from avtalsagent.agent.sections import CitedSection
 from avtalsagent.config import Settings
 from avtalsagent.mcp_server.references import SectionReference, TargetRef
@@ -31,6 +32,7 @@ from avtalsagent.mcp_server.tools.read_section import Section
 from avtalsagent.validation.review import ClaimReview, ReviewVerdict
 from evals.answer_run import (
     ASK_USER_REPLY,
+    MODEL_CALL_COUNT,
     Price,
     TokenUse,
     UsageCounter,
@@ -38,6 +40,7 @@ from evals.answer_run import (
     cost_range,
     error_text,
     last_draft,
+    read_run,
     run_question,
     token_use,
     total_use,
@@ -412,6 +415,26 @@ async def test_a_run_at_the_model_call_limit_has_the_no_draft_answer() -> None:
     assert run.draft is None
     assert run.model_calls == 2  # the limit's: its note in place of a third call is no call
     assert len(run.steps) == 2
+
+
+def test_a_malformed_argument_does_not_lose_the_answer() -> None:
+    # "²".isdigit() holds, but int("²") raises: the run's answer must be kept all the same.
+    answer = Answer(text="Tre månader.", status="verified", citations=[])
+    messages: list[BaseMessage] = [
+        HumanMessage(QUESTION),
+        tool_call("read_section", {"sha256": SHA, "section_position": "²"}, "c1"),
+        ToolMessage("Avsnittet finns inte.", tool_call_id="c1", name="read_section"),
+        final_answer("Tre månader.", call_id="c2"),
+        ToolMessage(ANSWER_SUBMITTED, tool_call_id="c2", name="FinalAnswer"),
+    ]
+    values = {"messages": messages, "answer": answer.model_dump(), MODEL_CALL_COUNT: 2}
+
+    run = read_run(values, [], 1.0, {}, None)
+
+    assert run.answer == answer
+    assert run.steps[0] == Step("read_section", {"sha256": SHA, "section_position": "²"})
+    assert (run.model_calls, run.path_saved) == (2, True)
+    assert read_run({}, [], 1.0, {}, "fel").path_saved is False  # the state was empty
 
 
 def test_the_last_draft_is_the_last_final_answer_that_parses() -> None:

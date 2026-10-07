@@ -28,8 +28,10 @@ How:
     are the count `ModelCallLimitMiddleware` keeps in the thread's state:
     every model call of the question, since each question has a thread of
     its own, also those after an `ask_user` reply, although the limit
-    counts per run. The callback runs inline and reads each call's model
-    from LangChain's `ls_model_name` metadata and its tokens from the
+    counts per run. A run that never reached the graph (its state is empty
+    or could not be read) saved neither steps, rejections nor model calls:
+    `path_saved` is false. The callback runs inline and reads each call's
+    model from LangChain's `ls_model_name` metadata and its tokens from the
     message's `usage_metadata`; cached input and reasoning are parts of the
     input and output tokens, as OpenAI reports them. The price table has no
     price for cached input, so `cost` takes the share of the input price
@@ -220,6 +222,11 @@ class QuestionRun:
     steps: tuple[Step, ...] = ()  # every tool call in order: avtal-mcp's, ask_user, each draft
     model_calls: int | None = None  # the agent's model calls in the question
     rejections: tuple[Rejection, ...] = ()  # why the check sent each draft back, in order
+
+    @property
+    def path_saved(self) -> bool:
+        """Whether the graph's state was read: the steps, model calls and rejections are saved."""
+        return self.model_calls is not None
 
 
 async def run_question(

@@ -8,6 +8,7 @@ here instead of being counted under another rule.
 """
 
 import json
+from collections.abc import Sequence
 from datetime import date
 from typing import Any
 
@@ -25,6 +26,7 @@ from avtalsagent.mcp_server.results import SectionRef
 from avtalsagent.mcp_server.tools.find_amendments import Amendment, AmendmentResult
 from avtalsagent.mcp_server.tools.read_section import Section
 from avtalsagent.mcp_server.tools.resolve_reference import ReferenceResult
+from avtalsagent.mcp_server.tools.search_documents import SearchHit, SearchResult, SectionCopy
 from avtalsagent.validation.citations import check_citations
 from avtalsagent.validation.latest_wording import check_latest_wording
 from avtalsagent.validation.register_facts import check_register_facts
@@ -231,6 +233,101 @@ def test_a_read_of_an_amending_section_find_amendments_named_is_from_an_amendmen
     ]
 
     assert read_steps(messages)[1].target_from == "amendment"
+
+
+def hit(sha256: str, position: int, number: str, copies: Sequence[SectionCopy] = ()) -> SearchHit:
+    return SearchHit(
+        **section_ref(sha256, position, number, "Hävning").model_dump(),
+        framework_areas=["IT-drift"],
+        agreement_numbers=[],
+        path=["6 Allmänna villkor", f"{number} Hävning"],
+        snippet="Kunden får häva Kontraktet …",
+        score=0.03,
+        vector_rank=1,
+        text_rank=None,
+        copies=list(copies),
+    )
+
+
+def search(*hits: SearchHit) -> SearchResult:
+    return SearchResult(hits=list(hits))
+
+
+def test_a_read_notes_whether_an_earlier_search_had_returned_its_section() -> None:
+    elsewhere = SectionCopy(
+        sha256=PRICES, file_title="Bilaga", section_position=5, section_number=None
+    )
+    messages: list[BaseMessage] = [
+        calls(call("search_documents", {"query": "hävning"}, "c1")),
+        mcp_result("search_documents", "c1", search(hit(TERMS, 37, "6.21.4", [elsewhere]))),
+        calls(call("read_section", {"sha256": TERMS, "section_number": "6.21.9"}, "c2")),
+        mcp_result("read_section", "c2", UPPSAGNING),
+        calls(
+            # 6.21.4 is a reference's target that the search had also returned, by position
+            # and by number; 6.21.9 was no hit, and a hit's copy counts as returned too.
+            call("read_section", {"sha256": TERMS, "section_position": 37}, "c3"),
+            call("read_section", {"sha256": TERMS, "section_number": "6.21.4"}, "c4"),
+            call("read_section", {"sha256": TERMS, "section_number": "6.21.9"}, "c5"),
+            call("read_section", {"sha256": PRICES, "section_position": 5}, "c6"),
+        ),
+    ]
+
+    steps = read_steps(messages)
+
+    assert [(step.target_from, step.found_by_search) for step in steps[1:]] == [
+        (None, False),
+        ("reference", True),
+        ("reference", True),
+        (None, False),
+        (None, True),
+    ]
+    assert steps[0].found_by_search is False  # only a read notes it
+
+
+def test_a_reference_target_no_earlier_search_returned_is_read_from_the_reference_only() -> None:
+    messages: list[BaseMessage] = [
+        calls(call("search_documents", {"query": "uppsägning"}, "c1")),
+        mcp_result("search_documents", "c1", search(hit(TERMS, 42, "6.21.9"))),
+        # A search that failed returns nothing, and one answered after the call came too late.
+        calls(call("search_documents", {"query": "hävning"}, "c2")),
+        plain_result("search_documents", "c2", "Sökningen är inte tillgänglig.", "error"),
+        calls(call("read_section", {"sha256": TERMS, "section_position": 42}, "c3")),
+        mcp_result("read_section", "c3", UPPSAGNING),
+        calls(
+            call("read_section", {"sha256": TERMS, "section_position": 37}, "c4"),
+            call("search_documents", {"query": "punkt 6.21.4"}, "c5"),
+        ),
+        mcp_result("search_documents", "c5", search(hit(TERMS, 37, "6.21.4"))),
+    ]
+
+    steps = read_steps(messages)
+
+    reads = [step for step in steps if step.name == "read_section"]
+    assert [(step.target_from, step.found_by_search) for step in reads] == [
+        (None, True),
+        ("reference", False),
+    ]
+
+
+def test_a_position_that_is_no_plain_number_names_no_section() -> None:
+    # isdigit() holds for "²", "①" and "٣", but int() refuses the first two: the reading
+    # must neither stop nor take another digit for a position.
+    result = UPPSAGNING.model_dump(mode="json")
+    result["references"][0]["targets"][0]["section_position"] = "①"
+    messages: list[BaseMessage] = [
+        calls(call("read_section", {"sha256": TERMS, "section_position": "²"}, "c1")),
+        plain_result("read_section", "c1", json.dumps(result)),
+        calls(
+            call("read_section", {"sha256": TERMS, "section_position": "①"}, "c2"),
+            call("read_section", {"sha256": TERMS, "section_position": "٣٧"}, "c3"),
+            call("read_section", {"sha256": TERMS, "section_number": "6.21.4"}, "c4"),
+        ),
+    ]
+
+    steps = read_steps(messages)
+
+    # A target without a plain position is no section target, so neither of its places counts.
+    assert [step.target_from for step in steps] == [None, None, None, None]
 
 
 def test_a_result_without_an_artifact_is_read_from_its_json_text() -> None:

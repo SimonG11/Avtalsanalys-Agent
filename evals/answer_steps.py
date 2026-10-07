@@ -5,7 +5,8 @@ What:
     call the agent made, in order, with its arguments, whether the tool
     answered with an error, what became of a draft (`FinalAnswer`), and,
     for `read_section`, whether its section was named by an earlier result
-    (`target_from`). `read_rejections` gives each draft the answer check
+    (`target_from`) and whether an earlier search had returned it
+    (`found_by_search`). `read_rejections` gives each draft the answer check
     sent back as a `Rejection`: its problems, each with the rule that found
     it (`problem_rule`). `rule_counts` counts a question's rejections by rule.
 
@@ -29,7 +30,13 @@ How:
     made the call. Else it is from an amendment when the section is the
     `amending` section of an earlier `find_amendments` result. The target
     may have been a search hit as well: this says what the agent had in
-    front of it, not why it chose the section. A draft is sent back when its
+    front of it, not why it chose the section. So a read also notes whether
+    the section was a hit, or a hit's copy (`copies`), in an earlier
+    successful `search_documents` result: a read from a reference that no
+    search had returned is one the agent can only have taken from the
+    reference (or from an outline). A position is a whole number, or a
+    string of the digits 0-9; any other value names no section, so a
+    malformed argument never stops the reading. A draft is sent back when its
     tool result has status error, submitted when it is ToolStrategy's
     ANSWER_SUBMITTED, and refused (its form) otherwise, as `answer_run`
     counts them. The check's feedback replaces the draft's tool result as
@@ -54,8 +61,10 @@ from avtalsagent.agent.graph import ANSWER_SUBMITTED
 from avtalsagent.agent.middleware import FINAL_ANSWER_TOOL, FIX_INSTRUCTION
 
 READ_SECTION = "read_section"
+RESOLVE_REFERENCE = "resolve_reference"
+SEARCH_DOCUMENTS = "search_documents"
 # The tools whose results list a section's references, and the one that lists amendments.
-REFERENCE_TOOLS = ("read_section", "resolve_reference")
+REFERENCE_TOOLS = (READ_SECTION, RESOLVE_REFERENCE)
 FIND_AMENDMENTS = "find_amendments"
 
 DraftOutcome = Literal["sent_back", "submitted", "refused"]
@@ -79,6 +88,7 @@ class Step:
     error: bool = False  # the tool answered with status error; never set for a draft
     draft: DraftOutcome | None = None  # FinalAnswer only; None without a result
     target_from: TargetSource | None = None  # read_section only: what named its section
+    found_by_search: bool = False  # read_section only: an earlier search returned its section
 
 
 @dataclass(frozen=True)
@@ -112,10 +122,11 @@ def read_steps(messages: Sequence[BaseMessage]) -> tuple[Step, ...]:
     results = {m.tool_call_id: m for m in messages if isinstance(m, ToolMessage)}
     referenced: set[_Place] = set()
     amending: set[_Place] = set()
+    searched: set[_Place] = set()
     steps: list[Step] = []
     for message in messages:
         if isinstance(message, ToolMessage):
-            _note_targets(message, referenced, amending)
+            _note_targets(message, referenced, amending, searched)
             continue
         if not isinstance(message, AIMessage):
             continue
@@ -126,13 +137,23 @@ def read_steps(messages: Sequence[BaseMessage]) -> tuple[Step, ...]:
                 steps.append(Step(name, args, draft=_draft(result)))
                 continue
             target_from: TargetSource | None = None
+            found_by_search = False
             if name == READ_SECTION and (place := _called_place(args)) is not None:
                 if place in referenced:
                     target_from = "reference"
                 elif place in amending:
                     target_from = "amendment"
+                found_by_search = place in searched
             error = result is not None and result.status == "error"
-            steps.append(Step(name, args, error=error, target_from=target_from))
+            steps.append(
+                Step(
+                    name,
+                    args,
+                    error=error,
+                    target_from=target_from,
+                    found_by_search=found_by_search,
+                )
+            )
     return tuple(steps)
 
 
@@ -158,9 +179,15 @@ def _draft(result: ToolMessage | None) -> DraftOutcome | None:
     return "submitted" if result.text == ANSWER_SUBMITTED else "refused"
 
 
-def _note_targets(message: ToolMessage, referenced: set[_Place], amending: set[_Place]) -> None:
-    """Add the sections a successful result names: its references' targets, or its amendments."""
-    if message.status == "error" or message.name not in (*REFERENCE_TOOLS, FIND_AMENDMENTS):
+def _note_targets(
+    message: ToolMessage, referenced: set[_Place], amending: set[_Place], searched: set[_Place]
+) -> None:
+    """Add the sections a successful result names: its references' targets, amendments or hits."""
+    if message.status == "error" or message.name not in (
+        *REFERENCE_TOOLS,
+        FIND_AMENDMENTS,
+        SEARCH_DOCUMENTS,
+    ):
         return
     result = structured_result(message)
     if result is None:
@@ -168,6 +195,12 @@ def _note_targets(message: ToolMessage, referenced: set[_Place], amending: set[_
     if message.name == FIND_AMENDMENTS:
         for amendment in _items(result.get("amendments")):
             amending.update(_places(amendment.get("amending")))
+        return
+    if message.name == SEARCH_DOCUMENTS:
+        for hit in _items(result.get("hits")):
+            searched.update(_places(hit))
+            for copy in _items(hit.get("copies")):
+                searched.update(_places(copy))
         return
     for reference in _items(result.get("references")):
         for target in _items(reference.get("targets")):
@@ -199,10 +232,14 @@ def _called_place(args: Mapping[str, Any]) -> _Place | None:
     return None
 
 
+_DIGITS = re.compile(r"[0-9]+")
+
+
 def _position(value: Any) -> int | None:
+    """A section position: a whole number, or a string of the digits 0-9 (not "²" or "①")."""
     if isinstance(value, int) and not isinstance(value, bool):
         return value
-    if isinstance(value, str) and value.strip().isdigit():
+    if isinstance(value, str) and _DIGITS.fullmatch(value.strip()):
         return int(value)
     return None
 
