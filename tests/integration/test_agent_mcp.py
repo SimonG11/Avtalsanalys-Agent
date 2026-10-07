@@ -51,6 +51,7 @@ from avtalsagent.db import models
 from avtalsagent.db.session import create_db_engine, session_factory
 from avtalsagent.mcp_server.results import section_refs
 from avtalsagent.mcp_server.server import build_server
+from avtalsagent.validation.chain import NOT_REVIEWED_NOTE
 from tests.integration.test_index_store import (
     ADVANIA,
     HELD,
@@ -270,5 +271,8 @@ async def test_a_date_the_register_does_not_have_is_found_and_noted(
 
     answer = result["answer"]
     assert answer.status == "with_reservation"
-    assert answer.reservations == ["Kunde inte kontrolleras mot registret: 2028-12-31."]
+    assert answer.reservations == [
+        "Kunde inte kontrolleras mot registret: 2028-12-31.",
+        NOT_REVIEWED_NOTE,
+    ]
     assert [fact.agreement_number for fact in answer.register_facts] == [ADVANIA]
