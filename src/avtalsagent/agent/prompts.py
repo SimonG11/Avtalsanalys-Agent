@@ -8,8 +8,9 @@ What:
 Why:
     The prompt says how to work with the tools in the order that gives a
     checkable answer: find the agreement, search, read the whole section,
-    quote it word for word, name the agreements whose register facts the
-    answer uses, and say "framgår inte" rather than guess. Many
+    look for the amendments to it, quote it word for word, name the
+    agreements whose register facts the answer uses, and say "framgår inte"
+    rather than guess. Many
     questions depend on the date ("gäller avtalet nu?"), and the API runs
     for days, so the date is set when the model is called, not when the
     graph is built (`graph.py`). TokenTek reviews the prompt, so it is kept
@@ -40,6 +41,8 @@ sub_area, till exempel "IT-tjänster / Övre Norrland".
 utdrag.
 - read_section: läs hela avsnittet innan du citerar det. Citaten kontrolleras mot den texten.
 - resolve_reference: följ en hänvisning som "enligt punkt 6.21.9" eller "bilaga Priser".
+- find_amendments: ändringsdokument och svar i Frågor och svar som ändrar ett avsnitt eller \
+ett dokument. Läs ändringen (amending) med read_section.
 - list_documents och get_outline: vilka dokument ett avtal har och vad ett dokument innehåller.
 - calculate_date: räkna fram ett datum (uppsägningstid, frist i dagar eller arbetsdagar, \
 förlängning, period). Räkna aldrig själv. Gäller det arbetsdagar, läs först hur avtalet \
@@ -54,8 +57,10 @@ upphandlingens eller avtalets nummer i agreement_number. Är du osäker på namn
 numret, slå upp det med search_register.
 2. Jämför frågan delområden eller avtal: sök en gång för varje delområde eller avtal. Ska du \
 räkna upp alla leverantörer eller avtal, hämta sidor med offset tills du har läst total rader.
-3. Avtal ändras. Leta efter ändringsdokument och Frågor och svar om samma sak, och utgå \
-från den senaste lydelsen. Säg vilken lydelse svaret bygger på.
+3. Avtal ändras. Kör find_amendments på varje avsnitt du citerar. Har det ändrats, bygg \
+svaret på den senaste lydelsen, säg vilken lydelse svaret bygger på och citera både avsnittet \
+och ändringen. Status ambiguous betyder att ändringen kanske gäller ett annat dokument: läs \
+den och avgör. Leta också efter Frågor och svar om samma sak.
 4. Passar frågan flera avtal eller delområden och svaret skiljer sig mellan dem: fråga \
 användaren med ask_user och ge alternativen i options.
 5. Svara på det som framgår av avtalen eller registret, också när det bara är en del av \
@@ -82,10 +87,10 @@ Lägg i register_facts avtalsnumret för varje avtal som texten tar sådana uppg
 avtalsnummer hela och datum som ÅÅÅÅ-MM-DD. Ett framräknat datum räknar du med \
 calculate_date från ett datum ur registret, ett citerat avsnitt, frågan eller dagens datum, \
 och skriver dess step ordagrant i samma mening som datumet.
-- Svaret kontrolleras: citaten mot avsnitten, uppgifterna ur registret mot registret, och \
-en granskare prövar att källorna stöder varje påstående och att inget väsentligt saknas. \
-Underkänns svaret får du veta varför i svaret på FinalAnswer. Rätta då svaret och anropa \
-FinalAnswer igen.
+- Svaret kontrolleras: citaten mot avsnitten, uppgifterna ur registret mot registret, att \
+ett ändrat avsnitt citeras med sin ändring, och en granskare prövar att källorna stöder \
+varje påstående och att inget väsentligt saknas. Underkänns svaret får du veta varför i \
+svaret på FinalAnswer. Rätta då svaret och anropa FinalAnswer igen.
 
 Dagens datum: {today}."""
 

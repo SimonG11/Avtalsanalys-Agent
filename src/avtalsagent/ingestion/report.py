@@ -194,12 +194,14 @@ REFERENCE_STATUS_NAMES: dict[ReferenceStatus, str] = {
 # order the report lists them.
 REFERENCE_RULE_NAMES: dict[str, str] = {
     "R1": "avsnittsnummer i samma fil",
+    "R1a": "avsnittsnummer i bilagorna som ett tillägg ändrar (”till bilagorna 5.1-5.4”)",
     "R1q": "nummer i en frågelogg, i upphandlingsdokumentet frågan gäller",
     "R1x": "nummer i ett namngivet dokument (”punkt 6.19.7 i Allmänna villkor”)",
     "R2": "namngivet dokument, bland filerna på avtalssidan",
     TOPIC_RULE: "ämne i ett namngivet dokument, avsnittet valt av språkmodellen",
     "R3": "bilaga med nummer, bland filerna på avtalssidan",
     "R4": "avsnittsrubrik i samma fil eller i en annan fil på sidan",
+    "R4a": "avsnittsrubrik i bilagorna som ett tillägg ändrar",
     "R4q": "rubrik i en frågelogg, i upphandlingsdokumentet frågan gäller",
     TITLE_RULE: "avsnittsrubrik som reglerna inte hittade, vald av språkmodellen",
     "R5": "bilaga med namn, bland filerna på avtalssidan",

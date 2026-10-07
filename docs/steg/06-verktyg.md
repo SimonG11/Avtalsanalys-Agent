@@ -17,8 +17,9 @@ Verktygen heter som i kontraktet med webbappen (`webbapp-kontrakt.md`), inte som
 arkitekturplanen: `sok_dokument` heter `search_documents`, `las_avsnitt` `read_section`,
 `visa_innehall` `get_outline`, `folj_hanvisning` `resolve_reference`, `lista_dokument`
 `list_documents` och `sok_register` `search_register`. `berakna_datum` heter `calculate_date`
-och kom efter M8 ([ADR 0016](../adr/0016-datumrakning.md), avsnitt 8b nedan); `find_amendments`
-kommer senare, och `ask_user` ligger i agentens graf (M7).
+och kom efter M8 ([ADR 0016](../adr/0016-datumrakning.md), avsnitt 8b nedan), och
+`hitta_andringar` heter `find_amendments` och kom efter det
+([ADR 0017](../adr/0017-andringar.md), avsnitt 8c nedan). `ask_user` ligger i agentens graf (M7).
 
 | Verktyg | Argument (? = valfritt) | Svar |
 |---|---|---|
@@ -28,6 +29,7 @@ kommer senare, och `ask_user` ligger i agentens graf (M7).
 | `resolve_reference` | `sha256`, `section_number?`, `section_position?`, `reference?` | Avsnittets citatfält och dess hänvisningar, eller bara de vars text innehåller `reference`: text, slag, status och de mål som får visas (avsnitt eller hel fil), och hur många mål som hålls tillbaka |
 | `list_documents` | `framework_area?`, `agreement_number?`, `document_type?` (minst ett), `limit` (50, högst 200) | `documents`: filerna i filtret med sha256, titel, typ, avtalssidor, ramavtalsområden, avtalsnummer, versionsdatum och antalet avsnitt som `get_outline` visar; avtalets dokument först, sedan upphandlingens och sist stöd för avrop; `total` räknar alla träffar |
 | `search_register` | `supplier?`, `agreement_number?`, `framework_area?`, `sub_area?`, `org_number?` (minst ett), `valid_on?`, `limit` (20, högst 20), `offset` (0) | `rows`: ett avtal i ett delområde per rad, med avtals- och upphandlingsnummer, leverantör, organisationsnummer, leverantörens tidigare namn (`former_names`), ramavtalsområde, delområde och datumen från, till och längsta förlängning; `total` räknar alla rader, och med `offset` bläddrar modellen vidare |
+| `find_amendments` (efter `calculate_date`) | `sha256`, `section_number?`, `section_position?` | `target` (avsnittet eller hela filen som frågan gäller) och `amendments`, nyaste först: avsnittet där ändringen står (`amending`, med citatfälten), det som ändras (`amended`: avsnittet eller hela filen), hänvisningen som den står (`raw`), `status` (`resolved` eller `ambiguous`), datumet (`dated`) och högst 400 tecken text runt hänvisningen (`excerpt`); `held_back` räknar ändringar som hålls tillbaka |
 | `calculate_date` (efter M8) | `start`, `amount` (1–3650), `unit` (`days`, `working_days`, `weeks`, `months`, `years`), `direction` (`after`, `before`), `include_start` (false) | `result` och dess veckodag, `step` (uträkningen att skriva i svaret, t.ex. "2027-02-17 minus 3 månader = 2026-11-17"), `skipped` (helgdagar på vardagar som inte räknades som arbetsdagar) och `notes` (en månad utan startdagens dag, ett resultat på en helg, en afton som skulle ändra datumet) |
 
 **Citatfälten** finns på varje avsnitt som ett verktyg ger: `sha256`, `file_title`,
@@ -257,6 +259,37 @@ steg som verktyget skriver i 5 enheter, 2 riktningar och 4 antal, med och utan `
 godtas av registerregeln, och underkänns med resultatet en dag fel. Datumet i noten om aftnarna
 godtas också.
 
+### 8c. `tools/find_amendments.py` (efter `calculate_date`)
+
+`find_amendments` visar vad som ändrar ett avsnitt eller en fil: avsnitt i ändringsdokument och
+svar i Frågor och svar som ersätter, stryker eller lägger till text, som "Rättelse. Texten som
+gäller är följande för punkt 3.2: …" (7a765d649e25 §9). Det finns ingen egen tabell för
+ändringar ([ADR 0017](../adr/0017-andringar.md)). Verktyget läser steg 4:s hänvisningar
+baklänges, i en fråga mot `document_reference`, `reference_target`, `document_metadata` och
+`document_section`: hänvisningar med `replaces`, med status `resolved` eller `ambiguous`, i en fil
+av typen `amendment` eller `questions_and_answers`, som pekar på avsnittet eller på hela filen.
+Utan avsnitt kommer ändringarna av filen och av alla dess avsnitt.
+
+- **Målet** hittas som i `read_section` (`find_section`, eller `require_file` för en hel fil),
+  med samma fel: en okänd fil, ett okänt avsnitt och ett avsnitt som hålls tillbaka går inte att
+  fråga om.
+- **En ändring per ändrande avsnitt och mål.** Nämner avsnittet målet flera gånger, eller är
+  hänvisningen sparad en gång per avtalssida, blir det en rad: en `resolved` före en `ambiguous`,
+  sedan den första i texten. `excerpt` är texten runt den: upp till 150 tecken före och 250
+  efter, hela ord, blanktecken ihopslagna och "…" där text saknas, högst 400 tecken.
+- **Det som hålls tillbaka** visas inte men räknas i `held_back`, en gång per ändrande avsnitt:
+  ett ändrande avsnitt som verktygen inte får visa, och, när hela filen efterfrågas, en ändring av
+  ett avsnitt i filen som hålls tillbaka.
+- **Datum.** Ett svar i Frågor och svar dateras med den senaste TendSign-stämpeln i avsnittet,
+  utom utskriftens ("Utskrivet: 2022-10-13 09:20"). Svaret ges efter frågan, men läsordningen
+  blandar stämplarna: i 20c753d88340 §2 står båda efter "Publikt svar", frågans först, och i
+  39d8c1efe373 §15 står båda före. Av pilotens 1 391 svar har 50 en senare stämpel än den
+  första efter "Publikt svar", och i 80 står alla stämplar före rubriken. Ett ändringsdokument
+  dateras med filens versionsdatum, annars publiceringsdatumet, annars när avropa.se senast
+  uppdaterade det.
+- **Ordning:** nyaste först, odaterade sist, sedan efter filens titel och avsnittets plats, så att
+  samma anrop ger samma lista.
+
 ### 9. Utanför paketet
 
 - `db/session.py`: `create_db_engine(read_only=True)` sätter `default_transaction_read_only=on`
@@ -278,12 +311,14 @@ godtas också.
 | `tests/unit/mcp_server/test_mcp_register_checks.py` | Att ett filter krävs (också att ett tomt `sub_area` inte räcker), organisationsnumrens former, `list_documents` utan index, gränserna, NUL, `offset` och standardvärdena i schemat, att varje dokumenttyp har en plats i ordningen |
 | `tests/unit/mcp_server/test_mcp_register_sql.py` | Med en påhittad session: ett avtal som registret skriver på två sätt hittas med båda stavningarna, dokumentfiltret tar den stavning som indexet sparade, och `search_register` frågar efter båda; `offset` och `limit` kommer efter sorteringen men inte i totalen; `sub_area` delas i delar som var och en blir ett villkor på vägen, med `%` och `_` som tecken, och ett delområde som inget delområde har är ett fel |
 | `tests/unit/mcp_server/test_mcp_calculate_date.py` (efter M8) | Resultatet och steget i varje enhet, `include_start` åt båda hållen och felet med arbetsdagar, helgdagarna i `skipped`, noterna om aftnar (också en afton efter resultatet), kort månad, lördag och helgdag; resultat utanför 2005–2100; genom MCP utan session, argument utanför gränserna, enheterna och riktningarna i schemat; att registerregeln godtar varje steg som verktyget skriver, underkänner det med resultatet en dag fel och godtar notens datum |
+| `tests/unit/mcp_server/test_mcp_find_amendments.py` (efter `calculate_date`) | Utdraget: ett kort avsnitt helt, text före fönstret utelämnad, ett långt utdrag kapat mellan ord vid 400 tecken, blanktecken som inte räknas som utelämnad text; svarets datum ur pilotens stämplar (efter svaret, båda efter eller båda före "Publikt svar", en utskriven logg, ingen stämpel, ett omöjligt datum); ordningen efter datum, titel och plats; schemat genom MCP och en felaktig hash som stoppas före sessionen |
 | `tests/unit/domain/test_swedish_calendar.py` (efter M8) | Påsk 2024–2032, helgdagarna 2027 som almanackan har dem, midsommardagen och alla helgons dag, aftnarna, arbetsdagar framåt och bakåt förbi påsk, midsommar och jul, med och utan aftnarna, månadens sista dag och skottår |
 | `tests/integration/test_mcp_documents.py` | De fyra dokumentverktygen på M5:s korpus med fyra påhittade hänvisningar: träffarna med kopior, filtren (också ett upphandlingsnummer), att läsa med nummer, plats eller båda, tvetydiga nummer, innehållsförteckningen, hänvisningarna i textordning, att det som hålls tillbaka inte visas och räknas (en gång, också via två avtalssidor), att inget visas mellan `process` och `index`, att serverns anslutning inte kan skriva, och ett anrop per verktyg genom SDK:ts klient i minnet |
+| `tests/integration/test_mcp_amendments.py` (efter `calculate_date`) | `find_amendments` på samma korpus med tre filer i nya roller (ett ändringsdokument, Frågor och svar med tre frågor, ett odaterat ändringsdokument med ett avsnitt som hålls tillbaka) och nio påhittade hänvisningar: ändringarna av ett avsnitt och av hela filen, nyaste först och med svarets egen stämpel; inte ett förslag i frågan, ett nummer som saknas eller en hänvisning i ett upphandlingsdokument; en hänvisning via två avtalssidor en gång; en tvetydig ändring hos båda kandidaterna; ändrande och ändrade avsnitt som hålls tillbaka räknas; felen; inget mellan `process` och `index`; ett anrop genom MCP |
 | `tests/integration/test_mcp_register.py` | `list_documents` och `search_register` på samma korpus plus en påhittad registerrad: varje filter för sig och tillsammans, tidigare namn på raderna, registrets stavning, ett avtal som registret skriver på två sätt, upphandlingsnummer, okända värden, gränsen, `offset` och totalen, `%` och `_`, filer som hålls tillbaka, `list_documents` utan index, och ett anrop per verktyg genom MCP; med påhittade rader i tre nivåer: `sub_area` med delarna i båda ordningarna och med gemener, en del på valfri nivå, tillsammans med de andra filtren, och felet som räknar upp områdets delområden, också i ett område där nivå 1 är ett län |
 
-173 enhetstester i `tests/unit/mcp_server`, 42 i `tests/unit/domain/test_swedish_calendar.py` och
-103 integrationstester (M6 hade 84 och 87). Integrationstesterna använder samma korpus och samma
+188 enhetstester i `tests/unit/mcp_server`, 42 i `tests/unit/domain/test_swedish_calendar.py` och
+114 integrationstester (M6 hade 84 och 87). Integrationstesterna använder samma korpus och samma
 påhittade embedder (`TopicEmbedder`) som M5:s tester, och läser genom en skrivskyddad anslutning
 som servern gör.
 
@@ -317,12 +352,20 @@ som servern gör.
   inte tillägget `unaccent`); felet räknar då upp områdets delområden, om `framework_area` är
   angivet. Tre vägar utanför piloten har dubbla mellanslag i en nivå och hittas bara med en del
   utan dem.
+- **`find_amendments` ser bara det som steg 4 märkt som ändring** (`replaces`). En ändring utan
+  ändringsord, eller av en fil som aldrig publicerades, syns inte, så en tom lista betyder inte
+  att avsnittet säkert är oförändrat. En tvetydig ändring visas hos varje kandidat, och modellen
+  avgör vilken fil den gäller.
+- **En ändring följer inte med till kopiorna.** Ett svar i Frågor och svar som ändrar ett
+  upphandlingsdokument syns inte på samma text i de allmänna villkoren eller i ett undertecknat
+  avtal; sökträffens `copies` visar var kopiorna står.
 
 ## Så verifierar du M6 själv
 
 ```bash
 uv run pytest tests/unit/mcp_server
-uv run pytest tests/integration/test_mcp_documents.py tests/integration/test_mcp_register.py
+uv run pytest tests/integration/test_mcp_documents.py tests/integration/test_mcp_register.py \
+  tests/integration/test_mcp_amendments.py
 docker compose up -d postgres --wait
 uv run alembic upgrade head
 uv run python -m avtalsagent.ingestion run          # eller bara index om process redan körts

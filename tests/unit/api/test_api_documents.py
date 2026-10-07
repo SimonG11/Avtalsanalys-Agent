@@ -29,6 +29,7 @@ from avtalsagent.api.documents import (
 )
 from avtalsagent.config import Settings
 from tests.unit.agent.scripted_model import (
+    DictAmendments,
     DictReader,
     ListRegister,
     ScriptedModel,
@@ -62,7 +63,9 @@ class Files:
 def app_with(files: Files) -> FastAPI:
     @asynccontextmanager
     async def open_tools(settings: Settings) -> AsyncIterator[McpTools]:
-        yield McpTools(tools=[], reader=DictReader([]), register=ListRegister())
+        yield McpTools(
+            tools=[], reader=DictReader([]), register=ListRegister(), amendments=DictAmendments()
+        )
 
     @asynccontextmanager
     async def open_saver(settings: Settings) -> AsyncIterator[BaseCheckpointSaver[str]]:

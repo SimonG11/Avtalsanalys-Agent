@@ -58,6 +58,7 @@ CONTRACT_ORDER = [
     "resolve_reference",
     "list_documents",
     "search_register",
+    "find_amendments",
     "calculate_date",
 ]
 # The argument names: the contract's (webbapp-kontrakt.md point 5) and the new ones to be sent
@@ -177,11 +178,11 @@ async def call(server: FastMCP, name: str, arguments: dict[str, Any]) -> CallToo
         return await client.call_tool(name, arguments)
 
 
-# --- the seven tools as the agent lists them ---
+# --- the eight tools as the agent lists them ---
 
 
 @pytest.mark.anyio
-async def test_the_seven_tools_are_listed_in_the_contracts_order() -> None:
+async def test_the_eight_tools_are_listed_in_the_contracts_order() -> None:
     async with create_connected_server_and_client_session(
         build_server(NoSessions(), None, allowed_hosts=HOSTS)
     ) as client:

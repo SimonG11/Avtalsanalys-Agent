@@ -21,8 +21,9 @@ How:
       every model call, so a process that runs for days (the API) never
       answers with the date it started on. Only the date's line changes.
     - `AnswerCheck` resets the answer per question and checks the draft:
-      the citations and register facts through avtal-mcp's session, then
-      the reviewer (`middleware.py`, `validation/chain.py`).
+      the citations, the register facts and the latest wording through
+      avtal-mcp's session, then the reviewer (`middleware.py`,
+      `validation/chain.py`).
     - `ModelCallLimitMiddleware` ends a run after `AGENT_MODEL_CALL_LIMIT`
       model calls, new attempts included; the check then gives the answer
       the last failed draft would have got (`fallback_answer`), or
@@ -95,10 +96,10 @@ def build_agent(
 ) -> AvtalAgent:
     """The compiled agent; run it with `ainvoke` or `astream` (the check is async).
 
-    `mcp` holds avtal-mcp's tools and the readers of sections and register
-    rows on the same session, `reviewer` reviews a draft that passed the
-    deterministic rules, and `today` gives the date for the system prompt
-    and the check.
+    `mcp` holds avtal-mcp's tools and the readers of sections, register
+    rows and amendments on the same session, `reviewer` reviews a draft
+    that passed the deterministic rules, and `today` gives the date for the
+    system prompt and the check.
     """
 
     @dynamic_prompt
@@ -109,7 +110,12 @@ def build_agent(
     middleware: list[AgentMiddleware[Any, None]] = [
         dated_system_prompt,
         AnswerCheck(
-            mcp.reader, mcp.register, reviewer, retries=settings.validation_retries, today=today
+            mcp.reader,
+            mcp.register,
+            mcp.amendments,
+            reviewer,
+            retries=settings.validation_retries,
+            today=today,
         ),
         ModelCallLimitMiddleware(run_limit=settings.agent_model_call_limit, exit_behavior="end"),
         AnswerOpenToolCalls(),

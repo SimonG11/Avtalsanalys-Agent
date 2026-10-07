@@ -100,7 +100,8 @@ Börja med search_register för frågor om vilka avtal och leverantörer som fin
 gäller, eller med search_documents för vad avtalen säger. Läs sedan hela avsnittet med \
 read_section innan du citerar det, se ett dokuments innehåll med get_outline, följ en \
 hänvisning med resolve_reference och se ett avtals eller områdes dokument med list_documents. \
-Räkna fram datum (uppsägningstider, frister, perioder) med calculate_date.
+Se med find_amendments om ett ändringsdokument eller ett svar i Frågor och svar ändrar ett \
+avsnitt du citerar. Räkna fram datum (uppsägningstider, frister, perioder) med calculate_date.
 Citera ordagrant ur texten från read_section och ange källan med dess sha256 och \
 section_position; file_title, section_number, section_title och page_start säger var den står."""
 

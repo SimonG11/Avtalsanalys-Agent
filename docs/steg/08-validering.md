@@ -12,8 +12,8 @@ inte kunde kontrolleras. Besluten och varför står i
 organisationsnummer skickas tillbaka till agenten; granskaren underkänner ett svar vars källa säger
 något annat; reglerna och granskaren delar två nya försök; svaret har `reservations` och
 `register_facts`; granskarens svar syns aldrig i webbappen. Allt detta har tester utan språkmodell,
-och kedjan är provkörd mot de riktiga modellerna. Kvar (se Kända begränsningar): regeln om senaste
-lydelsen, som kommer med verktyget `find_amendments`.
+och kedjan är provkörd mot de riktiga modellerna. Efter M8 kom regeln om senaste lydelsen, med
+verktyget `find_amendments` ([ADR 0017](../adr/0017-andringar.md), avsnitt 7 nedan).
 
 ## Resultat
 
@@ -67,9 +67,10 @@ delområde och region gav 56 rader i kommandoradens utskrift (nu en rad per avta
 flowchart TD
     M["Modellen lämnar FinalAnswer<br/>(text, källor, register_facts)"] --> C["1. Citaten<br/>varje avsnitt läses med read_section"]
     C --> R["2. Registeruppgifterna<br/>varje angivet avtal läses med search_register"]
-    R -- "fel i 1 eller 2" --> F
-    R -- "inga fel och answered = true" --> G["3. Granskaren gpt-6-astra<br/>stöds varje påstående, saknas något?"]
-    R -- "inga fel och answered = false" --> S
+    R --> L["3. Senaste lydelsen<br/>varje godkänt avsnitts ändringar läses med find_amendments"]
+    L -- "fel i 1, 2 eller 3" --> F
+    L -- "inga fel och answered = true" --> G["4. Granskaren gpt-6-astra<br/>stöds varje påstående, saknas något?"]
+    L -- "inga fel och answered = false" --> S
     G -- "underkänt" --> F{"Försök kvar?<br/>(VALIDATION_RETRIES = 2)"}
     G -- "godkänt" --> S["Status och reservationer"]
     G -- "ingen bedömning<br/>(fel, oläslig)" --> S
@@ -81,7 +82,8 @@ flowchart TD
 ```
 
 En fråga får högst tre utkast. Varje utkast går genom kedjan i ordning, och reglerna går före
-granskaren: ett utkast med fel citat eller fel datum skickas tillbaka utan att granskas. Når
+granskaren: ett utkast med fel citat, fel datum eller en lydelse som har ändrats skickas tillbaka
+utan att granskas. Steg 3, senaste lydelsen, kom efter M8 (avsnitt 7 nedan). Når
 agenten gränsen för modellanrop efter en återkoppling, ges det senaste underkända utkastets svar
 med reservation i stället för inget svar.
 
@@ -110,9 +112,11 @@ Svaret har två nya fält (kontraktets punkter 24–28):
 
 `reservations` är tom utom vid `with_reservation`, och säger då vad som inte kunde kontrolleras,
 till exempel "Källa [2] kunde inte kontrolleras mot avtalstexten.", "Kunde inte kontrolleras mot
-registret: 2028-11-14.", "Granskningen fann inte fullt stöd i källorna för: ”…”." eller "Svaret
-kunde inte granskas.". `register_facts` har en rad per avtal och delområde för varje avtal som
-svaret anger.
+registret: 2028-11-14.", "Källa [1] kan bygga på en lydelse som har ändrats senare: Frågor och
+svar - Upphandlingsdokument, avsnitt 9 Publik fråga (2024-02-20).", "Det gick inte att
+kontrollera om källa [1] har ändrats.", "Granskningen fann inte fullt stöd i källorna för: ”…”."
+eller "Svaret kunde inte granskas.". `register_facts` har en rad per avtal och delområde för varje
+avtal som svaret anger.
 
 ## Kommandon
 
@@ -150,16 +154,19 @@ Inställningar (alla i `.env.example`):
 
 ### 1. `validation/chain.py` – kedjan
 
-`check_answer(draft, *, sections, register, reviewer, question, follow_ups, today) ->
-ChainReport`. Läser varje citerat avsnitt en gång och kör `check_citations`; läser varje angivet
-avtal en gång och kör `check_register_facts` med avsnitten vars citat godkändes, frågan och
-användarens svar; kör granskaren bara när inget fel hittats och utkastet besvarar frågan.
-`ChainReport` har felen (till modellen), citaten, registerraderna, reservationerna (till
-användaren), om granskningen misslyckades och om svaret har någon källa som kontrollerats.
-Reservationerna har en not per slags fel: källorna som inte klarade citatkontrollen, hänvisningar
-[n] som inte stämmer, värden som inte finns i registret, att svaret inte har någon källa, att
-svaret inte granskades (när reglerna redan hittat fel) eller att granskningen misslyckades, och
-granskarens fynd. Ett avsnitt som två källor citerar skickas till granskaren en gång.
+`check_answer(draft, *, sections, register, amendments, reviewer, question, follow_ups, today)
+-> ChainReport`. Läser varje citerat avsnitt en gång och kör `check_citations`; läser varje
+angivet avtal en gång och kör `check_register_facts` med avsnitten vars citat godkändes, frågan och
+användarens svar; läser ändringarna av varje avsnitt vars citat godkändes en gång och kör
+`check_latest_wording` (efter M8, avsnitt 7); kör granskaren bara när inget fel hittats och
+utkastet besvarar frågan. `ChainReport` har felen (till modellen), citaten, registerraderna,
+reservationerna (till användaren), om granskningen misslyckades, om ändringarna av något avsnitt
+inte kunde läsas och om svaret har någon källa som kontrollerats. Reservationerna har en not per
+slags fel: källorna som inte klarade citatkontrollen, hänvisningar [n] som inte stämmer, värden som
+inte finns i registret, källor vars avsnitt har ändrats, källor vars ändringar inte kunde läsas,
+att svaret inte har någon källa, att svaret inte granskades (när reglerna redan hittat fel) eller
+att granskningen misslyckades, och granskarens fynd. Ett avsnitt som två källor citerar skickas
+till granskaren en gång.
 
 ### 2. `validation/register_facts.py` – registerregeln
 
@@ -219,14 +226,16 @@ om inte källan säger annat (ADR 0016).
 
 ### 5. `agent/middleware.py` – `AnswerCheck`
 
-`AnswerCheck(reader, register, reviewer, retries, today)` ersätter `CitationCheck`. Stegen i
+`AnswerCheck(reader, register, amendments, reviewer, retries, today)` ersätter `CitationCheck`
+(`amendments` kom efter M8). Stegen i
 grafen heter nu `AnswerCheck.before_agent` och `AnswerCheck.after_agent`. Frågan är det senaste
 användarmeddelandet, och följdfrågorna är `ask_user`-svaren efter det, var och en med frågan som
 agenten ställde (ett avbrutet `ask_user` räknas inte). Ett underkänt utkast med försök kvar går tillbaka med "Kontrollen underkände svaret
 (försök n av 3):", felen och en instruktion om hur de rättas, och svaret som utkastet skulle ha
-fått sparas privat (`fallback_answer`). En granskning som misslyckas kostar inget försök.
-`_status`: `answered: false` ger `no_answer`; fel kvar, en misslyckad granskning eller inget att
-kontrollera ger `with_reservation`; annars `verified`.
+fått sparas privat (`fallback_answer`). En granskning som misslyckas, eller ändringar som inte
+kunde läsas, kostar inget försök. `_status`: `answered: false` ger `no_answer`; fel kvar, en
+misslyckad granskning, ändringar som inte kunde läsas eller inget att kontrollera ger
+`with_reservation`; annars `verified`.
 
 ### 6. `agent/schemas.py`, `agent/graph.py`, `agent/prompts.py`, API:t och kommandoraden
 
@@ -245,11 +254,45 @@ kontrollera ger `with_reservation`; annars `verified`.
   dem. Med `node_name` skrev adapterns läge "continue" klientens tillstånd in i grafen förbi
   indataschemat, så en klient kunde sätta ett eget `answer` (ADR 0015, punkt 11).
 
+### 7. `validation/latest_wording.py` – regeln om senaste lydelsen (efter M8)
+
+Kom med verktyget `find_amendments` ([ADR 0017](../adr/0017-andringar.md), punkt 5; verktyget i
+docs/steg/06-verktyg.md). `check_latest_wording(draft, citations, amendments) ->
+WordingReport(problems, reservations, unread)` är en ren funktion. `amendments` har, för varje
+citerat avsnitt vars citat godkändes, ändringarna som läsaren gav, eller `None` när de inte kunde
+läsas. Ett avsnitts ändringar är de som är `resolved` och gäller just det avsnittet. Har det
+någon, ska svaret också citera (med ett godkänt citat) minst ett av de ändrande avsnitten. Annars
+blir det ett fel per citerat avsnitt, med dess första källa [n], som nämner högst tre ändringar,
+nyaste först, med `sha256` och `section_position` så att agenten kan läsa dem direkt (här
+med hashen förkortad):
+
+```text
+Källa [1] (Upphandlingsdokument, avsnitt 3.2 Utvärderingsmodell) har ändrats av Frågor och svar -
+Upphandlingsdokument, avsnitt 9 Publik fråga (2024-02-20, sha256 7a765d649e25…, section_position
+6). Läs ändringen med read_section, bygg svaret på den senaste lydelsen och citera ändringen.
+```
+
+Är försöken slut, får användaren reservationen "Källa [1] kan bygga på en lydelse som har
+ändrats senare: …" och noten att svaret inte granskades. Ett citerat ändrande avsnitt är ett
+citerat avsnitt som andra: har det i sin tur ändrats, ska också den ändringen citeras. Ändringar
+som inte kunde läsas är inget fel som agenten kan rätta: svaret blir `with_reservation` med noten
+"Det gick inte att kontrollera om källa [1] har ändrats.", utan nytt försök, och granskas som
+vanligt.
+
+- `agent/amendments.py`: `AmendmentInfo` (det ändrande avsnittets plats och citatfält, platsen
+  för avsnittet som ändras eller `None` för hela filen, status och datum) och protokollet
+  `AmendmentReader`.
+- `agent/mcp_tools.py`: `McpAmendmentReader` anropar `find_amendments(sha256=…,
+  section_position=…)` på agentens session och läser svarets `structuredContent`; ett felsvar
+  eller ett svar som inte går att läsa (en server av en annan version) ger `None`, loggat.
+  `McpTools` har fältet `amendments`, och `build_agent` ger det till `AnswerCheck`.
+
 ## Tester
 
 Alla enhetstester går utan språkmodell, databas och nätverk. Granskaren ersätts av
-`ScriptedReviewer` (ett färdigt `ReviewVerdict` per anrop) och registret av `ListRegister`
-(raderna i en lista), båda i `tests/unit/agent/scripted_model.py`.
+`ScriptedReviewer` (ett färdigt `ReviewVerdict` per anrop), registret av `ListRegister`
+(raderna i en lista) och ändringarna av `DictAmendments` (efter M8), alla i
+`tests/unit/agent/scripted_model.py`.
 
 | Fil | Tester | Vad de visar |
 |---|---|---|
@@ -257,8 +300,9 @@ Alla enhetstester går utan språkmodell, databas och nätverk. Granskaren ersä
 | `tests/unit/validation/test_review.py` | 23 (ny) | Godkänt bara när varje påstående stöds och inget saknas; återkopplingen citerar påståendet, källan och skälet; noterna till användaren är högst två, kortar långa påståenden och slutar aldrig med "?." |
 | `tests/unit/agent/test_reviewer.py` | 20 (ny) | Granskarens modell, nivå och tidsgräns; strikt JSON-schema utan strömning; fel och oläsbara svar ger `None` och loggar bara felets typ; varje källa och registerrad i eget element, ett avsnitt som två källor citerar en gång; agentens följdfrågor med användarens svar; ingen variant av en tagg (NFD, nollbredd, helbredd) kan avsluta sitt element |
 | `tests/unit/api/test_api_review_stream.py` | 2 (ny) | Granskarens svar når aldrig AG-UI-strömmen, och samma anrop utan metadatan hade visat det (så testet prövar något) |
-| `tests/unit/agent/test_mcp_tools.py` | 23 (9 nya) | `McpRegisterReader` läser alla sidor, behåller bara avtalets rader och ger `None` för ett okänt nummer |
-| `tests/unit/agent/test_agent_graph.py` | 49 (19 nya) | Hela kedjan i grafen: ett registersvar blir `verified`, fel datum rättas i nästa försök, fel kvar efter två försök ger reservation med noten att svaret inte granskats, granskaren stoppar fel uppsägningstid, ett underkänt citat granskas inte, regler och granskare delar försöken, en misslyckad granskning, `no_answer` granskas inte, granskaren får följdfrågan och svaret men inte ett avbrutet, bara den senaste frågan, en reservation säger alltid varför, gränsen för modellanrop ger det senaste utkastets svar men aldrig en tidigare frågas, och `register_facts` rymmer pilotens största område |
+| `tests/unit/validation/test_latest_wording.py` | 20 (ny, efter M8) | Testfrågorna q21 och q22: det ändrade avsnittet ensamt underkänns, med ändringen godkänns; q23:s tvetydiga ändring och en ändring av hela filen kontrolleras inte; ändringar som inte kunde läsas ger en not och inget fel; ett underkänt citat slås inte upp och räknas inte som citerad ändring; en citerad ändring som själv har ändrats; högst tre ändringar nämns, nyaste först; i kedjan läses ändringarna efter registret och före granskaren, och ett utkast som underkänns granskas inte |
+| `tests/unit/agent/test_mcp_tools.py` | 32 (9 nya, 9 efter M8) | `McpRegisterReader` läser alla sidor, behåller bara avtalets rader och ger `None` för ett okänt nummer; `McpAmendmentReader` ger varje ändring med vad den ändrar, en tom lista för ett avsnitt utan ändringar och `None` för ett felsvar eller ett svar av en annan version |
+| `tests/unit/agent/test_agent_graph.py` | 53 (19 nya, 4 efter M8) | Hela kedjan i grafen: ett registersvar blir `verified`, fel datum rättas i nästa försök, fel kvar efter två försök ger reservation med noten att svaret inte granskats, granskaren stoppar fel uppsägningstid, ett underkänt citat granskas inte, regler och granskare delar försöken, en misslyckad granskning, `no_answer` granskas inte, granskaren får följdfrågan och svaret men inte ett avbrutet, bara den senaste frågan, en reservation säger alltid varför, gränsen för modellanrop ger det senaste utkastets svar men aldrig en tidigare frågas, och `register_facts` rymmer pilotens största område; efter M8: ett utkast på ett ändrat avsnitt går tillbaka och blir `verified` när ändringen citeras, ändringar som inte kunde läsas ger reservation utan nytt försök, och ett underkänt citats ändringar läses inte |
 | `tests/unit/agent/test_agent_cli.py` | 49 (2 nya, flera ändrade) | Statusraden säger vad som kontrollerats, reservationerna, och en rad per avtal ur registret, också när registret skriver numret på två sätt |
 | `tests/unit/agent/test_checkpointer.py`, `tests/unit/api/test_api_*.py` | 20, 34 (2 nya) | `RegisterFact` och `fallback_answer` sparas och läses i checkpointern; svaret i API:t har `reservations` och `register_facts`; en klient kan inte skriva `answer` eller kontrollens tillstånd genom adapterns läge "continue" |
 | `tests/integration/test_agent_mcp.py` | 4 (2 nya) | Agenten mot avtal-mcp på Postgres: ett svar ur registret kontrolleras mot sina rader, och ett datum som registret inte har hittas och ges med reservation |
@@ -271,9 +315,13 @@ uv run pytest tests/unit
 
 ## Kända begränsningar
 
-- **Senaste lydelsen kontrolleras inte.** Regeln behöver verktyget som hittar ändringar
-  (`find_amendments`) och en ändring i M4:s extraktion; den kommer i nästa PR. Prompten säger
-  fortfarande åt agenten att leta efter ändringar och Frågor och svar.
+- **Senaste lydelsen kontrolleras bara för säkra ändringar av ett avsnitt** (efter M8). Regeln
+  kräver att svaret citerar en ändring, inte just den senaste, när flera ändrar samma avsnitt;
+  vilken lydelse svaret bygger på bedömer granskaren. Tvetydiga ändringar (q23: "Punkt 2a" i
+  Bilaga 5 kan gälla 5.2, 5.3 eller 5.4) och ändringar av en hel fil kontrolleras inte; verktyget
+  visar dem och agenten avgör. Ändringar som hålls tillbaka räknar verktyget men regeln ser dem
+  inte, och en ändring som steg 4 inte har hittat finns inte för regeln (ADR 0017). Regeln har
+  inte provkörts mot de riktiga modellerna.
 - **Granskaren kan ta fel.** Den kan underkänna ett rätt svar (det kostar ett nytt försök och i
   värsta fall en reservation) eller godkänna ett svar som reglerna redan har godkänt. Hur ofta
   mäts i utvärderingen (M11).
@@ -308,7 +356,8 @@ uv run pytest tests/unit
 - **Ett avtal med många delområden** ger många rader i `register_facts` (en fråga om
   Bemanningstjänster i provkörningen gav 56). Granskaren läser dem alla.
 - **Integrationstesterna** körs bara i CI. Registerregeln mot `search_register` på Postgres och
-  kedjan mot avtal-mcp på en riktig databas har inte körts här.
+  kedjan mot avtal-mcp på en riktig databas, med `find_amendments` för varje godkänt avsnitt, har
+  inte körts här.
 
 ## Så verifierar du M8 själv
 
@@ -325,4 +374,7 @@ Titta på att svaret blir `Kontrollerat` med raden ur registret under. Prova sed
 - `--json` och fälten `reservations` och `register_facts`;
 - `REVIEWER_REASONING_EFFORT=medium` och jämför tiden;
 - `VALIDATION_RETRIES=0` och en fråga som brukar ge ett nytt försök: svaret ges med reservation
-  direkt.
+  direkt;
+- efter M8: frågan om hur många anbud som skulle antas i IT-drift Mindre (q21). Svaret ska citera
+  både punkt 3.2 och rättelsen i Frågor och svar; ett utkast som bara citerar 3.2 skickas
+  tillbaka med "har ändrats av".

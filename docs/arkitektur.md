@@ -47,6 +47,10 @@
 >   (utan allmänna helgdagar), veckor, månader och år, och skriver uträkningen. Registerregeln
 >   räknar om den med samma funktioner (`domain/dates.py`) i stället för att lita på verktygets
 >   svar ([steg 6](steg/06-verktyg.md), avsnitt 8b).
+> - [ADR 0017](adr/0017-andringar.md): `find_amendments` visar ändringsdokument och svar i Frågor
+>   och svar som ändrar ett avsnitt, ur hänvisningarna som steg 4 märker som ändringar. En regel i
+>   valideringskedjan kräver att ett ändrat avsnitt citeras tillsammans med sin ändring
+>   ([steg 6](steg/06-verktyg.md), avsnitt 8c, och [steg 8](steg/08-validering.md)).
 
 ---
 

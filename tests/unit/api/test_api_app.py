@@ -25,6 +25,7 @@ from avtalsagent.api.app import create_app, open_document_files
 from avtalsagent.api.documents import DatabaseDocumentFiles, DocumentFiles, StoredFile
 from avtalsagent.config import Settings
 from tests.unit.agent.scripted_model import (
+    DictAmendments,
     DictReader,
     ListRegister,
     ScriptedModel,
@@ -50,7 +51,12 @@ class Recorder:
     async def open_tools(self, settings: Settings) -> AsyncIterator[McpTools]:
         self.log.append("open mcp")
         try:
-            yield McpTools(tools=[], reader=DictReader([]), register=ListRegister())
+            yield McpTools(
+                tools=[],
+                reader=DictReader([]),
+                register=ListRegister(),
+                amendments=DictAmendments(),
+            )
         finally:
             self.log.append("close mcp")
 
@@ -113,7 +119,9 @@ async def test_an_avtal_mcp_that_cannot_be_reached_stops_the_start() -> None:
     @asynccontextmanager
     async def unreachable(settings: Settings) -> AsyncIterator[McpTools]:
         raise OSError("All connection attempts failed")
-        yield McpTools(tools=[], reader=DictReader([]), register=ListRegister())  # pragma: no cover
+        yield McpTools(  # pragma: no cover
+            tools=[], reader=DictReader([]), register=ListRegister(), amendments=DictAmendments()
+        )
 
     app = recorded_app(recorder, Settings(_env_file=None), open_tools=unreachable)
 

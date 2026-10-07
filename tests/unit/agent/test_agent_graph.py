@@ -1,9 +1,9 @@
 """Tests for avtalsagent.agent.graph and .middleware: the agent's graph run offline.
 
 A scripted chat model (scripted_model.py) plays the model's part, fake tools
-the avtal-mcp tools, a dict the section reader, a list the register and a
-scripted reviewer the reviewer model, so no test needs a network, an API key
-or a database. The checkpoints are kept in memory with
+the avtal-mcp tools, dicts the section and amendment readers, a list the
+register and a scripted reviewer the reviewer model, so no test needs a
+network, an API key or a database. The checkpoints are kept in memory with
 the agent's serializer, as on the command line. Every run is async (`ainvoke`,
 `astream`), as in the command line and the API; one test shows that a
 synchronous run stops before the first model call.
@@ -27,6 +27,7 @@ from mcp.types import CallToolResult, TextContent
 from mcp.types import Tool as MCPTool
 from pydantic import ValidationError
 
+from avtalsagent.agent.amendments import AmendmentInfo
 from avtalsagent.agent.ask_user import CANCELLED_MARK, NOT_ANSWERED
 from avtalsagent.agent.checkpointer import serializer
 from avtalsagent.agent.graph import AGENT_NAME, ANSWER_SUBMITTED, AvtalAgent, build_agent
@@ -55,6 +56,7 @@ from avtalsagent.validation.review import (
     ReviewVerdict,
 )
 from tests.unit.agent.scripted_model import (
+    DictAmendments,
     DictReader,
     ListRegister,
     ScriptedModel,
@@ -141,6 +143,7 @@ def build(
     tools: list[BaseTool] | None = None,
     reader: DictReader | None = None,
     register: ListRegister | None = None,
+    amendments: DictAmendments | None = None,
     reviewer: ScriptedReviewer | None = None,
     retries: int = 1,
     limit: int = 16,
@@ -152,6 +155,7 @@ def build(
         tools=[search_documents] if tools is None else tools,
         reader=reader or DictReader([SECTION]),
         register=register or ListRegister([NORDLO]),
+        amendments=amendments or DictAmendments(),
     )
     graph = build_agent(
         model,
@@ -542,7 +546,9 @@ async def test_a_limit_reached_after_feedback_gives_the_last_drafts_answer() -> 
 
 def test_retries_cannot_be_negative() -> None:
     with pytest.raises(ValueError, match="retries"):
-        AnswerCheck(DictReader([]), ListRegister(), ScriptedReviewer(), -1, lambda: TODAY)
+        AnswerCheck(
+            DictReader([]), ListRegister(), DictAmendments(), ScriptedReviewer(), -1, lambda: TODAY
+        )
 
 
 def test_a_synchronous_run_stops_before_the_model_is_called() -> None:
@@ -851,6 +857,7 @@ def test_a_report_with_problems_and_no_note_still_gives_the_user_a_reason() -> N
         register_facts=[],
         reservations=[],
         review_failed=False,
+        amendments_unread=False,
         has_source=True,
     )
     draft = FinalAnswer(answered=True, text="Tre månader.", citations=[])
@@ -902,6 +909,130 @@ async def test_a_section_cited_twice_is_sent_to_the_reviewer_once() -> None:
         (2, 1, False),
     ]
     assert request.sources[1].text == ""
+
+
+# --- the latest wording -------------------------------------------------------------
+
+# A correction of 6.21.9 in a questions log, as 7a765d649e25 §9 corrects punkt 3.2 of the
+# tender documents for IT-drift Mindre.
+CORRECTION = CitedSection(
+    sha256=OTHER_SHA,
+    section_position=6,
+    section_number="9",
+    section_title="Publik fråga",
+    file_title="Frågor och svar",
+    page_titles=["IT-drift Mindre"],
+    page_start=2,
+    text="Publikt svar 2024-02-20 08:39 Rättelse. Texten som gäller är följande för punkt "
+    "6.21.9: ”Kontraktet kan sägas upp av Kunden med en uppsägningstid om sex (6) månader.”",
+)
+CHANGED = AmendmentInfo(
+    sha256=OTHER_SHA,
+    section_position=6,
+    file_title="Frågor och svar",
+    section_number="9",
+    section_title="Publik fråga",
+    amended_position=41,
+    status="resolved",
+    dated=date(2024, 2, 20),
+)
+CORRECTED = {
+    "id": 2,
+    "sha256": OTHER_SHA,
+    "section_position": 6,
+    "quote": "uppsägningstid om sex (6) månader",
+}
+CHANGED_NOTE = (
+    "Källa [1] kan bygga på en lydelse som har ändrats senare: Frågor och svar, avsnitt 9 "
+    "Publik fråga (2024-02-20)."
+)
+
+
+@pytest.mark.anyio
+async def test_a_draft_on_a_changed_section_goes_back_and_citing_the_change_passes() -> None:
+    amendments = DictAmendments({(SHA, 41): [CHANGED]})
+    reviewer = ScriptedReviewer()
+    corrected = "Tre månader [1], men efter en rättelse sex månader [2]."
+    graph, model = build(
+        [
+            final_answer("Tre månader [1].", [GOOD], call_id="c1"),
+            final_answer(corrected, [GOOD, CORRECTED], call_id="c2"),
+        ],
+        reader=DictReader([SECTION, CORRECTION]),
+        amendments=amendments,
+        reviewer=reviewer,
+    )
+
+    result = await graph.ainvoke(QUESTION, THREAD)
+
+    answer = result["answer"]
+    assert (answer.text, answer.status, answer.reservations) == (corrected, "verified", [])
+    first, _ = tool_messages(result["messages"], "FinalAnswer")
+    assert first.status == "error"
+    assert (
+        "Källa [1] (Allmänna villkor, avsnitt 6.21.9 Uppsägning) har ändrats av Frågor och "
+        f"svar, avsnitt 9 Publik fråga (2024-02-20, sha256 {OTHER_SHA}, section_position 6)."
+    ) in first.text
+    # Only the second draft was reviewed, with both sections; each draft's sections were
+    # looked up after their quotes passed.
+    [request] = reviewer.requests
+    assert [source.id for source in request.sources] == [1, 2]
+    assert amendments.reads == [(SHA, 41), (SHA, 41), (OTHER_SHA, 6)]
+    assert len(model.calls) == 2
+
+
+@pytest.mark.anyio
+async def test_a_changed_section_still_cited_alone_is_given_with_a_note() -> None:
+    reviewer = ScriptedReviewer()
+    graph, _ = build(
+        [final_answer("Tre månader [1].", [GOOD], call_id="c1")],
+        reader=DictReader([SECTION, CORRECTION]),
+        amendments=DictAmendments({(SHA, 41): [CHANGED]}),
+        reviewer=reviewer,
+        retries=0,
+    )
+
+    result = await graph.ainvoke(QUESTION, THREAD)
+
+    answer = result["answer"]
+    assert answer.status == "with_reservation"
+    assert [c.verified for c in answer.citations] == [True]
+    assert answer.reservations == [CHANGED_NOTE, NOT_REVIEWED_NOTE]
+    assert reviewer.requests == []
+
+
+@pytest.mark.anyio
+async def test_amendments_that_cannot_be_read_give_a_note_and_no_new_attempt() -> None:
+    reviewer = ScriptedReviewer()
+    graph, model = build(
+        [final_answer("Tre månader [1].", [GOOD], call_id="c1")],
+        amendments=DictAmendments({(SHA, 41): None}),
+        reviewer=reviewer,
+    )
+
+    result = await graph.ainvoke(QUESTION, THREAD)
+
+    answer = result["answer"]
+    assert answer.status == "with_reservation"
+    assert answer.reservations == ["Det gick inte att kontrollera om källa [1] har ändrats."]
+    assert len(reviewer.requests) == 1  # the review still ran
+    assert len(model.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_the_amendments_of_a_failed_citation_are_not_read() -> None:
+    amendments = DictAmendments({(SHA, 41): [CHANGED]})
+    graph, _ = build(
+        [final_answer("Tre månader [1].", [BAD], call_id="c1")], amendments=amendments, retries=0
+    )
+
+    result = await graph.ainvoke(QUESTION, THREAD)
+
+    assert result["answer"].reservations == [
+        "Källa [1] kunde inte kontrolleras mot avtalstexten.",
+        NOT_REVIEWED_NOTE,
+    ]
+    assert amendments.reads == []
 
 
 # --- ask_user and the conversation --------------------------------------------------
