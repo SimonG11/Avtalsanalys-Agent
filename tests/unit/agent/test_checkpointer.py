@@ -8,6 +8,7 @@ checked for its address, its pool and its one `setup()` with a stand-in
 pool and saver: no test opens a database connection.
 """
 
+from datetime import date
 from typing import Any, TypedDict
 
 import langgraph._internal._serde as graph_serde
@@ -32,7 +33,14 @@ from avtalsagent.agent.checkpointer import (
     open_checkpointer,
     serializer,
 )
-from avtalsagent.agent.schemas import Answer, AvtalState, Citation, DraftCitation, FinalAnswer
+from avtalsagent.agent.schemas import (
+    Answer,
+    AvtalState,
+    Citation,
+    DraftCitation,
+    FinalAnswer,
+    RegisterFact,
+)
 from avtalsagent.config import Settings
 
 SHA = "ab" * 32
@@ -56,6 +64,24 @@ ANSWER = Answer(
             page=14,
             quote=QUOTE,
             verified=True,
+        )
+    ],
+)
+# An answer with reservation from the register, as the check gives it after the retries.
+RESERVED = Answer(
+    text="Avtalet gäller till 2028-11-14 enligt registret.",
+    status="with_reservation",
+    citations=[],
+    reservations=["Kunde inte kontrolleras mot registret: 2028-11-14."],
+    register_facts=[
+        RegisterFact(
+            agreement_number="23.3-5890-2023-002",
+            supplier_name="Nordlo Advance AB",
+            org_number="556486-1689",
+            sub_area="IT-drift Mindre",
+            valid_from=date(2024, 11, 14),
+            valid_to=date(2028, 11, 13),
+            max_extension_to=None,
         )
     ],
 )
@@ -105,7 +131,9 @@ async def round_trip(saver: BaseCheckpointSaver[str], values: dict[str, Any]) ->
 @pytest.mark.anyio
 async def test_the_draft_and_the_answer_come_back_as_their_classes(strict: bool) -> None:
     async with open_checkpointer(memory_settings()) as saver:
-        values = await round_trip(saver, {"structured_response": DRAFT, "answer": ANSWER})
+        values = await round_trip(
+            saver, {"structured_response": DRAFT, "answer": ANSWER, "fallback_answer": RESERVED}
+        )
 
     assert type(values["structured_response"]) is FinalAnswer
     assert values["structured_response"] == DRAFT
@@ -113,6 +141,8 @@ async def test_the_draft_and_the_answer_come_back_as_their_classes(strict: bool)
     assert type(values["answer"]) is Answer
     assert values["answer"] == ANSWER
     assert type(values["answer"].citations[0]) is Citation
+    assert values["fallback_answer"] == RESERVED
+    assert type(values["fallback_answer"].register_facts[0]) is RegisterFact
 
 
 @pytest.mark.anyio

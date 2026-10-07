@@ -1,13 +1,16 @@
-"""The agent that answers questions about the framework agreements (M7).
+"""The agent that answers questions about the framework agreements (M7, M8).
 
 What:
     One LangGraph graph, built with LangChain's `create_agent` (`graph.py`):
     the model (`model.py`) works with avtal-mcp's tools (`mcp_tools.py`) and
     `ask_user` (`ask_user.py`), and hands in its answer as a `FinalAnswer`
-    (`schemas.py`). Before the answer reaches the user, `CitationCheck`
-    (`middleware.py`) checks every quote against the section it cites, read
-    again through the MCP session (`sections.py`), and turns the draft into
-    the web app's `answer`: verified, with reservation, or no answer.
+    (`schemas.py`). Before the answer reaches the user, `AnswerCheck`
+    (`middleware.py`) checks every quote against the section it cites and
+    every register fact against the register, both read again through the
+    MCP session (`sections.py`, `register_reader.py`), has a second model
+    review the answer (`reviewer.py`), sends a failed draft back to the
+    model at most twice, and turns the draft into the web app's `answer`:
+    verified, with reservation, or no answer.
     `prompts.py` holds the system prompt, `checkpointer.py` where a
     conversation's checkpoints are kept, and `__main__.py` the command line.
 
@@ -20,8 +23,8 @@ Why:
     sends and could change.
 
 How:
-    `build_agent(model, tools, reader, checkpointer, settings)` returns the
+    `build_agent(model, mcp, reviewer, checkpointer, settings)` returns the
     compiled graph. The graph runs async only (`ainvoke`, `astream`), since
-    the check reads sections through the async MCP client. The validation
+    the check reads through the async MCP client. The validation
     rules themselves are pure functions in `avtalsagent.validation`.
 """

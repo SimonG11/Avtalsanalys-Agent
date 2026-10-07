@@ -4,7 +4,7 @@ En agent som besvarar frågor om Statens inköpscentrals ramavtal (avropa.se) d�
 påstående har en verifierad källa. Inläsningen av avtalen är ett fast workflow, och
 frågebesvarandet är en agent i LangGraph som själv väljer verktyg och ordning.
 
-> **Status:** M9 (API:t och hela systemet i Docker Compose). Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
+> **Status:** M8 (valideringskedjan: registeruppgifter, granskare och två nya försök), efter M9. Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
 > förklaras i [`docs/steg/`](docs/steg/) och varje designbeslut i [`docs/adr/`](docs/adr/).
 
 ## Kör demot
@@ -76,8 +76,12 @@ verktygen fungerar. `/health` svarar utan databas.
 Agenten ([M7](docs/steg/07-agent.md)) behöver `OPENAI_API_KEY` och ett byggt sökindex (`index`).
 Den startar avtal-mcp själv över stdio (`MCP_TRANSPORT=streamable_http` ansluter i stället till
 `MCP_URL`), visar varje verktygsanrop medan den arbetar och ställer sina frågor till dig i
-terminalen. Svaret skrivs ut med status (Kontrollerat, Med reservation eller Inget svar) och
-källorna, där ✓ betyder att citatet finns ordagrant i avsnittet.
+terminalen. Svaret skrivs ut med status (Kontrollerat, Med reservation eller Inget svar), det som
+inte kunde kontrolleras, källorna, där ✓ betyder att citatet finns ordagrant i avsnittet, och
+registerraderna som svarets uppgifter ur registret stämmer med. Innan svaret visas kontrolleras
+citaten och registeruppgifterna, och en andra modell (`gpt-6-astra`) granskar att källorna stöder
+svaret ([M8](docs/steg/08-validering.md)); ett underkänt svar går tillbaka till agenten högst två
+gånger.
 
 API:t ([M9](docs/steg/09-api.md)) kör samma agent för webbappen över AG-UI (`POST /agui`) och ger
 PDF:en som ett citat pekar på (`GET /api/documents/{sha256}/pdf`). Det behöver `OPENAI_API_KEY`

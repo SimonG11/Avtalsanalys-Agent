@@ -7,7 +7,8 @@ What:
 
 Why:
     Some of what the agent needs stays open while the app runs: the model
-    client, the checkpointer's Postgres pool and, for the PDF route, a
+    clients (the agent's and the reviewer's), the checkpointer's Postgres
+    pool and, for the PDF route, a
     read-only database engine. They are opened in the app's lifespan, once,
     and closed in reverse order when the app stops. The session to
     avtal-mcp is opened per run instead (`agui.AgentRuns`), so a failed
@@ -19,9 +20,10 @@ Why:
     in-memory checkpointer and no database.
 
 How:
-    The lifespan makes the model client first (without OPENAI_API_KEY,
-    `make_agent_model` stops the start before any connection is opened),
-    then opens a session to avtal-mcp once and closes it (`open_mcp_tools`;
+    The lifespan makes the model clients first, the agent's and the
+    reviewer's (`make_reviewer`); without OPENAI_API_KEY, `make_agent_model`
+    stops the start before any connection is opened. Then it opens a
+    session to avtal-mcp once and closes it (`open_mcp_tools`;
     MCP_TRANSPORT=streamable_http in the container), and opens the
     checkpointer (`open_checkpointer`; CHECKPOINTER=postgres in the
     container) and the document lookup. It puts `AgentRuns` and the lookup
@@ -46,12 +48,14 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from avtalsagent.agent.checkpointer import open_checkpointer
 from avtalsagent.agent.mcp_tools import open_mcp_tools
 from avtalsagent.agent.model import make_agent_model
+from avtalsagent.agent.reviewer import make_reviewer
 from avtalsagent.api.agui import AgentRuns, OpenTools
 from avtalsagent.api.agui import router as agui_router
 from avtalsagent.api.documents import DatabaseDocumentFiles, DocumentFiles
 from avtalsagent.api.documents import router as documents_router
 from avtalsagent.config import Settings, get_settings
 from avtalsagent.db.session import create_db_engine, session_factory
+from avtalsagent.validation.review import AnswerReviewer
 
 OpenCheckpointer = Callable[[Settings], AbstractAsyncContextManager[BaseCheckpointSaver[str]]]
 OpenDocuments = Callable[[Settings], AbstractContextManager[DocumentFiles]]
@@ -71,6 +75,7 @@ def create_app(
     settings: Settings | None = None,
     *,
     make_model: Callable[[Settings], BaseChatModel] = make_agent_model,
+    make_answer_reviewer: Callable[[Settings], AnswerReviewer] = make_reviewer,
     open_tools: OpenTools = open_mcp_tools,
     open_saver: OpenCheckpointer = open_checkpointer,
     open_documents: OpenDocuments = open_document_files,
@@ -81,12 +86,13 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         current = settings or get_settings()
         model = make_model(current)
+        reviewer = make_answer_reviewer(current)
         async with open_tools(current):  # avtal-mcp answers; each run opens its own session
             pass
         async with AsyncExitStack() as stack:
             checkpointer = await stack.enter_async_context(open_saver(current))
             app.state.documents = stack.enter_context(open_documents(current))
-            app.state.runs = AgentRuns(current, model, checkpointer, open_tools)
+            app.state.runs = AgentRuns(current, model, reviewer, checkpointer, open_tools)
             yield
 
     app = FastAPI(

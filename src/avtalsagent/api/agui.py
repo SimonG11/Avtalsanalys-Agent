@@ -8,7 +8,7 @@ What:
 
 Why:
     ag-ui-langgraph turns LangGraph's events into AG-UI's, which CopilotKit
-    reads (ADR 0010). Four of its defaults do not fit the contract
+    reads (ADR 0010). Five of its defaults do not fit the contract
     (webbapp-kontrakt.md) or the API:
     - A state snapshot holds the whole state again with every step: every
       message, and the draft before its check (`structured_response`).
@@ -24,6 +24,12 @@ Why:
       off: the web app reads the outcome (the web thread confirmed this
       2026-10-07, and its tests run that shape alone).
     - A RAW copy of every LangGraph event is off: nothing reads it.
+    - The client's `state` and `forwardedProps.node_name` are dropped.
+      With `node_name`, the library's "continue" mode writes the client's
+      state into the graph as that node, past the input schema, and goes
+      on from there: a client could set `answer` (or the check's private
+      `fallback_answer` and `validation_retries`) and skip the check. The
+      web app sends neither; the graph's input is the messages alone.
     Each run gets its own session to avtal-mcp. Over HTTP a call that
     fails (avtal-mcp restarting, a timeout) ends its session as well as
     the run (ADR 0013); a session shared by all runs would then fail every
@@ -35,7 +41,8 @@ Why:
 
 How:
     `AgentRuns.open()` opens a session (`open_mcp_tools`), builds the graph
-    on its tools with the shared model and checkpointer (`build_agent`),
+    on its tools with the shared model, reviewer and checkpointer
+    (`build_agent`),
     yields the AG-UI agent and closes the session when the run's stream
     ends. Each request gets its own agent object: the library keeps a
     run's progress on the instance. The body is AG-UI's `RunAgentInput`
@@ -66,6 +73,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from avtalsagent.agent.graph import AGENT_NAME, AvtalAgent, build_agent
 from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.config import Settings
+from avtalsagent.validation.review import AnswerReviewer
 
 _log = logging.getLogger(__name__)
 
@@ -86,11 +94,20 @@ class AvtalAguiAgent(LangGraphAgent):
         return {"answer": state.get("answer")}
 
     async def run(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
-        async for event in super().run(input):
+        async for event in super().run(_without_client_state(input)):
             if event.type == EventType.RUN_ERROR:
                 # The library has logged the exception; the browser gets the fixed text.
                 event = RunErrorEvent(type=EventType.RUN_ERROR, message=RUN_FAILED)
             yield event
+
+
+def _without_client_state(input: RunAgentInput) -> RunAgentInput:
+    """`input` without the client's state and the key that would write it into the graph."""
+    props = input.forwarded_props
+    if isinstance(props, dict):
+        # The library reads node_name in any spelling it turns into snake case (nodeName).
+        props = {k: v for k, v in props.items() if k.replace("_", "").lower() != "nodename"}
+    return input.model_copy(update={"state": {}, "forwarded_props": props})
 
 
 def make_agui_agent(graph: AvtalAgent) -> AvtalAguiAgent:
@@ -105,17 +122,19 @@ def make_agui_agent(graph: AvtalAgent) -> AvtalAguiAgent:
 
 
 class AgentRuns:
-    """What every run shares (the model, the checkpointer), and a new MCP session per run."""
+    """What every run shares (the models, the checkpointer), and a new MCP session per run."""
 
     def __init__(
         self,
         settings: Settings,
         model: BaseChatModel,
+        reviewer: AnswerReviewer,
         checkpointer: BaseCheckpointSaver[str],
         open_tools: OpenTools,
     ) -> None:
         self._settings = settings
         self._model = model
+        self._reviewer = reviewer
         self._checkpointer = checkpointer
         self._open_tools = open_tools
 
@@ -124,7 +143,7 @@ class AgentRuns:
         """The agent for one run, on a session to avtal-mcp that closes with the block."""
         async with self._open_tools(self._settings) as mcp:
             graph = build_agent(
-                self._model, mcp.tools, mcp.reader, self._checkpointer, self._settings
+                self._model, mcp, self._reviewer, self._checkpointer, self._settings
             )
             yield make_agui_agent(graph)
 

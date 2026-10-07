@@ -8,7 +8,8 @@ What:
 Why:
     The prompt says how to work with the tools in the order that gives a
     checkable answer: find the agreement, search, read the whole section,
-    quote it word for word, and say "framgår inte" rather than guess. Many
+    quote it word for word, name the agreements whose register facts the
+    answer uses, and say "framgår inte" rather than guess. Many
     questions depend on the date ("gäller avtalet nu?"), and the API runs
     for days, so the date is set when the model is called, not when the
     graph is built (`graph.py`). TokenTek reviews the prompt, so it is kept
@@ -69,10 +70,14 @@ Citera meningen som stöder påståendet, utan rubriker, datum eller tabellens |
 framför den. Finns samma text i flera dokument (copies), citera det som hör till avtalet \
 frågan gäller. Hör avsnittet till flera ramavtalssidor (page_titles), ange i page_title den \
 som frågan gäller.
-- Uppgifter ur registret (datum, leverantörer, tidigare namn) har ingen källa att citera; \
-skriv att de kommer från registret.
-- Underkänns svaret i kontrollen får du veta varför i svaret på FinalAnswer. Rätta då \
-källorna och anropa FinalAnswer igen.
+- Uppgifter ur registret (avtalsnummer, leverantör, tidigare namn, organisationsnummer, \
+delområde, datum) kopierar du från search_register, och skriv att de kommer från registret. \
+Lägg i register_facts avtalsnumret för varje avtal som texten tar sådana uppgifter om. Skriv \
+avtalsnummer hela och datum som ÅÅÅÅ-MM-DD. Räknar du fram ett datum, skriv hur.
+- Svaret kontrolleras: citaten mot avsnitten, uppgifterna ur registret mot registret, och \
+en granskare prövar att källorna stöder varje påstående och att inget väsentligt saknas. \
+Underkänns svaret får du veta varför i svaret på FinalAnswer. Rätta då svaret och anropa \
+FinalAnswer igen.
 
 Dagens datum: {today}."""
 

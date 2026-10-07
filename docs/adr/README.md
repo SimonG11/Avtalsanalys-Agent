@@ -18,7 +18,8 @@ Ett beslut ändras aldrig i efterhand. Ändras beslutet skrivs en ny ADR som ers
 | [0011](0011-hybridsokning.md) | Hybridsökning med exakt vektorsökning, BM25 och rangfusion | Godkänt (PR #8) |
 | [0012](0012-avtal-mcp.md) | avtal-mcp med MCP SDK:t 1.x, vanliga funktioner som verktyg och samma regel som indexet | Godkänt (PR #9) |
 | [0013](0013-agenten.md) | Agenten som en `create_agent`-graf med middleware och en citatkontroll som läser källorna själv | Godkänt (PR #10) |
-| [0014](0014-api-och-compose.md) | API:t som ett tunt FastAPI-lager över agenten, en MCP-session per körning och hela systemet i Docker Compose | Föreslaget (PR för M9) |
+| [0014](0014-api-och-compose.md) | API:t som ett tunt FastAPI-lager över agenten, en MCP-session per körning och hela systemet i Docker Compose | Godkänt (PR #11) |
+| [0015](0015-valideringskedjan.md) | Valideringskedjan: registeruppgifter mot registret, en granskarmodell och två nya försök | Föreslaget (PR för M8) |
 
 Mall: *Status*, *Kontext* (problemet), *Beslut*, *Konsekvenser* (vad vi vinner och vad det kostar),
 *Alternativ som valts bort*.

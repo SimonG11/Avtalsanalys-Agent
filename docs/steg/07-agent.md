@@ -181,7 +181,7 @@ Inställningar (alla i `.env.example`):
 |---|---|---|
 | `AGENT_REASONING_EFFORT` | `low` | Hur mycket modellen resonerar: `low`, `medium`, `high` eller `xhigh` |
 | `AGENT_MODEL_CALL_LIMIT` | 16 | Modellanrop per körning, nya försök inräknade |
-| `CITATION_RETRIES` | 1 | Nya försök efter ett underkänt utkast; 0 ger reservation direkt |
+| `CITATION_RETRIES` | 1 | Nya försök efter ett underkänt utkast; 0 ger reservation direkt. Ersatt av `VALIDATION_RETRIES` (2) i M8 |
 | `MCP_TRANSPORT` | `stdio` | `stdio` startar avtal-mcp som barnprocess, `streamable_http` ansluter till `MCP_URL` |
 | `CHECKPOINTER` | `memory` | `memory` (kommandoraden) eller `postgres` (databasen i `DATABASE_URL`, för API:t) |
 
@@ -319,9 +319,10 @@ också integrationstesterna använder.
   hela historiken.
 - **Resten av valideringen (M8)** saknas: registerfakta, senaste lydelse, granskaren
   `gpt-6-astra` och två varv. `find_amendments` och `calculate_date` kommer senare, och API:t i M9.
+  M8 har sedan byggt allt utom senaste lydelsen ([steg 08](08-validering.md)).
 - **Sidan** i ett citat är avsnittets första sida, också när citatet står på en senare.
 - **Svar ur registret** har inget att citera och blir `with_reservation` tills M8 kontrollerar
-  registerfakta.
+  registerfakta. Det gör M8 nu, och ett sådant svar kan bli `verified` ([steg 08](08-validering.md)).
 - **Gränsen för modellanrop gäller per körning.** En körning som återupptas efter `ask_user` räknar
   från noll, eftersom räknaren inte sparas i checkpointen.
 - **Utkastet syns i tillståndet och historiken.** `structured_response` och `FinalAnswer`-anropet

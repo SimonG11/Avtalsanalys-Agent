@@ -1,8 +1,9 @@
 """Tests for avtalsagent.agent.__main__: the command line.
 
 The parser and every printed line are checked as text. Whole questions run
-offline through the real graph, with the scripted model, a fake tool and a
-dict reader of scripted_model.py, and a terminal whose input is a list.
+offline through the real graph, with the scripted model, a fake tool, the
+readers and the reviewer of scripted_model.py, and a terminal whose input is
+a list.
 `main` is run with each setup error: no key, a stdio server that exits at
 once, an HTTP server that is not there and a checkpoint database that is
 not there; only local processes and connections, no network, key or
@@ -15,6 +16,7 @@ import sys
 import urllib.parse
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from datetime import date
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -33,10 +35,17 @@ from avtalsagent.agent.checkpointer import serializer
 from avtalsagent.agent.graph import ANSWER_SUBMITTED, AvtalAgent, build_agent
 from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.agent.middleware import NO_DRAFT_TEXT
-from avtalsagent.agent.schemas import Answer, Citation
+from avtalsagent.agent.schemas import Answer, Citation, RegisterFact
 from avtalsagent.config import Settings
-from tests.unit.agent.scripted_model import DictReader, ScriptedModel, final_answer, tool_call
-from tests.unit.agent.test_agent_graph import BAD, GOOD, SECTION, SHA, search_documents
+from tests.unit.agent.scripted_model import (
+    DictReader,
+    ListRegister,
+    ScriptedModel,
+    ScriptedReviewer,
+    final_answer,
+    tool_call,
+)
+from tests.unit.agent.test_agent_graph import BAD, GOOD, NORDLO, SECTION, SHA, search_documents
 
 KEY = "sk-test-not-a-real-key"
 OPTIONS = ["IT-drift Större", "IT-drift Mindre"]
@@ -77,11 +86,11 @@ def terminal(*typed: str) -> tuple[cli.Terminal, io.StringIO, io.StringIO, Lines
 
 def agent(script: list[AIMessage], *, retries: int = 1) -> tuple[AvtalAgent, ScriptedModel]:
     model = ScriptedModel(script=script)
-    settings = Settings(_env_file=None, citation_retries=retries)
+    settings = Settings(_env_file=None, validation_retries=retries)
     graph = build_agent(
         model,
-        [search_documents],
-        DictReader([SECTION]),
+        mcp(),
+        ScriptedReviewer(),
         InMemorySaver(serde=serializer()),
         settings,
     )
@@ -89,6 +98,13 @@ def agent(script: list[AIMessage], *, retries: int = 1) -> tuple[AvtalAgent, Scr
 
 
 THREAD: RunnableConfig = {"configurable": {"thread_id": "cli"}}
+
+
+def mcp() -> McpTools:
+    """The search tool, the section and the register row of the graph's tests."""
+    return McpTools(
+        tools=[search_documents], reader=DictReader([SECTION]), register=ListRegister([NORDLO])
+    )
 
 
 # --- the parser -------------------------------------------------------------------------------
@@ -228,14 +244,14 @@ def test_a_tool_error_is_shown_without_fastmcps_english_prefix() -> None:
 
 def test_the_checks_feedback_lists_its_problems() -> None:
     feedback = ToolMessage(
-        content="Kontrollen av källorna underkände svaret:\n- Källa [1]: citatet finns inte "
+        content="Kontrollen underkände svaret (försök 1 av 2):\n- Källa [1]: citatet finns inte "
         "ordagrant i avsnitt 6.21.9 (Uppsägning).\nRätta svaret och anropa FinalAnswer igen.",
         tool_call_id="c1",
         name="FinalAnswer",
         status="error",
     )
 
-    assert cli.update_lines({"CitationCheck.after_agent": {"messages": [feedback]}}) == [
+    assert cli.update_lines({"AnswerCheck.after_agent": {"messages": [feedback]}}) == [
         "  ✗ Kontrollen underkände svaret, som går tillbaka till agenten:",
         "    - Källa [1]: citatet finns inte ordagrant i avsnitt 6.21.9 (Uppsägning).",
     ]
@@ -259,7 +275,7 @@ def test_a_handed_in_draft_and_successful_tools_print_nothing_more() -> None:
 def test_updates_without_messages_are_skipped() -> None:
     update: dict[str, Any] = {
         "ModelCallLimitMiddleware.before_model": None,
-        "CitationCheck.before_agent": {"answer": None},
+        "AnswerCheck.before_agent": {"answer": None},
         "__interrupt__": (),
     }
 
@@ -304,7 +320,8 @@ def test_a_verified_answer_is_printed_with_its_sources() -> None:
         "",
         "Tre månader [1].",
         "",
-        "Kontrollerat: varje citat står ordagrant i det avsnitt det anger.",
+        "Kontrollerat: varje citat står ordagrant i det avsnitt det anger, och granskningen fann "
+        "stöd för svaret.",
         "",
         "Källor:",
         "[1] Allmänna villkor (IT-drift Större, fler än 200 anställda), 6.21.9 Uppsägning, s. 14 ✓",
@@ -312,22 +329,102 @@ def test_a_verified_answer_is_printed_with_its_sources() -> None:
     ]
 
 
-@pytest.mark.parametrize(
-    ("citations", "status_line"),
-    [
-        (
-            [VERIFIED, VERIFIED.model_copy(update={"id": 2, "verified": False})],
-            "Med reservation: 1 av 2 citat kunde inte kontrolleras (✗).",
-        ),
-        ([], "Med reservation: svaret har inga källor att kontrollera."),
-        ([VERIFIED], "Med reservation: hänvisningarna [n] i texten stämmer inte med källorna."),
-    ],
-    ids=["failed quote", "no sources", "markers"],
-)
-def test_an_answer_with_reservation_says_why(citations: list[Citation], status_line: str) -> None:
-    answer = Answer(text="Tre månader [1].", status="with_reservation", citations=citations)
+def test_an_answer_with_reservation_lists_what_could_not_be_checked() -> None:
+    failed = VERIFIED.model_copy(update={"verified": False})
+    answer = Answer(
+        text="Tre månader [1].",
+        status="with_reservation",
+        citations=[failed],
+        reservations=[
+            "Källa [1] kunde inte kontrolleras mot avtalstexten.",
+            "Svaret kunde inte granskas.",
+        ],
+    )
 
-    assert cli.status_line(answer) == status_line
+    assert cli.answer_lines(answer)[:6] == [
+        "",
+        "Tre månader [1].",
+        "",
+        "Med reservation: allt i svaret kunde inte kontrolleras.",
+        "  - Källa [1] kunde inte kontrolleras mot avtalstexten.",
+        "  - Svaret kunde inte granskas.",
+    ]
+
+
+def test_an_answer_from_the_register_lists_the_agreements_it_was_checked_against() -> None:
+    row = RegisterFact(
+        agreement_number="23.3-5890-2023-002",
+        supplier_name="Nordlo Advance AB",
+        org_number="556486-1689",
+        sub_area="IT-drift Mindre",
+        valid_from=NORDLO.valid_from,
+        valid_to=NORDLO.valid_to,
+        max_extension_to=None,
+    )
+    answer = Answer(
+        text="Avtal 23.3-5890-2023-002.",
+        status="verified",
+        citations=[],
+        register_facts=[row],
+    )
+
+    assert cli.answer_lines(answer) == [
+        "",
+        "Avtal 23.3-5890-2023-002.",
+        "",
+        "Kontrollerat: uppgifterna ur registret stämmer, och granskningen fann stöd för svaret.",
+        "",
+        "Ur registret:",
+        "  23.3-5890-2023-002 Nordlo Advance AB (556486-1689), IT-drift Mindre, "
+        "2024-11-14–2028-11-13",
+    ]
+
+
+def test_an_agreement_the_register_writes_two_ways_is_one_line() -> None:
+    nordlo = RegisterFact(**NORDLO.model_dump(include=set(RegisterFact.model_fields)))
+    short = nordlo.model_copy(update={"agreement_number": "23.3-5890-2023-02"})
+
+    assert cli.register_lines([nordlo, short]) == [
+        "  23.3-5890-2023-002 Nordlo Advance AB (556486-1689), tidigare EPM Data, 2 delområden, "
+        "2024-11-14–2028-11-13",
+    ]
+
+
+def test_an_agreement_with_a_row_per_sub_area_is_one_line() -> None:
+    nordlo = RegisterFact(**NORDLO.model_dump(include=set(RegisterFact.model_fields)))
+    regions = [nordlo.model_copy(update={"sub_area": f"IT-drift / {n}"}) for n in ("A", "B")]
+    extended = nordlo.model_copy(
+        update={"agreement_number": "23.3-5890-2023-003", "max_extension_to": date(2029, 11, 13)}
+    )
+    mixed = [
+        extended.model_copy(update={"agreement_number": "23.3-5890-2023-004"}),
+        extended.model_copy(
+            update={"agreement_number": "23.3-5890-2023-004", "valid_to": date(2027, 1, 1)}
+        ),
+    ]
+
+    assert cli.register_lines([*regions, extended, *mixed]) == [
+        "  23.3-5890-2023-002 Nordlo Advance AB (556486-1689), tidigare EPM Data, 2 delområden, "
+        "2024-11-14–2028-11-13",
+        "  23.3-5890-2023-003 Nordlo Advance AB (556486-1689), tidigare EPM Data, IT-drift "
+        "Mindre, 2024-11-14–2028-11-13, längst till 2029-11-13",
+        "  23.3-5890-2023-004 Nordlo Advance AB (556486-1689), tidigare EPM Data, 2 delområden, "
+        "olika giltighetstider",
+    ]
+
+
+def test_a_verified_answer_from_both_names_both_checks() -> None:
+    answer = Answer(
+        text="Tre månader [1].",
+        status="verified",
+        citations=[VERIFIED],
+        register_facts=[RegisterFact(**NORDLO.model_dump(include=set(RegisterFact.model_fields)))],
+    )
+
+    assert cli.status_line(answer) == (
+        "Kontrollerat: varje citat står ordagrant i det avsnitt det anger och uppgifterna ur "
+        "registret stämmer, och granskningen fann stöd för svaret."
+    )
 
 
 def test_no_answer_prints_the_models_words_and_the_status() -> None:
@@ -480,10 +577,11 @@ def test_main_answers_a_question_and_ends_normally(
 ) -> None:
     @asynccontextmanager
     async def tools(settings: Settings) -> AsyncIterator[McpTools]:
-        yield McpTools(tools=[search_documents], reader=DictReader([SECTION]))
+        yield mcp()
 
     model = ScriptedModel(script=[final_answer("Tre månader [1].", [GOOD], call_id="c1")])
     monkeypatch.setattr(cli, "make_agent_model", lambda settings: model)
+    monkeypatch.setattr(cli, "make_reviewer", lambda settings: ScriptedReviewer())
     monkeypatch.setattr(cli, "open_mcp_tools", tools)
 
     cli.main(["Vilken", "uppsägningstid", "gäller?"])
@@ -557,7 +655,7 @@ def test_a_checkpoint_database_that_is_not_there_is_a_setup_error_without_its_pa
 ) -> None:
     @asynccontextmanager
     async def tools(settings: Settings) -> AsyncIterator[McpTools]:
-        yield McpTools(tools=[search_documents], reader=DictReader([SECTION]))
+        yield mcp()
 
     monkeypatch.setattr(cli, "open_mcp_tools", tools)
     settings.update(

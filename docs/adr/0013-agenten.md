@@ -3,6 +3,9 @@
 **Status:** Godkänt av Simon 2026-10-07 (PR #10, till main med PR #9).
 Ändrar [ADR 0002](0002-langgraph-och-create-agent.md): stegen runt agentloopen är middleware i en
 enda `create_agent`-graf, inte noder i en yttre graf. Resten av ADR 0002 gäller.
+[ADR 0015](0015-valideringskedjan.md) bygger ut kontrollen till en kedja och ändrar punkt 9: två
+nya försök i stället för ett, gemensamma för alla regler. Ett svar ur registret kan då bli
+`verified` (konsekvenserna nedan gäller M7).
 
 ## Kontext
 

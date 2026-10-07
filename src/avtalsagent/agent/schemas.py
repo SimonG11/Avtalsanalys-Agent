@@ -2,32 +2,38 @@
 
 What:
     `FinalAnswer` and `DraftCitation`: what the model hands in, as the
-    arguments of the structured-output tool `FinalAnswer`. `Answer` and
-    `Citation`: the checked answer, the shared state `answer` of the web
-    app's contract (webbapp-kontrakt.md). `AvtalState`: the graph's state.
+    arguments of the structured-output tool `FinalAnswer`. `Answer`,
+    `Citation` and `RegisterFact`: the checked answer, the shared state
+    `answer` of the web app's contract (webbapp-kontrakt.md). `AvtalState`:
+    the graph's state.
 
 Why:
     The model fills in only what it can know: its text, whether the
-    agreements answer the question, and for each source the section's
-    sha256 and position, a quote and, when the section belongs to several
-    agreement pages, the one the question is about. Everything else in a
-    citation (file, page, section number and title) is copied by the check
-    from the section it reads itself, and a page title the section does not
-    have is not taken, so the model cannot invent a source's name or page. The
-    model reads these classes as a tool schema, so their docstrings and
-    field descriptions are in Swedish; the contract's classes are not shown
-    to the model.
+    agreements answer the question, for each source the section's sha256
+    and position, a quote and, when the section belongs to several
+    agreement pages, the one the question is about, and the agreement
+    numbers its register facts come from (M8). Everything else in a
+    citation (file, page, section number and title), and every register
+    fact, is copied by the check from what it reads itself, and a page
+    title the section does not have is not taken, so the model cannot
+    invent a source's name or page. The model reads these classes as a
+    tool schema, so their docstrings and field descriptions are in Swedish;
+    the contract's classes are not shown to the model.
 
 How:
     Pydantic models. `create_agent` turns `FinalAnswer` into a tool (its
     docstring is the tool's description) and puts the parsed call in
     `structured_response`. `AvtalState` adds `answer`, which a client may
     read but not send (`OmitFromInput`, so a stale or forged answer from
-    the client is dropped), and the private retry count. The checkpointer
-    must allow these classes in its serializer (`checkpointer.py`), or they
-    come back as dicts.
+    the client is dropped; the API also drops the client's state, see
+    `api/agui.py`), and two private fields: the retry count and
+    the answer the last failed draft would get, for a loop the model-call
+    limit ends before a new draft. The checkpointer must allow these
+    classes in its serializer (`checkpointer.py`), or they come back as
+    dicts.
 """
 
+from datetime import date
 from typing import Annotated, Literal, NotRequired
 
 from langchain.agents.middleware import AgentState
@@ -37,6 +43,12 @@ from pydantic import BaseModel, Field
 # A quote is the sentence that supports a claim; a longer one is refused as malformed, so a
 # draft cannot make the check compare megabytes.
 MAX_QUOTE_LENGTH = 1000
+# The agreements an answer may take register facts from, and the length of a number. Each
+# agreement is read through search_register, so the list is bounded: 60 is every agreement of
+# a pilot framework area (the largest has 44), but not of the register's largest areas, which
+# have hundreds; a longer list is refused as malformed, and the model narrows its answer.
+MAX_REGISTER_FACTS = 60
+MAX_AGREEMENT_NUMBER_LENGTH = 40
 
 
 class DraftCitation(BaseModel):
@@ -76,7 +88,8 @@ class FinalAnswer(BaseModel):
     """Lämna ditt slutliga svar på användarens fråga.
 
     Svaret kontrolleras innan användaren ser det: varje citat jämförs med texten i
-    avsnittet det anger.
+    avsnittet det anger, uppgifterna ur registret med registret, och en granskare prövar
+    att källorna stöder svaret.
     """
 
     answered: bool = Field(
@@ -96,6 +109,15 @@ class FinalAnswer(BaseModel):
         default_factory=list,
         description="Källorna, en för varje [n] i texten.",
     )
+    register_facts: list[Annotated[str, Field(max_length=MAX_AGREEMENT_NUMBER_LENGTH)]] = Field(
+        default_factory=list,
+        max_length=MAX_REGISTER_FACTS,
+        description=(
+            "Avtalsnumren, kopierade från search_register, för de avtal som texten tar "
+            "uppgifter ur registret om: avtalsnummer, leverantör, organisationsnummer, "
+            "tidigare namn, delområde och datum. Tomt när texten inte använder registret."
+        ),
+    )
 
 
 class Citation(BaseModel):
@@ -113,8 +135,22 @@ class Citation(BaseModel):
     verified: bool  # the quote is word for word in the section's text
 
 
-# verified: every source passed the check. with_reservation: a source failed after the
-# retries, or the answer has no source to check. no_answer: the agreements do not answer.
+class RegisterFact(BaseModel):
+    """A row of the register an answer took facts from, as the check read it (M8)."""
+
+    agreement_number: str
+    supplier_name: str
+    former_names: list[str] = Field(default_factory=list)  # the supplier's earlier names
+    org_number: str
+    sub_area: str
+    valid_from: date
+    valid_to: date
+    max_extension_to: date | None
+
+
+# verified: every source passed the check, and so did the review. with_reservation: a check
+# failed after the retries, the answer has no source to check, or it could not be reviewed;
+# `reservations` says what. no_answer: the agreements do not answer.
 AnswerStatus = Literal["verified", "with_reservation", "no_answer"]
 
 
@@ -124,6 +160,10 @@ class Answer(BaseModel):
     text: str  # plain text; [n] refers to the citation with id n
     status: AnswerStatus
     citations: list[Citation]
+    # What could not be verified, in Swedish for the user; empty unless with_reservation.
+    reservations: list[str] = Field(default_factory=list)
+    # The register rows the answer's facts were checked against.
+    register_facts: list[RegisterFact] = Field(default_factory=list)
 
 
 class AvtalState(AgentState[FinalAnswer]):
@@ -136,5 +176,8 @@ class AvtalState(AgentState[FinalAnswer]):
 
     # Read by the web app (STATE_SNAPSHOT), never taken from a client's input.
     answer: NotRequired[Annotated[Answer | None, OmitFromInput]]
-    # How many new attempts the citation check has asked for in this question.
-    citation_retries: NotRequired[Annotated[int, PrivateStateAttr]]
+    # How many new attempts the answer check has asked for in this question.
+    validation_retries: NotRequired[Annotated[int, PrivateStateAttr]]
+    # The answer the last failed draft would get without a new attempt: given instead of
+    # no_answer when the model-call limit ends the loop before a new draft.
+    fallback_answer: NotRequired[Annotated[Answer | None, PrivateStateAttr]]

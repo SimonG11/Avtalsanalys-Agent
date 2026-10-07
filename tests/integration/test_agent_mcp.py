@@ -8,13 +8,17 @@ What:
     quotes it in `FinalAnswer`: the answer is verified, and each field of its
     citation is the database's. A quote from a section the ingestion holds
     back is refused by `read_section` and cannot be checked: the answer is
-    given with reservation.
+    given with reservation. An answer from the register alone is verified
+    against the rows `search_register` reads, and a wrong date in it is
+    found (M8).
 
 Why:
     The unit tests check the graph with a dict for the sections and the MCP
-    client with stand-in tools. Only here does the citation check read a
-    section through avtal-mcp from Postgres, with its visibility rule and
-    its citation fields, the way the command line and the API will.
+    client with stand-in tools. Only here does the check read a section
+    and an agreement's register rows through avtal-mcp from Postgres, with
+    its visibility rule and its citation fields, the way the command line
+    and the API do. The reviewer is the scripted one: it passes every
+    answer.
 
 How:
     Uses the `engine` fixture of conftest.py, and `store_corpus`,
@@ -26,6 +30,7 @@ How:
 
 import json
 from collections.abc import Iterator
+from datetime import date
 from typing import Any
 
 import pytest
@@ -40,13 +45,14 @@ from sqlalchemy import Engine
 from avtalsagent.agent.checkpointer import serializer
 from avtalsagent.agent.graph import build_agent
 from avtalsagent.agent.mcp_tools import load_tools
-from avtalsagent.agent.schemas import Answer, Citation
+from avtalsagent.agent.schemas import Answer, Citation, RegisterFact
 from avtalsagent.config import Settings
 from avtalsagent.db import models
 from avtalsagent.db.session import create_db_engine, session_factory
 from avtalsagent.mcp_server.results import section_refs
 from avtalsagent.mcp_server.server import build_server
 from tests.integration.test_index_store import (
+    ADVANIA,
     HELD,
     PROCUREMENT,
     TERMS,
@@ -54,7 +60,12 @@ from tests.integration.test_index_store import (
     build_index,
     store_corpus,
 )
-from tests.unit.agent.scripted_model import ScriptedModel, final_answer, tool_call
+from tests.unit.agent.scripted_model import (
+    ScriptedModel,
+    ScriptedReviewer,
+    final_answer,
+    tool_call,
+)
 
 # 6.21.4 of the general terms (TERMS, section 1), word for word.
 PENALTY_QUOTE = "Vite ska högst uppgå till 100 000 SEK."
@@ -100,11 +111,11 @@ def tool_results(messages: list[BaseMessage], name: str) -> list[ToolMessage]:
 
 async def run_agent(server: FastMCP, model: ScriptedModel, *, retries: int = 1) -> dict[str, Any]:
     """The question through the graph, with avtal-mcp's tools on an in-memory session."""
-    settings = Settings(_env_file=None, citation_retries=retries)
+    settings = Settings(_env_file=None, validation_retries=retries)
     async with create_connected_server_and_client_session(server) as session:
         mcp = await load_tools(session)
         graph = build_agent(
-            model, mcp.tools, mcp.reader, InMemorySaver(serde=serializer()), settings
+            model, mcp, ScriptedReviewer(), InMemorySaver(serde=serializer()), settings
         )
         return await graph.ainvoke(QUESTION, THREAD)
 
@@ -206,3 +217,58 @@ async def test_a_quote_from_a_held_back_section_cannot_be_checked(
     assert answer.status == "with_reservation"
     [citation] = answer.citations
     assert (citation.sha256, citation.file_title, citation.verified) == (PROCUREMENT, "", False)
+
+
+ADVANIA_TEXT = (
+    "Enligt registret har Advania Sverige AB avtal {} på IT-drift Mindre, upp till 200 "
+    "anställda. Avtalet gäller 2024-11-14–{}."
+)
+
+
+def register_answer(valid_to: str, call_id: str) -> Any:
+    return final_answer(
+        ADVANIA_TEXT.format(ADVANIA, valid_to), register_facts=[ADVANIA], call_id=call_id
+    )
+
+
+@pytest.mark.anyio
+async def test_an_answer_from_the_register_is_verified_against_its_rows(
+    indexed: Engine, server: FastMCP
+) -> None:
+    model = ScriptedModel(
+        script=[
+            tool_call("search_register", {"supplier": "Advania"}, "c1"),
+            register_answer("2028-11-13", "c2"),
+        ]
+    )
+
+    result = await run_agent(server, model)
+
+    answer = result["answer"]
+    assert (answer.status, answer.citations, answer.reservations) == ("verified", [], [])
+    assert answer.register_facts == [
+        RegisterFact(
+            agreement_number=ADVANIA,
+            supplier_name="Advania Sverige AB",
+            former_names=[],
+            org_number="556214-9996",
+            sub_area="IT-drift / IT-drift Mindre, upp till 200 anställda",
+            valid_from=date(2024, 11, 14),
+            valid_to=date(2028, 11, 13),
+            max_extension_to=None,
+        )
+    ]
+
+
+@pytest.mark.anyio
+async def test_a_date_the_register_does_not_have_is_found_and_noted(
+    indexed: Engine, server: FastMCP
+) -> None:
+    model = ScriptedModel(script=[register_answer("2028-12-31", "c1")])
+
+    result = await run_agent(server, model, retries=0)
+
+    answer = result["answer"]
+    assert answer.status == "with_reservation"
+    assert answer.reservations == ["Kunde inte kontrolleras mot registret: 2028-12-31."]
+    assert [fact.agreement_number for fact in answer.register_facts] == [ADVANIA]

@@ -35,6 +35,14 @@
 >   `FinalAnswer`, och citatkontrollen läser själv varje citerat avsnitt genom avtal-mcp. Ett
 >   underkänt svar får ett nytt försök (`CITATION_RETRIES`, standard 1), sedan levereras det med
 >   reservation ([M7](steg/07-agent.md)).
+> - [ADR 0014](adr/0014-api-och-compose.md): API:t är ett tunt FastAPI-lager över agenten
+>   (`POST /agui` över AG-UI och PDF-vägen), med en ny MCP-session per körning, och hela systemet
+>   startar med Docker Compose på både amd64 och arm64 ([M9](steg/09-api.md)).
+> - [ADR 0015](adr/0015-valideringskedjan.md): valideringen är en kedja i fast ordning: citaten,
+>   registeruppgifterna mot registret och en granskarmodell (`gpt-6-astra`). Reglerna och
+>   granskaren delar två nya försök (`VALIDATION_RETRIES`, ersätter `CITATION_RETRIES`), och ett
+>   svar ur registret kan bli `verified`. Svaret har `reservations` och `register_facts`
+>   ([M8](steg/08-validering.md)).
 
 ---
 
