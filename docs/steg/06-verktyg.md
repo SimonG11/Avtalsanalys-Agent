@@ -26,7 +26,7 @@ kommer senare, och `ask_user` ligger i agentens graf (M7).
 | `get_outline` | `sha256` | Filens titel, typ och avtalssidor, och alla avsnitt i ordning (plats, nummer, rubrik, nivå, första sida), utan de som hålls tillbaka; `held_back` räknar dem |
 | `resolve_reference` | `sha256`, `section_number?`, `section_position?`, `reference?` | Avsnittets citatfält och dess hänvisningar, eller bara de vars text innehåller `reference`: text, slag, status och de mål som får visas (avsnitt eller hel fil), och hur många mål som hålls tillbaka |
 | `list_documents` | `framework_area?`, `agreement_number?`, `document_type?` (minst ett), `limit` (50, högst 200) | `documents`: filerna i filtret med sha256, titel, typ, avtalssidor, ramavtalsområden, avtalsnummer, versionsdatum och antalet avsnitt som `get_outline` visar; avtalets dokument först, sedan upphandlingens och sist stöd för avrop; `total` räknar alla träffar |
-| `search_register` | `supplier?`, `agreement_number?`, `framework_area?`, `org_number?` (minst ett), `valid_on?`, `limit` (20, högst 20), `offset` (0) | `rows`: ett avtal i ett delområde per rad, med avtals- och upphandlingsnummer, leverantör, organisationsnummer, ramavtalsområde, delområde och datumen från, till och längsta förlängning; `total` räknar alla rader, och med `offset` bläddrar modellen vidare |
+| `search_register` | `supplier?`, `agreement_number?`, `framework_area?`, `org_number?` (minst ett), `valid_on?`, `limit` (20, högst 20), `offset` (0) | `rows`: ett avtal i ett delområde per rad, med avtals- och upphandlingsnummer, leverantör, organisationsnummer, leverantörens tidigare namn (`former_names`), ramavtalsområde, delområde och datumen från, till och längsta förlängning; `total` räknar alla rader, och med `offset` bläddrar modellen vidare |
 
 **Citatfälten** finns på varje avsnitt som ett verktyg ger: `sha256`, `file_title`,
 `document_type`, `page_titles` (avtalssidorna som länkar till filen), `section_position`,
@@ -109,7 +109,10 @@ Compose).
 
 `build_server` gör en FastMCP-server av verktygen i `tools.TOOLS`. Den är en liten underklass,
 `AvtalMCP`, som publicerar varje argumentschema med `additionalProperties: false` och avvisar ett
-anrop med ett okänt argumentnamn med ett svenskt fel, innan någon session öppnas.
+anrop med ett okänt argumentnamn med ett svenskt fel, innan någon session öppnas. Den ger också
+modellen svaret som kompakt JSON: FastMCP skriver textversionen av ett strukturerat svar med
+indrag, och indragen var en sjättedel av tecknen i verktygssvaren när agenten provkördes live
+(M7, fem frågor).
 `_with_session` gör varje verktyg till ett asynkront MCP-verktyg vars signatur saknar `session`
 (och `embedder`, när den är andra parametern), så att SDK:t bygger argumentens schema av resten
 och kontrollerar varje anrop mot det. Vid ett anrop öppnas en session, verktyget körs i en
@@ -123,7 +126,8 @@ annoteringarna (`READ_ONLY`) och strukturerat svar. Servern är tillståndslös
 anslutning och den inställda embeddingmodellen, med 15 sekunders timeout och ett nytt försök
 (`QUERY_TIMEOUT`, `QUERY_RETRIES`): sökningen håller en databasanslutning och en arbetstråd medan
 frågan bäddas in, och OpenAI-klienten skulle annars vänta 600 sekunder tre gånger.
-`INSTRUCTIONS` säger modellen vilket verktyg den ska börja med.
+`INSTRUCTIONS` säger modellen vilket verktyg den ska börja med och att den anger en källa med
+dokumentets `sha256` och avsnittets `section_position`.
 
 ### 2. `mcp_server/arguments.py` – argumenten
 
@@ -191,7 +195,10 @@ En leverantör är en del av avtalets leverantörsnamn eller av något namn elle
 registret har för organisationsnumret, utan hänsyn till versaler och med `%` och `_` som vanliga
 tecken. Ett organisationsnummer skrivs om som M1 sparar det (`5562149996` och
 `SE556214999601` blir `556214-9996`). `valid_on` behåller rader där datumet ligger mellan från och
-till; längsta förlängning räknas inte.
+till; längsta förlängning räknas inte. En tredje fråga läser de tidigare namn ("f.d." i
+registret) som sidans organisationsnummer har, så att modellen kan svara på "har bolaget hetat
+något annat?" ur raden. Provkörningen av agenten (M7) hittade den luckan: utan fältet kunde
+leverantören hittas på sitt gamla namn, men modellen fick aldrig se namnet.
 
 ### 9. Utanför paketet
 
@@ -209,12 +216,12 @@ till; längsta förlängning räknas inte.
 
 | Fil | Vad den visar |
 |---|---|
-| `tests/unit/mcp_server/test_mcp_server.py` | Verktygslistan i kontraktets ordning, läsande annoteringar, inga `session` eller `embedder` i schemat, slutna scheman (`additionalProperties: false`), svar som är modeller, svenska beskrivningar på verktyg och argument, inga `$defs`; argument utanför gränserna, tecknet NUL i varje texttyp och okända argumentnamn stoppas före sessionen, och kända namn går igenom; databasfel och andra fel når modellen utan SQL eller lösenord; embeddern, dess timeout och arbetstråden; `/health` och Host-kontrollen över HTTP; kommandoraden |
+| `tests/unit/mcp_server/test_mcp_server.py` | Verktygslistan i kontraktets ordning, läsande annoteringar, inga `session` eller `embedder` i schemat, slutna scheman (`additionalProperties: false`), svar som är modeller, svenska beskrivningar på verktyg och argument, inga `$defs`; argument utanför gränserna, tecknet NUL i varje texttyp och okända argumentnamn stoppas före sessionen, och kända namn går igenom; svaret som kompakt JSON med å, ä och ö som de är; databasfel och andra fel når modellen utan SQL eller lösenord; embeddern, dess timeout och arbetstråden; `/health` och Host-kontrollen över HTTP; kommandoraden |
 | `tests/unit/mcp_server/test_mcp_document_checks.py` | Nummer, plats eller båda; felet när avsnittet inte anges; sökningen utan embeddingmodell |
 | `tests/unit/mcp_server/test_mcp_register_checks.py` | Att ett filter krävs, organisationsnumrens former, `list_documents` utan index, gränserna, NUL, `offset` och standardvärdena i schemat, att varje dokumenttyp har en plats i ordningen |
 | `tests/unit/mcp_server/test_mcp_register_sql.py` | Med en påhittad session: ett avtal som registret skriver på två sätt hittas med båda stavningarna, dokumentfiltret tar den stavning som indexet sparade, och `search_register` frågar efter båda; `offset` och `limit` kommer efter sorteringen men inte i totalen |
 | `tests/integration/test_mcp_documents.py` | De fyra dokumentverktygen på M5:s korpus med fyra påhittade hänvisningar: träffarna med kopior, filtren (också ett upphandlingsnummer), att läsa med nummer, plats eller båda, tvetydiga nummer, innehållsförteckningen, hänvisningarna i textordning, att det som hålls tillbaka inte visas och räknas (en gång, också via två avtalssidor), att inget visas mellan `process` och `index`, att serverns anslutning inte kan skriva, och ett anrop per verktyg genom SDK:ts klient i minnet |
-| `tests/integration/test_mcp_register.py` | `list_documents` och `search_register` på samma korpus plus en påhittad registerrad: varje filter för sig och tillsammans, registrets stavning, ett avtal som registret skriver på två sätt, upphandlingsnummer, okända värden, gränsen, `offset` och totalen, `%` och `_`, filer som hålls tillbaka, `list_documents` utan index, och ett anrop per verktyg genom MCP |
+| `tests/integration/test_mcp_register.py` | `list_documents` och `search_register` på samma korpus plus en påhittad registerrad: varje filter för sig och tillsammans, tidigare namn på raderna, registrets stavning, ett avtal som registret skriver på två sätt, upphandlingsnummer, okända värden, gränsen, `offset` och totalen, `%` och `_`, filer som hålls tillbaka, `list_documents` utan index, och ett anrop per verktyg genom MCP |
 
 84 enhetstester och 87 integrationstester. Integrationstesterna använder samma korpus och samma
 påhittade embedder (`TopicEmbedder`) som M5:s tester, och läser genom en skrivskyddad anslutning

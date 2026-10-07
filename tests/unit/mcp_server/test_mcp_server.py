@@ -353,6 +353,19 @@ async def test_the_known_arguments_still_reach_the_tool() -> None:
     )
 
 
+@pytest.mark.anyio
+async def test_the_model_reads_a_result_as_compact_json() -> None:
+    server = build_server(sessionmaker(), None, allowed_hosts=HOSTS, tools=[filtered])
+
+    result = await call(server, "filtered", {"query": "vite", "framework_area": "IT-drift"})
+
+    # The text version of the structured content, without FastMCP's indentation.
+    assert text_of(result) == '{"text":"vite i IT-drift"}'
+    assert result.structuredContent == {"text": "vite i IT-drift"}
+    swedish = await call(server, "filtered", {"query": "förlängning", "framework_area": "Möbler"})
+    assert text_of(swedish) == '{"text":"förlängning i Möbler"}'  # å, ä, ö as themselves
+
+
 # --- errors: the tool's own message gets through, internals do not ---
 
 

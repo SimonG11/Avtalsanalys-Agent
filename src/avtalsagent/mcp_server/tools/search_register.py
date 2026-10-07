@@ -3,8 +3,9 @@
 What:
     `search_register` returns one row per agreement and sub-area of the
     register ("Alla giltiga ramavtal"): agreement and procurement number,
-    supplier name and organisation number, framework area, sub-area path and
-    the dates the agreement is valid from and to and may be extended to.
+    supplier name, organisation number and the supplier's former names,
+    framework area, sub-area path and the dates the agreement is valid from
+    and to and may be extended to.
     `total` counts every matching row, also beyond `limit`, and `offset`
     skips rows, so the model can page through a large area.
     `register_org_number` turns an organisation number into the register's
@@ -33,7 +34,10 @@ How:
     goes through `register_area`. An organisation number is
     normalised as M1 stores it (`normalize_org_number`: NNNNNN-NNNN, or a
     foreign number without spaces). Rows are sorted by framework area,
-    agreement number and sub-area before `offset` and `limit` cut them.
+    agreement number and sub-area before `offset` and `limit` cut them. A
+    third query reads the former names ("f.d." in the register) of the
+    page's organisation numbers, so the model can answer "har bolaget hetat
+    något annat?" from the row.
 """
 
 from datetime import date
@@ -68,6 +72,7 @@ class RegisterRow(BaseModel):
     procurement_number: str  # the procurement's case number, e.g. "23.3-5890-2023"
     supplier_name: str  # the name on the agreement's rows
     org_number: str  # NNNNNN-NNNN, or a foreign number as written
+    former_names: list[str]  # the register's former names ("f.d.") for the org number, sorted
     framework_area: str
     sub_area: str  # the path, levels joined with " / "
     valid_from: date
@@ -99,6 +104,7 @@ def search_register(
     (villkor, priser, viten) söker du med search_documents. Varje rad är ett avtal i ett
     delområde, och total är antalet rader, även de som inte ryms i limit. Är total större än
     raderna du fått, hämta nästa sida med offset (t.ex. offset=20 för rad 21–40).
+    former_names är leverantörens tidigare namn enligt registret.
     """
     # Spaces as the register stores names (`parse_supplier_name`); blank is no name.
     name = None if supplier is None else " ".join(supplier.split()) or None
@@ -136,11 +142,14 @@ def search_register(
         .where(*conditions)
     )
     total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
-    rows = session.execute(
-        query.order_by(sub_area.framework_area, agreement.agreement_number, sub_area.path)
-        .offset(offset)
-        .limit(limit)
+    rows = list(
+        session.execute(
+            query.order_by(sub_area.framework_area, agreement.agreement_number, sub_area.path)
+            .offset(offset)
+            .limit(limit)
+        )
     )
+    former_names = _former_names(session, {row.org_number for row in rows})
     return RegisterResult(
         rows=[
             RegisterRow(
@@ -148,6 +157,7 @@ def search_register(
                 procurement_number=row.procurement_number,
                 supplier_name=row.supplier_name,
                 org_number=row.org_number,
+                former_names=former_names.get(row.org_number, []),
                 framework_area=row.framework_area,
                 sub_area=row.sub_area,
                 valid_from=row.valid_from,
@@ -185,6 +195,23 @@ def _supplier_matches(name: str) -> ColumnElement[bool]:
         agreement.supplier_name.icontains(name, autoescape=True),
         agreement.org_number.in_(org_numbers),
     )
+
+
+def _former_names(session: Session, org_numbers: set[str]) -> dict[str, list[str]]:
+    """The former names the register has for each organisation number, sorted."""
+    if not org_numbers:
+        return {}
+    names = models.SupplierName
+    found: dict[str, list[str]] = {}
+    for org_number, former_name in session.execute(
+        select(names.org_number, names.former_name)
+        .where(names.org_number.in_(sorted(org_numbers)), names.former_name.is_not(None))
+        .distinct()
+        .order_by(names.org_number, names.former_name)
+    ):
+        if former_name is not None:  # never, after the WHERE; the column allows it
+            found.setdefault(org_number, []).append(former_name)
+    return found
 
 
 def _agreement_matches(session: Session, number: str) -> ColumnElement[bool]:

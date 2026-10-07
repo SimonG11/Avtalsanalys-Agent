@@ -36,6 +36,10 @@ How:
     answer; `AvtalMCP`, a small FastMCP subclass, publishes each schema with
     `additionalProperties: false` and refuses such a call, before any
     session, with a Swedish `ToolError` that names the tool's arguments.
+    It also gives the model a result as compact JSON: FastMCP writes the
+    text version of a structured result indented, and the indentation was
+    a sixth of the characters in the tool results of the agent's first live
+    test (M7).
     The wrapper opens a session from `sessions`, calls the tool with it in a
     worker thread and closes it, which ends the read-only transaction. The
     tool's docstring is its description, and its
@@ -52,6 +56,7 @@ How:
 import argparse
 import functools
 import inspect
+import json
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
@@ -61,7 +66,7 @@ import uvicorn
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ContentBlock, ToolAnnotations
+from mcp.types import TextContent, ToolAnnotations
 from mcp.types import Tool as MCPTool
 from pydantic import BaseModel
 from sqlalchemy.exc import SQLAlchemyError
@@ -93,8 +98,8 @@ Börja med search_register för frågor om vilka avtal och leverantörer som fin
 gäller, eller med search_documents för vad avtalen säger. Läs sedan hela avsnittet med \
 read_section innan du citerar det, se ett dokuments innehåll med get_outline, följ en \
 hänvisning med resolve_reference och se ett avtals eller områdes dokument med list_documents.
-Citera med fälten sha256, file_title, section_number, section_title och page_start från \
-verktygens svar."""
+Citera ordagrant ur texten från read_section och ange källan med dess sha256 och \
+section_position; file_title, section_number, section_title och page_start säger var den står."""
 
 # The only texts the model gets for an error that is not a tool's own `ToolError`.
 DATABASE_ERROR = (
@@ -131,10 +136,12 @@ class AvtalMCP(FastMCP):
             for tool in await super().list_tools()
         ]
 
-    async def call_tool(
-        self, name: str, arguments: dict[str, Any]
-    ) -> Sequence[ContentBlock] | dict[str, Any]:
-        """Refuse an argument the tool does not take; otherwise call it as FastMCP does."""
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        """Refuse an argument the tool does not take; otherwise call it as FastMCP does.
+
+        The result is FastMCP's (text, structured content) pair, with the
+        text as compact JSON instead of indented.
+        """
         tool = next((tool for tool in await self.list_tools() if tool.name == name), None)
         if tool is not None:  # an unknown tool is FastMCP's error
             known = list(tool.inputSchema.get("properties", {}))
@@ -145,7 +152,12 @@ class AvtalMCP(FastMCP):
                     f"{name} har inget argument som heter {', '.join(unknown)}. Verktyget "
                     f"{taken}; rätta namnet och anropa igen."
                 )
-        return await super().call_tool(name, arguments)
+        result = await super().call_tool(name, arguments)
+        if isinstance(result, tuple):  # every tool here has an output schema
+            _, structured = result
+            compact = json.dumps(structured, ensure_ascii=False, separators=(",", ":"))
+            return [TextContent(type="text", text=compact)], structured
+        return result
 
 
 def _with_session(

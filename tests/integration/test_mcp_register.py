@@ -159,6 +159,7 @@ ADVANIA_ROW = RegisterRow(
     procurement_number=IT_DRIFT,
     supplier_name="Advania Sverige AB",
     org_number=ADVANIA_ORG,
+    former_names=[],
     framework_area="IT-drift",
     sub_area=MINDRE,
     valid_from=date(2024, 11, 14),
@@ -404,7 +405,8 @@ def test_a_row_is_an_agreement_in_a_sub_area_with_the_registers_dates(
         netbin = search_register(session, org_number=NETBIN_ORG)
 
     assert advania == RegisterResult(rows=[ADVANIA_ROW], total=1)
-    # One supplier name for the agreement (its first row's); dates per sub-area.
+    # One supplier name for the agreement (its first row's), the former names of every name
+    # its org number has; dates per sub-area.
     assert netbin == RegisterResult(
         rows=[
             RegisterRow(
@@ -412,6 +414,7 @@ def test_a_row_is_an_agreement_in_a_sub_area_with_the_registers_dates(
                 procurement_number=IT_DRIFT,
                 supplier_name="NetBin Sverige AB",
                 org_number=NETBIN_ORG,
+                former_names=["Exempelnät AB"],  # under its other name, on both rows
                 framework_area="IT-drift",
                 sub_area=MINDRE,
                 valid_from=date(2024, 11, 14),
@@ -423,6 +426,7 @@ def test_a_row_is_an_agreement_in_a_sub_area_with_the_registers_dates(
                 procurement_number=IT_DRIFT,
                 supplier_name="NetBin Sverige AB",
                 org_number=NETBIN_ORG,
+                former_names=["Exempelnät AB"],  # under its other name, on both rows
                 framework_area="IT-drift",
                 sub_area=EXTRA,
                 valid_from=date(2025, 1, 1),
