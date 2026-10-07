@@ -75,6 +75,10 @@
   font-size: 0.8rem;
 }
 
+.outcome {
+  margin-top: 2px;
+}
+
 .result {
   margin-top: 4px;
   color: var(--text-muted);

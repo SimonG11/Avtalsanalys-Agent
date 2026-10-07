@@ -65,6 +65,24 @@ test("answers with verified sources and opens the cited page with the quote mark
   await expect(panel).toHaveCount(0);
 });
 
+test("shows the date calculation in Swedish with its result", async ({ page }) => {
+  await ask(
+    page,
+    "Kontraktet inom IT-drift ska upphöra 2027-02-17. När måste kunden säga upp det?",
+  );
+
+  const step = page.locator('[data-testid="agent-step"][data-tool="calculate_date"]');
+  await expect(step).toHaveAttribute("data-status", "complete");
+  await expect(step).toContainText("Räknade ut datum");
+  await expect(step).toContainText("från: 2027-02-17");
+  await expect(step).toContainText("enhet: månader");
+  await expect(step).toContainText("riktning: före");
+  await expect(step.getByTestId("step-outcome")).toHaveText(
+    "2027-02-17 minus 3 månader = 2026-11-17 (tisdag)",
+  );
+  await expect(page.getByTestId("answer-card")).toContainText("senast 2026-11-17");
+});
+
 // ag-ui-langgraph sends the older on_interrupt event, the standard outcome, or both.
 const INTERRUPT_SHAPES = { both: "", legacy: " [legacy]", outcome: " [outcome]" };
 

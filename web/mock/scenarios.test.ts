@@ -101,6 +101,33 @@ describe("planRun", () => {
     assert.equal(finalAnswer(input(questions[1])).status, "with_reservation");
   });
 
+  it("counts back the notice period with calculate_date when the question has a date", () => {
+    const question =
+      "Kontraktet inom IT-drift ska upphöra 2027-02-17. När måste kunden säga upp det?";
+    const list = events(input(question));
+    const call = list.find(
+      (event) =>
+        event.type === EventType.TOOL_CALL_START && event.toolCallName === "calculate_date",
+    );
+    assert.ok(call);
+    const result = list.find(
+      (event) => event.type === EventType.TOOL_CALL_RESULT && event.toolCallId === call.toolCallId,
+    );
+    assert.deepEqual(JSON.parse(String(result?.content)), {
+      result: "2026-11-17",
+      weekday: "tisdag",
+      step: "2027-02-17 minus 3 månader = 2026-11-17",
+      skipped: [],
+      notes: [],
+    });
+    const answer = finalAnswer(input(question));
+    assert.match(answer.text, /senast 2026-11-17: 2027-02-17 minus 3 månader = 2026-11-17\.$/);
+    assert.equal(answer.citations.length, 1);
+    // A month without the day uses its last day, as avtal-mcp does.
+    const may = finalAnswer(input(question.replace("2027-02-17", "2027-05-31")));
+    assert.match(may.text, /2027-05-31 minus 3 månader = 2027-02-28/);
+  });
+
   it("clears the previous answer at the start of a new question", () => {
     const firstState = events(input(questions[0])).find(
       (event) => event.type === EventType.STATE_SNAPSHOT,

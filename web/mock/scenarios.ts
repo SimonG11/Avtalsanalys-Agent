@@ -6,7 +6,9 @@
  * app can be developed and tested end to end against the agreed contract.
  *
  * How: `planRun` reads the last user question and picks a scenario by keyword:
- *   - termination ("uppsägning", "säga upp") and an area (IT-drift ...) -> a verified answer
+ *   - termination ("uppsägning", "säga upp") and an area (IT-drift ...) -> a verified answer;
+ *     with a date (2027-02-17) in the question, the agent also counts back the notice period
+ *     with calculate_date and answers with the last day to give notice
  *   - termination without an area -> the agent asks which area first: it calls the ask_user
  *     tool, which stops the run with an interrupt, and the run that resumes it gives the tool's
  *     result (the person's answer) before it goes on
@@ -347,8 +349,35 @@ function noticePeriodAnswer(context: MockContext, area: string) {
   });
 }
 
-function answerNoticePeriod(run: RunBuilder, context: MockContext, area: string): void {
-  const answer = noticePeriodAnswer(context, area);
+const WEEKDAYS = ["söndag", "måndag", "tisdag", "onsdag", "torsdag", "fredag", "lördag"];
+
+/**
+ * calculate_date's answer for a date some months before another, as avtal-mcp gives it: a
+ * month without the day uses its last day. The mock only needs "before" in months.
+ */
+function monthsBefore(start: string, months: number) {
+  const [year, month, day] = start.split("-").map(Number);
+  const moved = new Date(Date.UTC(year, month - 1 - months, 1));
+  const lastDay = new Date(Date.UTC(moved.getUTCFullYear(), moved.getUTCMonth() + 1, 0));
+  moved.setUTCDate(Math.min(day, lastDay.getUTCDate()));
+  const result = moved.toISOString().slice(0, 10);
+  return {
+    result,
+    weekday: WEEKDAYS[moved.getUTCDay()],
+    step: `${start} minus ${months} månader = ${result}`,
+    skipped: [],
+    notes: [],
+  };
+}
+
+/** The notice period, and with an end date the last day to give notice (calculate_date). */
+function answerNoticePeriod(
+  run: RunBuilder,
+  context: MockContext,
+  area: string,
+  endDate?: string,
+): void {
+  let answer = noticePeriodAnswer(context, area);
   run.step("research_agent", () => {
     run.toolCall(
       "search_documents",
@@ -363,6 +392,19 @@ function answerNoticePeriod(run: RunBuilder, context: MockContext, area: string)
       { sha256: context.documentSha256, section_number: "6.21.9" },
       { section_number: "6.21.9", page: 2, text: "Kunden har rätt att säga upp Kontraktet ..." },
     );
+    if (endDate) {
+      const args = { start: endDate, amount: 3, unit: "months", direction: "before" };
+      const calculation = monthsBefore(endDate, 3);
+      run.toolCall("calculate_date", args, calculation);
+      answer = {
+        ...answer,
+        text:
+          `Kontraktet inom ${area} har tre månaders uppsägningstid, och uppsägningen ska vara ` +
+          `skriftlig [1]. Ska kontraktet upphöra ${endDate} måste kunden säga upp det senast ` +
+          `${calculation.result}: ${calculation.step}.`,
+        citations: answer.citations.slice(0, 1),
+      };
+    }
   });
   run.handIn(answer);
 }
@@ -473,7 +515,7 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
     const aboutTermination = /uppsäg|säg(a|er) [^.?!]*upp\b/.test(lower);
 
     if (aboutTermination && area) {
-      answerNoticePeriod(run, context, area);
+      answerNoticePeriod(run, context, area, /\d{4}-\d{2}-\d{2}/.exec(question)?.[0]);
     } else if (aboutTermination) {
       run.step("research_agent", () => {
         run.toolCall(
