@@ -5,6 +5,7 @@ them, so the scores are tested without a model or a server.
 """
 
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -23,6 +24,8 @@ from evals.answer_scores import (
     NO_DRAFT_REASON,
     CitedPlace,
     QuestionResult,
+    RuleCount,
+    ToolCount,
     by_category,
     cited_places,
     is_alternative,
@@ -33,7 +36,9 @@ from evals.answer_scores import (
     score,
     sources_found,
     summarize,
+    summarize_paths,
 )
+from evals.answer_steps import Problem, Rejection, Step, TargetSource
 from evals.gold import Alternative, DocumentSource, GoldQuestion, GoldScope, RegisterSource
 from evals.judge import Judgement, Verdict
 
@@ -345,6 +350,52 @@ def test_an_empty_summary_has_zeros() -> None:
     assert summary.cost == (0.0, 0.0)
     assert median(summary.seconds) == 0.0
     assert percentile(summary.seconds, 0.9) == 0.0
+
+
+def read(target_from: TargetSource | None = None) -> Step:
+    return Step("read_section", {"sha256": TERMS, "section_position": 1}, target_from=target_from)
+
+
+def test_the_paths_count_tools_model_calls_reads_and_rejections_by_rule() -> None:
+    cited = Rejection(
+        (Problem("citations", "a"), Problem("citations", "b"), Problem("register_facts", "c"))
+    )
+    reviewed = Rejection((Problem("review", "d"),))
+    runs = [
+        replace(
+            run(tools=("search_documents", "read_section", "read_section"), retries=2),
+            steps=(Step("search_documents", {"query": "vite"}), read(), read("reference")),
+            model_calls=6,
+            rejections=(cited, reviewed),
+        ),
+        replace(run(tools=("read_section",)), steps=(read("amendment"),), model_calls=16),
+        run(tools=("search_documents",), retries=1),  # made before the steps were saved
+        run(None, tools=(), error="avtal-mcp: ConnectError"),  # never reached the graph
+    ]
+
+    paths = summarize_paths([score(gold(id=f"q0{n}"), r, None, None) for n, r in enumerate(runs)])
+
+    assert paths.tools == {
+        "read_section": ToolCount(calls=3, questions=2),
+        "search_documents": ToolCount(calls=2, questions=2),
+    }
+    assert list(paths.tools) == ["read_section", "search_documents"]  # most calls first
+    assert (paths.model_calls, paths.model_calls_missing) == ((6, 16), 2)
+    assert (paths.reads, paths.reads_from_references, paths.reads_from_amendments) == (3, 1, 1)
+    assert (paths.questions_from_references, paths.questions_with_steps) == (1, 2)
+    assert paths.steps_missing == 1
+    assert paths.rejections == {
+        "citations": RuleCount(drafts=1, questions=1, problems=2),
+        "register_facts": RuleCount(drafts=1, questions=1, problems=1),
+        "review": RuleCount(drafts=1, questions=1, problems=1),
+    }
+    assert paths.rejections_missing == 1
+
+
+def test_the_paths_of_no_questions_are_empty() -> None:
+    paths = summarize_paths([])
+
+    assert (paths.tools, paths.model_calls, paths.reads, paths.rejections) == ({}, (), 0, {})
 
 
 def test_the_results_are_grouped_by_category_in_order() -> None:

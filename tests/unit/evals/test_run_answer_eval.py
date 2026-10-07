@@ -6,7 +6,10 @@ without a model, a key or a server. One question through the real graph is
 tested in test_answer_run.py.
 """
 
+import hashlib
 import logging
+import shutil
+import subprocess
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -20,9 +23,12 @@ import pytest
 from langchain_core.runnables import RunnableConfig
 from pydantic import SecretStr
 
+import avtalsagent
 from avtalsagent.agent.__main__ import CommandError
 from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.agent.middleware import NO_DRAFT_TEXT
+from avtalsagent.agent.prompts import SYSTEM_PROMPT
+from avtalsagent.agent.reviewer import REVIEWER_PROMPT
 from avtalsagent.agent.schemas import Answer
 from avtalsagent.config import Settings
 from avtalsagent.observability.tracing import Tracing
@@ -37,8 +43,10 @@ from evals.run_answer_eval import (
     ask_question,
     build_parser,
     check_mcp,
+    code_commit,
     evaluate,
     judge_answer,
+    run_info,
     run_settings,
     select_questions,
 )
@@ -136,6 +144,66 @@ def test_the_measurement_keeps_its_checkpoints_in_memory() -> None:
     assert run_settings(settings, None).checkpointer == "memory"
     assert run_settings(settings, None).agent_reasoning_effort == "low"
     assert run_settings(settings, "high").agent_reasoning_effort == "high"
+
+
+def git(where: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-C", str(where), "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+        + ["-c", "commit.gpgsign=false", *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return done.stdout.strip()
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+def test_the_commit_is_the_short_sha_and_whether_the_tree_has_changes(tmp_path: Path) -> None:
+    git(tmp_path, "init", "--quiet")
+    (tmp_path / "agent.py").write_text("PROMPT = 'ett'\n")
+    git(tmp_path, "add", "agent.py")
+    git(tmp_path, "commit", "--quiet", "-m", "first")
+    sha = git(tmp_path, "rev-parse", "--short", "HEAD")
+
+    assert code_commit(tmp_path) == (sha, False)
+    (tmp_path / "agent.py").write_text("PROMPT = 'två'\n")
+    assert code_commit(tmp_path) == (sha, True)
+    git(tmp_path, "commit", "--quiet", "-am", "second")
+    (tmp_path / "new.py").write_text("")  # neither tracked nor ignored
+    assert code_commit(tmp_path)[1] is True
+
+
+def test_without_git_or_a_repository_the_commit_is_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_git(*args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError("git")
+
+    if shutil.which("git") is not None:  # a folder in no repository
+        assert code_commit(tmp_path) == (None, False)
+    monkeypatch.setattr(subprocess, "run", no_git)
+    assert code_commit(tmp_path) == (None, False)
+
+
+def test_the_run_info_names_the_commit_and_the_prompts_hashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    where: list[Path] = []
+
+    def commit(path: Path) -> tuple[str | None, bool]:
+        where.append(path)
+        return "abc1234", True
+
+    monkeypatch.setattr(runner, "code_commit", commit)
+    args = build_parser().parse_args([])
+
+    info = run_info(Settings(_env_file=None), args, None)
+
+    assert (info.commit, info.uncommitted) == ("abc1234", True)
+    assert where == [Path(avtalsagent.__file__).parent]  # the code that is measured
+    assert info.system_prompt_sha256 == hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
+    assert info.reviewer_prompt_sha256 == hashlib.sha256(REVIEWER_PROMPT.encode()).hexdigest()
+    assert info.system_prompt_sha256 != info.reviewer_prompt_sha256
 
 
 def test_the_options_have_their_defaults() -> None:

@@ -3,9 +3,11 @@
 What:
     `run_question(graph, question, ...)` asks the agent's graph one question
     in a thread of its own and returns a `QuestionRun`: the checked answer,
-    the draft it was checked from, the tools called, the agent's questions
-    to the user, the drafts the check sent back or the schema refused, the
-    time, the tokens of every model call by model, and the error, if any.
+    the draft it was checked from, the tools called, every tool call with
+    its arguments (`answer_steps`), the agent's model calls, the agent's
+    questions to the user, the drafts the check sent back (and why) or the
+    schema refused, the time, the tokens of every model call by model, and
+    the error, if any.
     `UsageCounter` is the callback that counts the tokens, `TokenUse` one
     model's count, and `cost` its price in dollars at PRICES.
 
@@ -21,14 +23,19 @@ How:
     questions are meant to be answered as asked. `anyio.fail_after` bounds
     the whole question. The final state is read even after an error: the
     answer is None unless the check set one. The draft is the last
-    `FinalAnswer` call that parses (`last_draft`). The callback runs inline
-    and reads each call's model from LangChain's `ls_model_name` metadata
-    and its tokens from the message's `usage_metadata`; cached input and
-    reasoning are parts of the input and output tokens, as OpenAI reports
-    them. The price table has no price for cached input, so `cost` takes
-    the share of the input price that a cached token costs: 1 gives an
-    upper bound, 0 a lower one. An error is kept as its type and message,
-    with the key and the database password redacted.
+    `FinalAnswer` call that parses (`last_draft`); the steps and the
+    rejections are read from the messages (`answer_steps`). The model calls
+    are the count `ModelCallLimitMiddleware` keeps in the thread's state:
+    every model call of the question, since each question has a thread of
+    its own, also those after an `ask_user` reply, although the limit
+    counts per run. The callback runs inline and reads each call's model
+    from LangChain's `ls_model_name` metadata and its tokens from the
+    message's `usage_metadata`; cached input and reasoning are parts of the
+    input and output tokens, as OpenAI reports them. The price table has no
+    price for cached input, so `cost` takes the share of the input price
+    that a cached token costs: 1 gives an upper bound, 0 a lower one. An
+    error is kept as its type and message, with the key and the database
+    password redacted.
 """
 
 import time
@@ -52,11 +59,14 @@ from avtalsagent.agent.graph import ANSWER_SUBMITTED, AvtalAgent
 from avtalsagent.agent.middleware import FINAL_ANSWER_TOOL
 from avtalsagent.agent.schemas import Answer, FinalAnswer
 from avtalsagent.observability.tracing import traced
+from evals.answer_steps import Rejection, Step, read_rejections, read_steps
 
 # What the measurement answers when the agent asks the user (ask_user).
 ASK_USER_REPLY = "Jag har inget att tillägga: svara utifrån frågan som den är ställd."
 # How long an error may be in the report.
 ERROR_CHARS = 300
+# The thread's model calls, as ModelCallLimitMiddleware counts them in the graph's state.
+MODEL_CALL_COUNT = "thread_model_call_count"
 
 
 @dataclass(frozen=True)
@@ -206,6 +216,10 @@ class QuestionRun:
     seconds: float
     usage: Mapping[str, TokenUse]  # by model: the agent's and the reviewer's calls
     error: str | None = None
+    # Left at their defaults by a run that never reached the graph: none of it was saved.
+    steps: tuple[Step, ...] = ()  # every tool call in order: avtal-mcp's, ask_user, each draft
+    model_calls: int | None = None  # the agent's model calls in the question
+    rejections: tuple[Rejection, ...] = ()  # why the check sent each draft back, in order
 
 
 async def run_question(
@@ -286,6 +300,9 @@ def read_run(
         seconds=seconds,
         usage=dict(usage),
         error=error[:ERROR_CHARS] if error else None,
+        steps=read_steps(messages),
+        model_calls=int(values.get(MODEL_CALL_COUNT, 0)) if values else None,
+        rejections=read_rejections(messages),
     )
 
 

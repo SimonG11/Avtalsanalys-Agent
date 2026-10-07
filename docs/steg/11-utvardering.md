@@ -165,19 +165,49 @@ fråga som passerar tidsgränsen sparas som text, utan nyckel och lösenord, och
 fråga skulle få samma fel och felets text visar en del av nyckeln. `UsageCounter` räknar varje modellanrop per modell (`ls_model_name`) med tokens ur
 `usage_metadata`; `cost` och `cost_range` räknar dollar med arkitekturvalideringens priser.
 
+Agentens väg läses ur samma meddelanden (`evals/answer_steps.py`): varje verktygsanrop i ordning
+med sina argument, också `ask_user` och varje utkast, och om verktyget svarade med fel. Ett
+`read_section` märks när avsnittet stod som mål under `references` i ett tidigare svar från
+`read_section` eller `resolve_reference`, eller var en ändring som ett tidigare `find_amendments`
+angav. Varje utkast som kontrollen skickade tillbaka sparas med sina fel, och varje fel räknas
+till regeln som skrev det (citat, registeruppgifter, senaste lydelsen eller granskaren) efter hur
+regeln formulerar sina fel; testerna prövar varje regels egna fel, så en regel som formuleras om
+syns där i stället för att räknas fel. Modellanropen är den räkning som
+`ModelCallLimitMiddleware` för i trådens tillstånd.
+
 ### 3. `evals/answer_scores.py` – poängen
 
 `score` gör ett `QuestionResult` av frågan, körningen och bedömningen. `cited_places` tar varje
 citats position ur utkastet, `sources_found` säger vilka av facits källor som har ett godkänt citat
 på samma plats, och `register_score` jämför facits avtal med svarets registerrader.
 `rule_judgement` bedömer ett svar som inte blev klart inom gränsen för modellanrop som fel.
-`summarize` ger siffrorna för en grupp frågor, hela körningen eller en kategori.
+`summarize` ger siffrorna för en grupp frågor, hela körningen eller en kategori, och
+`summarize_paths` anropen per verktyg, modellanropen, läsningarna ur hänvisningar och de nya
+försöken efter regel.
 
 ### 4. `evals/answer_report.py` – rapporterna
 
 Markdown på svenska: sammanfattningen, körningen, metoden, en tabell per kategori och per fråga,
-tokens och kostnad per modell, domarens skäl och varje svar bredvid facit. JSON med samma innehåll
-och varje svar som webbappen får det, för att jämföra körningar.
+agentens väg, tokens och kostnad per modell, domarens skäl och varje svar bredvid facit. JSON med
+samma innehåll, varje verktygsanrop med alla argument och varje svar som webbappen får det, för
+att jämföra körningar.
+
+- **Sammanfattningen** har alltid raden Följdfrågor, också när agenten inte frågade något ("0 av
+  30"), de nya försöken efter regel, agentens modellanrop per fråga (median och högst, mot gränsen
+  `AGENT_MODEL_CALL_LIMIT`) och hur många `read_section` som gick till ett mål ur ett tidigare
+  svars hänvisningar. Metoden definierar måtten.
+- **Körningen** anger commit (kort sha, och om arbetskatalogen hade ändringar som inte var
+  incheckade) och sha256 av `SYSTEM_PROMPT` (före datumet) och granskarens `REVIEWER_PROMPT`, så
+  att rapporten säger vilken kod och vilka prompter den mätte. I compose-tjänsten `eval` finns
+  varken git eller `.git`, så där står commit som okänd; prompternas hash står ändå.
+- **Agentens väg** har anropen per verktyg (anrop och frågor), de nya försöken efter regel (utkast,
+  frågor och fel) och en rad per fråga med anropen i ordning och argumentet som säger vad agenten
+  letade efter, till exempel `search_documents("lördag", Bemanning) → read_section(9.9.2) → …`.
+  Ett `read_section` till ett mål ur en hänvisning märks med ↪, en ändring ur `find_amendments`
+  med Δ och ett verktygsfel med ✗. Under raden står skälen till varje nytt försök.
+
+Det en körning inte sparade, som en fråga där sessionen mot avtal-mcp aldrig kom igång, står som
+"inte sparat" och räknas inte som noll.
 
 ### 5. `evals/run_answer_eval.py` – körningen och kommandoraden
 
@@ -198,11 +228,12 @@ ställs, så en körning som har kostat pengar inte går förlorad på slutet.
 
 | Fil | Tester | Vad |
 |---|---:|---|
-| `tests/unit/evals/test_answer_run.py` | 15 | En fråga genom agentens riktiga graf med en skriptad modell: svar, utkast, verktyg och tokens; `ask_user` får det fasta svaret; ett utkast som skickas tillbaka; ett verktygsfel; ett fel med en hemlighet som döljs; en nyckel som OpenAI inte tar emot stoppar körningen; tidsgränsen; gränsen för modellanrop; tokens, kostnad och felgrupper |
-| `tests/unit/evals/test_answer_scores.py` | 18 | Citatens positioner ur utkastet, källor på plats (position eller nummer), bara godkända citat, avtal med samma nyckel, regeln för svar utan utkast, sammanfattningen (där ett svar utan utkast inte räknas som "framgår inte"), kategorierna och percentilen |
-| `tests/unit/evals/test_answer_report.py` | 13 | Rapporternas namn, Markdown med svenska tal, skäl, fel och svar som citat, utan domare, en domare som inte svarade, svar utan utkast, samma modell som agent och granskare, JSON, utskriften, och mappen som prövas före körningen och vid skrivning |
+| `tests/unit/evals/test_answer_run.py` | 17 | En fråga genom agentens riktiga graf med en skriptad modell: svar, utkast, verktyg med argument, modellanrop och tokens; `ask_user` får det fasta svaret; ett utkast som kontrollen och ett som granskaren skickar tillbaka, med skälen ur återkopplingen; ett `read_section` till ett mål ur ett tidigare svars hänvisningar; ett verktygsfel; ett fel med en hemlighet som döljs; en nyckel som OpenAI inte tar emot stoppar körningen; tidsgränsen; gränsen för modellanrop; tokens, kostnad och felgrupper |
+| `tests/unit/evals/test_answer_steps.py` | 14 | Varje anrop i ordning med argument och utfall; mål ur hänvisningar (position eller nummer, bara ur svar före anropet, inte hela filer, också ur `resolve_reference` och ur JSON-texten) och ändringar ur `find_amendments`; varje regels egna fel räknas till rätt regel; återkopplingens rader och de underkända utkasten |
+| `tests/unit/evals/test_answer_scores.py` | 20 | Citatens positioner ur utkastet, källor på plats (position eller nummer), bara godkända citat, avtal med samma nyckel, regeln för svar utan utkast, sammanfattningen (där ett svar utan utkast inte räknas som "framgår inte"), agentens väg (verktyg, modellanrop, läsningar och nya försök efter regel, det som inte sparades för sig), kategorierna och percentilen |
+| `tests/unit/evals/test_answer_report.py` | 21 | Rapporternas namn, Markdown med svenska tal, skäl, fel och svar som citat, utan domare, en domare som inte svarade, svar utan utkast, samma modell som agent och granskare, raden Följdfrågor också vid noll, vägen per fråga med argument och märken, tabellerna per verktyg och regel, det som inte sparades, commit och prompternas hash, JSON, utskriften, och mappen som prövas före körningen och vid skrivning |
 | `tests/unit/evals/test_judge.py` | 8 | Domarens klient, frågan med båda svaren, att ingen text kan avsluta sitt element, det strikta schemat, ett lyckat och två misslyckade anrop |
-| `tests/unit/evals/test_run_answer_eval.py` | 15 | Urvalet av frågor, inställningarna, bedömningen (ingen utan domare), avtal-mcp som inte svarar, en nyckel som OpenAI inte tar emot, frågor åt gången i facits ordning, kommandoradens utskrift och fel, och en mapp som inte går att skriva i stoppar före första frågan |
+| `tests/unit/evals/test_run_answer_eval.py` | 19 | Urvalet av frågor, inställningarna, commit och ändringar ur git (och utan git), prompternas hash, bedömningen (ingen utan domare), avtal-mcp som inte svarar, en nyckel som OpenAI inte tar emot, frågor åt gången i facits ordning, kommandoradens utskrift och fel, och en mapp som inte går att skriva i stoppar före första frågan |
 
 ## Kända begränsningar
 
@@ -212,6 +243,10 @@ ställs, så en körning som har kostat pengar inte går förlorad på slutet.
   drygt tre procentenheter.
 - **Facits källor räknas på plats.** Samma text i en fil som facit inte anger räknas inte (q18 och
   q19 citerade samma mening i en annan fil), så 78 procent är en undre gräns.
+- **Agentens väg är läst ur meddelandena.** Skälen till ett nytt försök räknas till regel efter
+  hur regeln formulerar sina fel, och ett `read_section` till ett mål ur en hänvisning säger att
+  agenten hade hänvisningen framför sig, inte varför den valde avsnittet: målet kan också ha
+  funnits i en sökträff.
 - **Kostnaden är ett intervall**, eftersom priset för cachad indata saknas i prislistan. Omkring 84
   procent av agentens indata var cachad.
 - **Ersättaren och databasen.** De två första körningarna är mot ersättaren och den tredje mot

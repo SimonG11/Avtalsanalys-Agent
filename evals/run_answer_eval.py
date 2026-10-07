@@ -10,9 +10,10 @@ What:
       its quotes the citation check found word for word;
     - which of the gold's document sources it cites with a checked quote,
       and which of the gold's agreements its register facts cover;
-    - how many new attempts the check asked for, which tools the agent
-      called, whether it asked the user, how long it took, and the tokens
-      and cost of each model (`answer_run`).
+    - how many new attempts the check asked for and why, which tools the
+      agent called with what arguments, how many model calls it made,
+      whether it asked the user, how long it took, and the tokens and cost
+      of each model (`answer_run`, `answer_steps`).
     It writes a Markdown report in Swedish and a JSON report to
     evals/reports/ (`answers-<agent model>-<effort>[-<label>]`,
     `answer_report`) and prints the overall numbers.
@@ -43,12 +44,19 @@ How:
     recorded with its error, and the run goes on. Errors that stop the run
     end it with one line and exit code 1, as the agent's command line does
     (`describe_failure`); the OpenAI key and the database password are
-    never printed.
+    never printed. Before the questions, `run_info` notes what is measured:
+    the commit of the repository the agent's code is imported from, and
+    whether its working tree had changes (`code_commit`, by git; unknown
+    without git), and the sha256 of SYSTEM_PROMPT (before the date is filled
+    in) and of REVIEWER_PROMPT, so a report says which code and prompts it
+    measured.
 """
 
 import argparse
 import asyncio
+import hashlib
 import logging
+import subprocess
 import sys
 import time
 import uuid
@@ -62,12 +70,14 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
+import avtalsagent
 from avtalsagent.agent.__main__ import CommandError, describe_failure
 from avtalsagent.agent.checkpointer import open_checkpointer
 from avtalsagent.agent.graph import build_agent
 from avtalsagent.agent.mcp_tools import open_mcp_tools
 from avtalsagent.agent.model import make_agent_model
-from avtalsagent.agent.reviewer import make_reviewer
+from avtalsagent.agent.prompts import SYSTEM_PROMPT
+from avtalsagent.agent.reviewer import REVIEWER_PROMPT, make_reviewer
 from avtalsagent.agent.schemas import Answer
 from avtalsagent.config import Settings, get_settings
 from avtalsagent.ingestion.__main__ import configure_logging, positive_int
@@ -102,6 +112,7 @@ DEFAULT_CONCURRENCY = 4
 DEFAULT_TIMEOUT = 600  # seconds per question, new attempts and the review included
 DEFAULT_JUDGE_EFFORT: ReasoningEffort = "medium"
 EFFORTS: tuple[ReasoningEffort, ...] = ("low", "medium", "high", "xhigh")
+GIT_TIMEOUT = 10  # seconds for each git command that finds the commit measured
 
 # --- The run (models, avtal-mcp) --------------------------------------------------------------
 
@@ -341,7 +352,38 @@ def run_settings(settings: Settings, effort: ReasoningEffort | None) -> Settings
     return settings.model_copy(update=changes)
 
 
+def code_commit(where: Path) -> tuple[str | None, bool]:
+    """The short sha of the commit checked out at `where`, and whether the tree has changes.
+
+    Changes are what `git status` lists: edits, and files git neither tracks
+    nor ignores. (None, False) when git cannot tell: no git, or no repository
+    (compose's `eval` container has neither).
+    """
+    try:
+        head = _git(where, "rev-parse", "--short", "HEAD")
+        status = _git(where, "status", "--porcelain")
+    except (OSError, subprocess.SubprocessError):
+        return None, False
+    return head.strip() or None, bool(status.strip())
+
+
+def _git(where: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-C", str(where), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=GIT_TIMEOUT,
+    )
+    return done.stdout
+
+
+def sha256_of(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def run_info(settings: Settings, args: argparse.Namespace, judge_model: str | None) -> RunInfo:
+    commit, uncommitted = code_commit(Path(avtalsagent.__file__).parent)
     return RunInfo(
         agent_model=settings.agent_model,
         agent_effort=settings.agent_reasoning_effort,
@@ -355,6 +397,10 @@ def run_info(settings: Settings, args: argparse.Namespace, judge_model: str | No
         concurrency=args.concurrency,
         timeout=float(args.timeout),
         label=args.label,
+        commit=commit,
+        uncommitted=uncommitted,
+        system_prompt_sha256=sha256_of(SYSTEM_PROMPT),
+        reviewer_prompt_sha256=sha256_of(REVIEWER_PROMPT),
     )
 
 
