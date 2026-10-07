@@ -283,16 +283,30 @@ test("keeps the text readable in the dark theme and lets the person switch theme
   await expect(page.getByTestId("source-panel").locator("mark.quote-mark")).toHaveCount(2);
 
   // Every visible text element has a contrast of at least 4.5:1 against what is behind it.
-  const worst = await page.evaluate(lowestContrast);
-  expect(worst.ratio, `${worst.text} (${worst.color} on ${worst.background})`).toBeGreaterThan(4.5);
+  await expectReadable(page);
 
   // The header's button switches to the light theme, and the page follows.
   await page.getByRole("button", { name: "Ljust tema" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  const light = await page.evaluate(lowestContrast);
-  expect(light.ratio, `${light.text} (${light.color} on ${light.background})`).toBeGreaterThan(4.5);
+  await expectReadable(page);
   await expect(page.getByRole("button", { name: "Mörkt tema" })).toBeVisible();
 });
+
+/**
+ * Measures until every visible text is readable, and names the worst text if it never is. Right
+ * after a theme switch the browser can, for a moment, still report an element's old colour
+ * against the new background (seen once in CI), so a single measurement is not enough.
+ */
+async function expectReadable(page: Page): Promise<void> {
+  await expect
+    .poll(async () => {
+      const worst = await page.evaluate(lowestContrast);
+      return worst.ratio > 4.5
+        ? "readable"
+        : `${worst.text} (${worst.color} on ${worst.background}): ${worst.ratio.toFixed(2)}`;
+    })
+    .toBe("readable");
+}
 
 /**
  * Runs in the page: the lowest contrast between a visible text element's colour and the first
