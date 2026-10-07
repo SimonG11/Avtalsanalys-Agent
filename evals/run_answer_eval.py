@@ -61,9 +61,11 @@ How:
     commit AVTALSAGENT_COMMIT names (`measured_commit`; compose's `eval`
     container has no git), else unknown; and the sha256 of SYSTEM_PROMPT
     (before the date is filled in; in workflow mode of the baseline's
-    `baseline_prompts`) and of REVIEWER_PROMPT, so a report says
-    which code and prompts it measured. The commit is the code of this
-    process: the agent and the measurement, and avtal-mcp only over stdio.
+    `baseline_prompts`), of REVIEWER_PROMPT and, with a judge, of
+    JUDGE_PROMPT and ASK_JUDGE_PROMPT together, so a report says which code
+    and prompts it measured, and by which prompts it was judged. The commit
+    is the code of this process: the agent and the measurement, and
+    avtal-mcp only over stdio.
 """
 
 import argparse
@@ -121,9 +123,9 @@ from evals.answer_run import (
     total_use,
 )
 from evals.answer_scores import JudgedBy, QuestionResult, rule_judgement, score
-from evals.ask_judge import AskJudgement, ModelAskJudge
+from evals.ask_judge import ASK_JUDGE_PROMPT, AskJudgement, ModelAskJudge
 from evals.gold import GoldError, GoldFile, GoldQuestion, load_gold
-from evals.judge import Judgement, ModelJudge, ReasoningEffort, make_judge_model
+from evals.judge import JUDGE_PROMPT, Judgement, ModelJudge, ReasoningEffort, make_judge_model
 from evals.workflow_baseline import baseline_prompts, build_workflow
 
 _log = logging.getLogger("evals.answers")
@@ -512,6 +514,9 @@ def run_info(settings: Settings, args: argparse.Namespace, judge_model: str | No
         uncommitted=uncommitted,
         system_prompt_sha256=sha256_of(prompt),
         reviewer_prompt_sha256=sha256_of(REVIEWER_PROMPT),
+        judge_prompt_sha256=(
+            sha256_of(f"{JUDGE_PROMPT}\n\n{ASK_JUDGE_PROMPT}") if judge_model else None
+        ),
         mode=mode,
     )
 

@@ -369,6 +369,17 @@ def searches(run: QuestionRun) -> list[Mapping[str, Any]]:
     [
         # A sub-area the register has in one procurement: the search keeps that procurement.
         ({}, [row("23.3-5890-2023-001"), row("23.3-5890-2023-002")], "23.3-5890-2023"),
+        # A blank agreement number is none, so the register still narrows the search.
+        (
+            {"agreement_number": ""},
+            [row("23.3-5890-2023-001"), row("23.3-5890-2023-002")],
+            "23.3-5890-2023",
+        ),
+        (
+            {"agreement_number": "  "},
+            [row("23.3-5890-2023-001"), row("23.3-5890-2023-002")],
+            "23.3-5890-2023",
+        ),
         # A supplier with one agreement there: the search keeps that agreement.
         (
             {"supplier": "Consid", "sub_area": "Ledning av IT-projekt"},

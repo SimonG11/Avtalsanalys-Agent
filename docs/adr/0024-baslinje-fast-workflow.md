@@ -43,7 +43,7 @@ påstående, inte ett mätt resultat.
    1. ett strukturerat modellanrop som läser frågan (`QueryPlan`): ramavtalsområde (ett av
       pilotens fyra, eller inget), delområde, avtalsnummer, leverantör, en sökfråga och en
       sökfråga för Frågor och svar. En sökfråga kortas till verktygets 500 tecken, och en som är
-      tom eller kortare än två tecken blir frågan;
+      tom eller kortare än två tecken blir frågan (den för Frågor och svar blir sökfrågan);
    2. `search_register` när frågan nämner ett område, ett delområde, ett avtal eller en
       leverantör. Vägras anropet görs det om utan delområdet och sedan utan avtalet; har svaret
       fler rader än en sida (`total`) hämtas resten med `offset`, högst 100 rader. Anger frågan
@@ -82,14 +82,14 @@ påstående, inte ett mätt resultat.
    baslinjen; bedömningen, domaren, källorna, registeruppgifterna och kostnaden är desamma.
    Rapporten heter `answers-<modell>-<resonemang>-workflow[-<etikett>]`, säger att det är
    baslinjen och listar stegen. `python -m evals.compare_answer_runs A.json B.json` jämför två
-   rapporter av samma guldfil och samma frågor, bedömda av samma domare och mätta mot samma
-   avtal-mcp (annars vägrar den), och listar de inställningar där körningarna skiljer sig åt
-   (modell, resonemang, granskare, gränser). Den ger per kategori och totalt rätt (rätt 1,
-   delvis rätt 0,5, fel 0; en fråga utan svar, ett fel i körningen, räknas som fel, och ett svar
-   som domaren inte bedömde räknas inte), andelen kontrollerade svar, facits källor, tid,
-   modellanrop och kostnad, och den parade skillnaden B−A med antalet parade frågor för rätt och
-   för facits källor. Ett 95 %-intervall (`metrics.paired_bootstrap`) ges bara över minst tio
-   frågor: på tre frågor med samma tecken har percentilintervallet ingen bredd, fast ett
+   rapporter av samma guldfil och samma frågor, bedömda av samma domare (modell, resonemang och
+   prompt) och mätta mot samma avtal-mcp (annars vägrar den), och listar de inställningar där
+   körningarna skiljer sig åt (modell, resonemang, granskare, gränser). Den ger per kategori och
+   totalt rätt (rätt 1, delvis rätt 0,5, fel 0; en fråga utan svar, ett fel i körningen, räknas som
+   fel, och ett svar som domaren inte bedömde räknas inte), andelen kontrollerade svar, facits
+   källor, tid, modellanrop och kostnad, och den parade skillnaden B−A med antalet parade frågor för
+   rätt och för facits källor. Ett 95 %-intervall (`metrics.paired_bootstrap`) ges bara över minst
+   tio frågor: på tre frågor med samma tecken har percentilintervallet ingen bredd, fast ett
    teckentest ger p = 0,25.
 6. **Oklara frågor i testsamlingens format.** En fråga kan säga om agenten ska fråga användaren
    (`should_ask`), vilka alternativ en bra motfråga ger (`options`) och användarens svar
@@ -98,11 +98,11 @@ påstående, inte ett mätt resultat.
    aldrig kan, läser domaren vilka fall frågan passar och vilket fall facit bygger på, och ett
    svar som ger facits svar för det fallet och säger att det gäller det fallet har kärnan
    (domarens regel 7). Annars räknades oförmågan att fråga två gånger: under Motfrågor och som
-   fel svar mot ett facit som bygger på ett förtydligande svaret aldrig fick. En andra domare
-   (samma modell och nivå) avgör om motfrågan låter
-   användaren välja mellan de väntade alternativen, och en motfråga räknas som rätt bara då. För
-   en kontrollfråga är det rätt att inte fråga, och en motfråga räknas som onödig. Rapporten får
-   avsnittet Motfrågor. Baslinjen kan inte fråga och får 0 av de frågor där den borde.
+   fel svar mot ett facit som bygger på ett förtydligande svaret aldrig fick. En andra domare (samma
+   modell och nivå) avgör om motfrågan låter användaren välja mellan de väntade alternativen, och en
+   motfråga räknas som rätt bara då. För en kontrollfråga är det rätt att inte fråga, och en
+   motfråga räknas som onödig. Rapporten får avsnittet Motfrågor. Baslinjen kan inte fråga och får 0
+   av de frågor där den borde.
 7. **Jämförelsen körs mot ersättaren för avtal-mcp** tills den riktiga databasen finns där
    mätningen körs. Rapporten säger vilken avtal-mcp den mätte, som förut.
 
@@ -115,9 +115,10 @@ påstående, inte ett mätt resultat.
 - Baslinjen är vår egen konstruktion. Ett annat arbetsflöde kunde göra bättre eller sämre ifrån
   sig, så jämförelsen gäller just detta: ett starkt, fast arbetsflöde med samma byggstenar.
   Gränserna (fem, fem och tre avsnitt) är valda, inte uppmätta.
-- Baslinjen gör minst två modellanrop per fråga (fler när kontrollen skickar tillbaka utkastet)
-  men skickar fler lästa avsnitt i svarsanropet än agenten brukar läsa. En provkörning av q01 mot ersättaren tog 30 sekunder, kostade 0,09 USD för
-  agentmodellen och granskaren och blev rätt; vad hela jämförelsen visar är inte mätt än.
+- Baslinjen gör minst två modellanrop per fråga (fler när kontrollen skickar tillbaka utkastet) men
+  skickar fler lästa avsnitt i svarsanropet än agenten brukar läsa. En provkörning av q01 mot
+  ersättaren tog 30 sekunder, kostade 0,09 USD för agentmodellen och granskaren och blev rätt; vad
+  hela jämförelsen visar är inte mätt än.
 - Motfrågornas domare är en språkmodell, som svarsdomaren, och kan döma fel; dess skäl står i
   rapporten. Med fyra frågor där agenten ska fråga är talet grovt, och utkastet behöver godkännas
   innan det läggs i repot.

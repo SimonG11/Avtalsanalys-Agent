@@ -4,16 +4,17 @@ What:
     `python -m evals.compare_answer_runs A.json B.json [--out DIR]` reads
     two JSON reports of `run_answer_eval` (`load_run`), refuses them unless
     they were measured on the same gold file and the same questions, by the
-    same judge and against the same avtal-mcp (`check_comparable`), and
-    writes a Swedish Markdown comparison (`render_comparison`) to
-    `compare-<A>-vs-<B>.md` in DIR: the settings in which the runs differ;
-    for all questions and per category, each run's right-score, verified
-    share, gold sources cited, median seconds, median model calls and cost;
-    the paired difference B - A with the questions it pairs and, over at
-    least MIN_PAIRS_FOR_INTERVAL questions, its 95 % bootstrap interval,
-    for the right-score and the gold sources cited; each question's two
-    verdicts side by side; and the questions to the user, when the gold
-    file says whether the agent should ask.
+    same judge (its model, effort and prompts) and against the same
+    avtal-mcp (`check_comparable`), and writes a Swedish Markdown
+    comparison (`render_comparison`) to `compare-<A>-vs-<B>.md` in DIR:
+    the settings in which the runs differ; for all questions and per
+    category, each run's right-score, verified share, gold sources cited,
+    median seconds, median model calls and cost; the paired difference
+    B - A with the questions it pairs and, over at least
+    MIN_PAIRS_FOR_INTERVAL questions, its 95 % bootstrap interval, for the
+    right-score and the gold sources cited; each question's two verdicts
+    side by side; and the questions to the user, when the gold file says
+    whether the agent should ask.
 
         uv run python -m evals.compare_answer_runs agent.json workflow.json
 
@@ -34,11 +35,12 @@ How:
     the runs, on the machine they were written on (the reports hold the
     answers and stay out of git). A verdict scores as `answer_scores.
     verdict_score` gives (correct 1, partly correct 0.5, incorrect 0); a
-    question the run gave no answer to (an error or a timeout) scores 0,
-    as a run's own report counts it, so a run that fails more is not
-    flattered; an answer left unjudged (no judge, or no verdict) has no
-    score there, and the paired difference counts the questions scored in
-    both. Gold sources cited are compared per question as the share of its
+    question the run gave no answer to (an error or a timeout) scores 0
+    when the run had a judge, as its own report counts it, so a run that
+    fails more is not flattered; an answer left unjudged (no judge, or no
+    verdict) has no score there, nor has any question of a run without a
+    judge, and the paired difference counts the questions scored in both.
+    Gold sources cited are compared per question as the share of its
     sources cited, over the questions that have document sources. On fewer
     than MIN_PAIRS_FOR_INTERVAL questions (most categories) the
     percentile bootstrap says nothing (on three questions all of one sign
@@ -97,12 +99,17 @@ class QuestionRow:
     model_calls: int | None
     cost: tuple[float, float] | None
     error: str | None
+    judged: bool  # whether the run had a judge
 
     @property
     def score(self) -> float | None:
-        """The verdict's score; 0 for a run that gave no answer (an error), as reports count it."""
+        """The verdict's score; None for an answer not judged.
+
+        A question the run gave no answer to (an error) scores 0 when the run had a
+        judge, as its report counts it, and None without one, like every answer of the run.
+        """
         if self.status is None:
-            return 0.0
+            return 0.0 if self.judged else None
         return verdict_score(self.verdict)
 
     @property
@@ -127,6 +134,7 @@ class RunReport:
     # How the run was made, as its report's RunInfo gives it; None where it does not.
     judge_model: str | None = None  # also None without a judge (--no-judge)
     judge_effort: str | None = None
+    judge_prompt_sha256: str | None = None  # also None in a report from before it was saved
     reviewer_model: str | None = None
     reviewer_effort: str | None = None
     reviewer_prompt_sha256: str | None = None
@@ -183,10 +191,14 @@ def load_run(path: Path) -> RunReport:
             label=run.get("label"),
             gold_sha256=str(gold["sha256"]),
             gold_path=str(gold["path"]),
-            questions=tuple(_row_of(item) for item in data["questions"]),
+            questions=tuple(
+                _row_of(item, judged=run.get("judge_model") is not None)
+                for item in data["questions"]
+            ),
             asks=data.get("asks"),
             judge_model=run.get("judge_model"),
             judge_effort=run.get("judge_effort"),
+            judge_prompt_sha256=run.get("judge_prompt_sha256"),
             reviewer_model=run.get("reviewer_model"),
             reviewer_effort=run.get("reviewer_effort"),
             reviewer_prompt_sha256=run.get("reviewer_prompt_sha256"),
@@ -201,7 +213,7 @@ def load_run(path: Path) -> RunReport:
         raise CompareError(f"{path} is not a report of run_answer_eval ({error!r})") from None
 
 
-def _row_of(item: Mapping[str, Any]) -> QuestionRow:
+def _row_of(item: Mapping[str, Any], judged: bool) -> QuestionRow:
     cost = item.get("cost")
     return QuestionRow(
         id=str(item["id"]),
@@ -214,20 +226,25 @@ def _row_of(item: Mapping[str, Any]) -> QuestionRow:
         model_calls=item.get("model_calls"),
         cost=(float(cost["low"]), float(cost["high"])) if cost else None,
         error=item.get("error"),
+        judged=judged,
     )
 
 
 def check_comparable(a: RunReport, b: RunReport) -> None:
-    """Refuse reports of different gold files or questions, judges or avtal-mcp servers."""
+    """Refuse reports of different gold files or questions, judges or avtal-mcp servers.
+
+    A judge is its model, its effort and its prompts' hash.
+    """
     if a.gold_sha256 != b.gold_sha256:
         raise CompareError(
             f"the reports are of different gold files ({a.gold_sha256[:12]} and "
             f"{b.gold_sha256[:12]}): compare runs of the same file"
         )
-    if (a.judge_model, a.judge_effort) != (b.judge_model, b.judge_effort):
+    judges = [(r.judge_model, r.judge_effort, r.judge_prompt_sha256) for r in (a, b)]
+    if judges[0] != judges[1]:
         raise CompareError(
-            f"the reports were judged differently ({a.judge_model} {a.judge_effort} and "
-            f"{b.judge_model} {b.judge_effort}): compare runs with the same judge"
+            f"the reports were judged differently ({_judged_by(a)} and {_judged_by(b)}): "
+            "compare runs with the same judge"
         )
     if a.mcp != b.mcp:
         raise CompareError(
@@ -241,6 +258,12 @@ def check_comparable(a: RunReport, b: RunReport) -> None:
             "the reports have different questions "
             f"(only in A: {', '.join(only_a) or 'none'}; only in B: {', '.join(only_b) or 'none'})"
         )
+
+
+def _judged_by(run: RunReport) -> str:
+    """How the run was judged, for a refusal: 'gpt-6-astra medium, prompts 1a2b3c4d5e6f'."""
+    prompts = run.judge_prompt_sha256[:12] if run.judge_prompt_sha256 else "unknown"
+    return f"{run.judge_model} {run.judge_effort}, prompts {prompts}"
 
 
 # --- The numbers ------------------------------------------------------------------------------
@@ -372,7 +395,7 @@ def _md_group(
     lines = [
         f"{level} {md(title)} ({x.questions} frågor)",
         "",
-        md_row(["Mått", "A", "B", "B−A (95 %)"]),
+        md_row(["Mått", "A", "B", "B−A"]),
         md_row(["---", "---:", "---:", "---:"]),
         md_row(["Rätt (poäng)", _right(x), _right(y), _difference(right)]),
         md_row(

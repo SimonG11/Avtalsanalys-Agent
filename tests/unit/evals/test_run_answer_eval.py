@@ -37,9 +37,9 @@ from evals import run_answer_eval as runner
 from evals.answer_report import AnswerReport, RunInfo
 from evals.answer_run import QuestionRun, TokenUse
 from evals.answer_scores import score
-from evals.ask_judge import AskJudgement, ModelAskJudge
+from evals.ask_judge import ASK_JUDGE_PROMPT, AskJudgement, ModelAskJudge
 from evals.gold import GoldError, GoldFile, GoldQuestion, GoldScope, RegisterSource
-from evals.judge import Judgement, ModelJudge
+from evals.judge import JUDGE_PROMPT, Judgement, ModelJudge
 from evals.run_answer_eval import (
     Judge,
     ask_question,
@@ -253,6 +253,10 @@ def test_the_run_info_names_the_commit_and_the_prompts_hashes(
     assert info.system_prompt_sha256 == hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
     assert info.reviewer_prompt_sha256 == hashlib.sha256(REVIEWER_PROMPT.encode()).hexdigest()
     assert info.system_prompt_sha256 != info.reviewer_prompt_sha256
+    assert info.judge_prompt_sha256 is None  # no judge
+    judged = run_info(Settings(_env_file=None), args, "gpt-6-astra")
+    prompts = f"{JUDGE_PROMPT}\n\n{ASK_JUDGE_PROMPT}"
+    assert judged.judge_prompt_sha256 == hashlib.sha256(prompts.encode()).hexdigest()
     # In compose's eval container git cannot tell, and the variable names the commit.
     monkeypatch.setattr(runner, "code_commit", lambda path: (None, False))
     monkeypatch.setenv("AVTALSAGENT_COMMIT", "4ea5dd2")

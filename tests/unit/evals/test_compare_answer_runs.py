@@ -41,6 +41,7 @@ INFO = RunInfo(
     concurrency=4,
     timeout=600.0,
     label=None,
+    judge_prompt_sha256="c3" * 32,
 )
 
 
@@ -178,10 +179,17 @@ def test_reports_of_another_gold_file_or_other_questions_are_refused(tmp_path: P
         check_comparable(a, replace(b, gold_sha256="f" * 64))
     with pytest.raises(CompareError, match=r"only in A: q05; only in B: none"):
         check_comparable(a, replace(b, questions=b.questions[:4]))
-    with pytest.raises(CompareError, match=r"judged differently \(gpt-6-astra medium and"):
+    judge = r"judged differently \(gpt-6-astra medium, prompts c3c3c3c3c3c3 and gpt-6-astra "
+    with pytest.raises(CompareError, match=judge + "high, prompts c3c3c3c3c3c3"):
         check_comparable(a, replace(b, judge_effort="high"))
+    # The judges' prompts changed, or were not recorded yet.
+    with pytest.raises(CompareError, match=judge + "medium, prompts d4d4d4d4d4d4"):
+        check_comparable(a, replace(b, judge_prompt_sha256="d4" * 32))
+    with pytest.raises(CompareError, match=judge + "medium, prompts unknown"):
+        check_comparable(a, replace(b, judge_prompt_sha256=None))
+    no_judge = replace(b, judge_model=None, judge_effort=None, judge_prompt_sha256=None)
     with pytest.raises(CompareError, match="judged differently"):
-        check_comparable(a, replace(b, judge_model=None, judge_effort=None))  # --no-judge
+        check_comparable(a, no_judge)  # --no-judge
     with pytest.raises(CompareError, match="different avtal-mcp servers"):
         check_comparable(a, replace(b, mcp="http://127.0.0.1:18011/mcp"))
 
@@ -250,6 +258,34 @@ def test_a_question_a_run_did_not_answer_counts_as_wrong(tmp_path: Path) -> None
     )
     assert "; 12 frågor) |" in markdown  # twelve pairs: the interval is shown
     assert "| q11 | enkel | Fel i körningen | Rätt | ≠ |" in markdown
+
+
+def test_without_a_judge_a_question_a_run_did_not_answer_has_no_score(tmp_path: Path) -> None:
+    unjudged = replace(INFO, judge_model=None, judge_effort=None, judge_prompt_sha256=None)
+    agent = tuple(
+        failed(id, c) if id == "q05" else result(id, c, None, 30.0) for id, c, _, _ in VERDICTS
+    )
+    workflow = tuple(result(id, c, None, 20.0) for id, c, _, _ in VERDICTS)
+    base = AnswerReport(
+        created_at=datetime(2026, 10, 7, tzinfo=UTC),
+        gold_path="evals/datasets/gold_sv.jsonl",
+        gold_sha256="7b4a" + "0" * 60,
+        gold_questions=30,
+        info=unjudged,
+        seconds=60.0,
+        results=agent,
+    )
+    a = load_run(write(tmp_path, "a", base))
+    b = load_run(write(tmp_path, "b", replace(base, results=workflow)))
+    check_comparable(a, b)
+
+    markdown = render_comparison(a, b)
+
+    # The timeout is not judged either, so it does not make the run look 0 % right.
+    assert "| Rätt (poäng) | 0 av 0; 5 ej bedömda | 0 av 0; 5 ej bedömda | – |" in markdown
+    assert paired_difference(a.questions, b.questions, lambda row: row.score) is None
+    assert "- **Domare:** ingen (--no-judge)" in markdown
+    assert "| q05 | jämförelse | Fel i körningen | Ej bedömd |" in markdown
 
 
 def test_the_command_writes_the_comparison_or_stops_with_one_line(

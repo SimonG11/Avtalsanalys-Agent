@@ -232,6 +232,7 @@ def test_the_markdown_without_a_judge_says_so() -> None:
     assert "- **Domare:** ingen (--no-judge)" in markdown
     assert "Frågor som avtalen inte besvarar" not in markdown
     assert "Domaren svarade inte" not in markdown
+    assert "domarnas prompter" not in markdown
     assert overall_lines(unjudged)[1] == "judge: none (--no-judge)"
 
 
@@ -558,6 +559,7 @@ def test_the_run_names_the_commit_and_the_prompts_it_measured() -> None:
             "uncommitted": True,
             "system_prompt_sha256": "5a" * 32,
             "reviewer_prompt_sha256": "6b" * 32,
+            "judge_prompt_sha256": "7c" * 32,
         }
     )
     markdown = render_markdown(replace(report(), info=measured))
@@ -571,7 +573,8 @@ def test_the_run_names_the_commit_and_the_prompts_it_measured() -> None:
     # The agent's prompt is hashed as the template, before the date is filled in.
     assert (
         "- **Prompter, sha256:** agentens systemprompt `5a5a5a5a5a5a` (mallen `SYSTEM_PROMPT`, "
-        "innan dagens datum fylls i), granskarens prompt `6b6b6b6b6b6b`" in markdown
+        "innan dagens datum fylls i), granskarens prompt `6b6b6b6b6b6b`, domarnas prompter "
+        "`7c7c7c7c7c7c` (`JUDGE_PROMPT` och `ASK_JUDGE_PROMPT`)\n" in markdown
     )
     assert (
         "- **Agent:** gpt-6.1-sol, resonemang low, högst 16 modellanrop per körning av grafen "
@@ -597,7 +600,8 @@ def test_the_run_names_the_commit_and_the_prompts_it_measured() -> None:
     )
     assert (
         "- **Prompter, sha256:** agentens systemprompt inte sparat (mallen `SYSTEM_PROMPT`, "
-        "innan dagens datum fylls i), granskarens prompt inte sparat" in unknown
+        "innan dagens datum fylls i), granskarens prompt inte sparat, domarnas prompter inte "
+        "sparat (`JUDGE_PROMPT` och `ASK_JUDGE_PROMPT`)\n" in unknown
     )
 
 

@@ -44,11 +44,12 @@ How:
        agreement number, supplier, a search query, and a query for Frågor
        och svar. A plan that does not parse falls back to the question as
        both queries and no filters. A query is cut to QUERY_CHARS, and one
-       shorter than MIN_QUERY_CHARS is the question (`searchable`). The
-       call runs under the run's config (LangGraph sets it for the node),
-       so its tokens reach the run's callbacks. It is counted as a model
-       call: the hook adds 1 to ModelCallLimitMiddleware's thread and run
-       counts, so the limit and the report include it.
+       blank or shorter than MIN_QUERY_CHARS is the question (the one for
+       Frågor och svar is the search query; `searchable`). The call runs
+       under the run's config (LangGraph sets it for the node), so its
+       tokens reach the run's callbacks. It is counted as a model call: the
+       hook adds 1 to ModelCallLimitMiddleware's thread and run counts, so
+       the limit and the report include it.
     2. `RegisterStep`: `search_register` with the area, sub-area, agreement
        and supplier, when the plan names any of them. A refused call is
        made again without the sub-area, then without the agreement number
@@ -166,7 +167,7 @@ FIXED_STEPS: tuple[str, ...] = (
     "Modellen läser frågan en gång och anger ramavtalsområde (ett av pilotens), delområde, "
     "avtalsnummer, leverantör, en sökfråga och en sökfråga för Frågor och svar (ett "
     f"modellanrop, som räknas). En sökfråga kortas till {QUERY_CHARS} tecken, och en som är "
-    "tom eller för kort blir frågan.",
+    "tom eller för kort blir frågan (den för Frågor och svar blir sökfrågan).",
     "`search_register` med området, delområdet, avtalet och leverantören, när frågan nämner "
     "något av dem. Vägras anropet görs det om utan delområdet och sedan utan avtalet; har "
     f"svaret fler rader än en sida hämtas resten med `offset`, högst {REGISTER_ROWS} rader. "
@@ -491,7 +492,7 @@ class RegisterStep(_FixedStep):
         if not given:
             return
         rows, args, complete = await _register_rows(trail, given)
-        if plan.agreement_number is None and complete:
+        if "agreement_number" not in given and complete:
             memory["narrowed"] = narrowed_number(rows, args)
 
 
@@ -501,7 +502,7 @@ class DocumentsStep(_FixedStep):
     async def take(
         self, plan: QueryPlan, memory: dict[str, Any], trail: _Trail, read: set[tuple[str, int]]
     ) -> None:
-        number = plan.agreement_number or memory.get("narrowed")
+        number = (plan.agreement_number or "").strip() or memory.get("narrowed")
         filters = _given(framework_area=plan.framework_area, agreement_number=number)
         found: list[ToolMessage] = []
         for tried in _loosened(filters, ("agreement_number", "framework_area")):

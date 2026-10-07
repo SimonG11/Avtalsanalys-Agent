@@ -139,6 +139,8 @@ class RunInfo:
     # baseline's prompt before the date is in, PLAN_PROMPT and QueryPlan's schema.
     system_prompt_sha256: str | None = None
     reviewer_prompt_sha256: str | None = None  # of REVIEWER_PROMPT
+    # Of JUDGE_PROMPT and ASK_JUDGE_PROMPT together; None without a judge (--no-judge).
+    judge_prompt_sha256: str | None = None
     mode: Mode = "agent"
 
 
@@ -446,6 +448,12 @@ def _md_run(report: AnswerReport) -> list[str]:
             f"agentens systemprompt {_sha(info.system_prompt_sha256)} (mallen `SYSTEM_PROMPT`, "
             "innan dagens datum fylls i)"
         )
+    prompts = f"{prompt}, granskarens prompt {_sha(info.reviewer_prompt_sha256)}"
+    if info.judge_model:
+        prompts += (
+            f", domarnas prompter {_sha(info.judge_prompt_sha256)} (`JUDGE_PROMPT` och "
+            "`ASK_JUDGE_PROMPT`)"
+        )
     return [
         "## Körning",
         "",
@@ -459,7 +467,7 @@ def _md_run(report: AnswerReport) -> list[str]:
         f"- **Samtidiga frågor:** {info.concurrency}; "
         f"tidsgräns {in_seconds(info.timeout)} per fråga",
         f"- **Kod:** {_commit(info)}",
-        f"- **Prompter, sha256:** {prompt}, granskarens prompt {_sha(info.reviewer_prompt_sha256)}",
+        f"- **Prompter, sha256:** {prompts}",
         "",
     ]
 
