@@ -1,6 +1,6 @@
 # ADR 0018: Ändringar efter granskningen: Kammarkollegiets meddelanden, fler ändringsord och frågans datum
 
-**Status:** Föreslaget (PR efter #18).
+**Status:** Godkänt (PR #20).
 Bygger ut besluten 2 och 3 i [ADR 0017](0017-andringar.md) om hur steg 4 läser ändringar, och
 R1q och R4q i [ADR 0009](0009-extraktion-avstamning-och-karantan.md). Resten av de besluten
 gäller.
