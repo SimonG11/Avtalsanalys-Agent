@@ -1,6 +1,6 @@
 # ADR 0021: Spårning med Langfuse: en spårning per fråga, samtalet som session, avstängd utan nycklar
 
-**Status:** Föreslaget.
+**Status:** Godkänt (PR #24).
 Genomför spårningen i arkitekturplanens avsnitt 8 och [arkitekturvalideringens](../validering.md)
 punkt 9, det som stod kvar av M7:s klart-när ("varje körning syns i Langfuse").
 

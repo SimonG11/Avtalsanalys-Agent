@@ -121,7 +121,7 @@ utlösts av den riktiga modellen; de är testade med en skriptad modell.
 flowchart TD
     F[Användarens fråga] --> B["before_agent: answer = null,<br/>nya försök = 0"]
     B --> M["Modellen<br/>systemprompten med dagens datum"]
-    M -- verktygsanrop --> T["avtal-mcp:s verktyg<br/>search_register, search_documents,<br/>read_section, resolve_reference,<br/>get_outline, list_documents"]
+    M -- verktygsanrop --> T["avtal-mcp:s verktyg<br/>search_register, search_documents,<br/>read_section, resolve_reference,<br/>get_outline, list_documents,<br/>calculate_date, find_amendments (efter M8)"]
     T -- svar eller fel --> M
     M -- ask_user --> I["Interrupt: frågan till användaren,<br/>körningen sparas i checkpointen"]
     I -- "svaret: Command(resume=…)" --> M

@@ -26,6 +26,9 @@ Listan "Giltiga ramavtal 2026-10-05", hämtad med `--download`:
 | Underkända rader | 0 |
 | Motsägelser | 0 |
 
+Listan ändras när avtal löper ut, tillkommer eller byter leverantör. Listan från 2026-10-07 har
+samma 4 507 rader och 2 361 avtal, men 797 leverantörer (varav 6 utländska) i stället för 802.
+
 ### Vad den riktiga filen lärde oss
 
 Första körningen, med reglerna som byggts på de 18 exempelraderna, underkände 79 rader och

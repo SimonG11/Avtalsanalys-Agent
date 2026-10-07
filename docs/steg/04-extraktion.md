@@ -79,7 +79,8 @@ de sidor som länkar till filen. Ett nummer som filen citerar inom parentes änd
 | **Totalt** | **16** | **5** | **11** |
 
 **I karantän: 12 filer och 4 avsnitt.** Varje fil har en avvikelse som en person bör titta på. Är
-den rätt skrivs den in i `accepted_findings.toml` (se nedan), och filen släpps.
+den rätt skrivs den in i `accepted_findings.toml` (se nedan), och filen släpps. Simon godkände nio
+av dem 2026-10-07; sedan dess ligger 3 filer och 4 avsnitt i karantän (se Täckning nedan).
 
 | Fil | Varför |
 |---|---|
@@ -120,6 +121,20 @@ det. 9 avtal täcks bara av dokument i karantän: de 8 för IT-säkerhet av `65d
 Microsofts volymavtal av `171a3cacf5fd`. IBM:s volymavtal 6765/05 har inget inläst huvuddokument.
 Täckningen ger ett fynd per grupp av avtal som täcks av samma filer, så de 33 avtalen i
 Bemanningstjänster är en notering och inte 33.
+
+**Efter Simons godkännanden** (avsnitt 5) och med registret från 2026-10-07 gav samma körning
+2026-10-07: 3 filer och 4 avsnitt i karantän (avropsmallen och IBM:s två skannade volymavtal), och
+66 av 121 avtal täckta (25 genom leverantörens eget ramavtal, 41 genom huvuddokumentet), 54 med
+bara upphandlingens version, 0 bara i karantän och 1 inte täckt (IBM). Hänvisningarna är
+oförändrade.
+
+| Ramavtalsområde | Avtal | Täckta | Bara upphandlingens version | Bara i karantän | Inte täckta |
+|---|---:|---:|---:|---:|---:|
+| IT-drift | 15 | 15 | | | |
+| Bemanningstjänster | 33 | | 33 | | |
+| IT-konsulttjänster Resurskonsulter | 44 | 36 | 8 | | |
+| Programvaror och tjänster | 29 | 15 | 13 | | 1 |
+| **Totalt** | **121** | **66** | **54** | **0** | **1** |
 
 **Hänvisningar.** Steg 4 hittade 14 757 hänvisningar i avsnitten och följde dem till fil och
 avsnitt bland filerna på samma avtalssidor.

@@ -110,6 +110,21 @@ missas är det agenten ska klara med fler steg:
 - *Ändringar* (q21): den gamla lydelsen kommer på plats 6 och rättelsen i frågeloggen på plats
   11. Agenten ska leta efter ändringar och ge dem företräde (verktyget som hittar ändringar, efter M7).
 
+**Mätt mot Postgres.** 2026-10-07 mättes samma frågor mot sökindexet i databasen, efter en hel
+inläsning med de nio godkända (13 935 bitar ur 204 filer, 44 bitar i karantän), med samma
+funktioner som sökningen använder (`evals/run_retrieval_eval.py` mot databasen):
+
+| Sökning | träff@1 | träff@10 | träff@20 | träff@50 | MRR@10 | nDCG@10 | alla@10 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| BM25 | 0,36 | 0,69 | 0,83 | 0,93 | 0,62 | 0,57 | 0,55 |
+| Vektor, 1 536 dim | 0,42 | 0,81 | 0,89 | 0,97 | 0,62 | 0,64 | 0,68 |
+| **Hybrid, 1 536 dim** | **0,49** | **0,84** | **0,93** | **0,97** | **0,78** | **0,72** | **0,77** |
+
+Hybriden mot BM25 är +0,145 i nDCG@10 (95 % intervall +0,039 till +0,257), mot vektorsökningen
++0,079 (−0,024 till +0,187). Mätningen utan databas med de nio godkända gav 0,84, 0,77 och
+0,71; en hundradel skiljer i MRR@10 och nDCG@10, så mätningen utan databas visar hur sökningen i
+produktion rankar.
+
 **Andra varianter** (hybrid, 1 536 dim):
 
 | Variant | träff@10 | MRR@10 | nDCG@10 |
@@ -302,8 +317,11 @@ inställningar: `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS` (1536), `EMBEDDING_BAT
   Samlingen ska växa med fler frågor och fler ramavtalsområden.
 - **Frågorna är skrivna av oss**, utifrån dokumenten, och granskas av Simon. Ingen upphandlare
   har ställt dem.
-- **Ingen omrankning.** En omrankare på processorn tar 25–80 sekunder per fråga. Den kan läggas
-  efter fusionen och mätas på samma frågor.
+- **Ingen omrankning.** Två omrankare mättes efter M11 på samma frågor
+  ([ADR 0020](../adr/0020-omrankning.md)). Qwen3-Reranker-0.6B gjorde toppen sämre (MRR@10 0,77
+  till 0,69). bge-reranker-v2-m3 på de 30 första höjde träff@10 från 0,84 till 0,91, men
+  skillnaden ligger inom bruset för 22 frågor och kostar omkring 30 sekunder per sökning på
+  processorn. Sökningen är därför utan omrankning.
 - **Hela indexet byggs om** när något ändras, eftersom BM25:s IDF och medellängd beror på alla
   bitar. Embeddings som redan finns hämtas ur cachen, så det tar några sekunder plus de nya
   texterna.
