@@ -56,11 +56,28 @@ löpnummer, som `23.3-5890-2023`, betyder hela upphandlingen. Ett värde som reg
 ett fel som säger vad modellen kan göra (ett okänt område listar alla områden), i stället för en
 tom lista som modellen skulle tolka som att avtalen inte säger något.
 
+**Ett filter utanför piloten är också ett fel** (tillagt efter M12). Registret har alla 51
+ramavtalsområden, men dokument är inlästa bara för pilotens fyra. Ett område, ett avtal eller en
+upphandling som registret har men som ingen fil som verktygen får visa matchar ger därför ett
+`NotFoundError` från både `search_documents` och `list_documents`: "Ramavtalsområdet Möbler och
+inredning finns i registret, men områdets dokument är inte inlästa. Områden med inlästa dokument:
+Bemanningstjänster, IT-drift, … Svara med det registret säger (search_register) och säg till
+användaren att områdets dokument inte är inlästa, …". Förut blev svaret en tom lista, och modellen
+skulle troligen svara att det inte framgår, eller söka utan filtret och citera ett annat områdes
+villkor. Filerna matchas som i sökningens filter, så ett avtal utan eget leverantörskort räknas som
+inläst när upphandlingens gemensamma filer är det. Varje filter prövas för sig och utan
+dokumenttyp: ett inläst område med ett avtal utanför piloten ger felet för avtalet, och en
+dokumenttyp som avtalet inte har är fortfarande en tom lista. En fil som hålls tillbaka hel räknas
+inte, som i verktygens svar, så ett område där alla filer hålls tillbaka kallas inte inläst. Utan
+index visas ingen fil, och då säger verktygen som förut att sökindexet inte är byggt. Kontrollen
+är en fråga mot `document_scope` per anrop, i `visibility.document_filters`, som båda verktygen
+tar sina filter från.
+
 **Felen** är skrivna för modellen och säger vad den ska göra härnäst:
 
 | Fel | När | Exempel på meddelande |
 |---|---|---|
-| `NotFoundError` | Filen, avsnittet eller värdet finns inte, hålls tillbaka eller är inte indexerat | "Det finns inget avsnitt med nummer 9.9 i dokumentet … Kontrollera numret med get_outline." |
+| `NotFoundError` | Filen, avsnittet eller värdet finns inte, hålls tillbaka eller är inte indexerat, eller filtrets dokument är inte inlästa | "Det finns inget avsnitt med nummer 9.9 i dokumentet … Kontrollera numret med get_outline." |
 | `AmbiguousError` | Två avsnitt har samma nummer, eller numret och platsen gäller olika avsnitt | "Numret 6.21.4 finns på flera avsnitt i dokumentet …: plats 0 (…), plats 1 (…). Ange section_position för det avsnitt du menar." |
 | `MissingArgumentError` | Inget av de argument som verktyget behöver ett av | "Ange minst ett av framework_area, agreement_number och document_type. …" |
 | `ArgumentError` (efter M8) | Argumenten går inte ihop, eller resultatet hamnar utanför de år som helgdagarna gäller för (`calculate_date`) | "Resultatet hamnar utanför 2005-01-01 till 2100-12-31, de år kalenderns helgdagar gäller för. …" |
@@ -160,7 +177,11 @@ underklasser till SDK:ts `ToolError`, så att servern släpper igenom dem till m
 område, ett avtalsnummer och ett upphandlingsnummer i registret och ger registrets stavning;
 `register_agreements` ger alla stavningar med samma nyckel. `document_filters` gör om filtren i
 `search_documents` och `list_documents` till sökningens `SearchFilters`, med den av avtalets
-stavningar som indexet sparade i `document_scope` (steg 6 sparar en per nyckel).
+stavningar som indexet sparade i `document_scope` (steg 6 sparar en per nyckel). Sist anropar den
+`require_loaded` (efter M12), som med en fråga läser varje fil i `document_scope` med sökningens
+eget villkor (`hybrid_search.scope_conditions`) för området och för avtalet eller upphandlingen,
+vart och ett för sig, och ger felet för ett filter utanför piloten när ingen fil som får visas
+matchar.
 
 ### 5. `mcp_server/results.py` och `references.py` – citatfälten och hänvisningarna
 
@@ -308,18 +329,18 @@ avsnittet eller på hela filen. Utan avsnitt kommer ändringarna av filen och av
 | Fil | Vad den visar |
 |---|---|
 | `tests/unit/mcp_server/test_mcp_server.py` | Verktygslistan i kontraktets ordning, läsande annoteringar, inga `session` eller `embedder` i schemat, slutna scheman (`additionalProperties: false`), svar som är modeller, svenska beskrivningar på verktyg och argument, inga `$defs`; argument utanför gränserna, tecknet NUL i varje texttyp och okända argumentnamn stoppas före sessionen, och kända namn går igenom; svaret som kompakt JSON med å, ä och ö som de är; databasfel och andra fel når modellen utan SQL eller lösenord; embeddern, dess timeout och arbetstråden; `/health` och Host-kontrollen över HTTP; kommandoraden |
-| `tests/unit/mcp_server/test_mcp_document_checks.py` | Nummer, plats eller båda; felet när avsnittet inte anges; sökningen utan embeddingmodell |
+| `tests/unit/mcp_server/test_mcp_document_checks.py` | Nummer, plats eller båda; felet när avsnittet inte anges; sökningen utan embeddingmodell; med en påhittad session (efter M12): ett område, avtal eller en upphandling utanför piloten är ett fel som räknar upp de inlästa områdena, i båda dokumentverktygen och innan frågan bäddas in, också bredvid ett inläst område, för båda filtren samtidigt och med en dokumenttyp; pilotens filter och ett avtal med bara upphandlingens gemensamma filer går igenom; en fil som hålls tillbaka hel räknas inte; ingen fil som visas ger inget fel; kontrollen är en fråga utan dokumenttyp |
 | `tests/unit/mcp_server/test_mcp_register_checks.py` | Att ett filter krävs (också att ett tomt `sub_area` inte räcker), organisationsnumrens former, `list_documents` utan index, gränserna, NUL, `offset` och standardvärdena i schemat, att varje dokumenttyp har en plats i ordningen |
 | `tests/unit/mcp_server/test_mcp_register_sql.py` | Med en påhittad session: ett avtal som registret skriver på två sätt hittas med båda stavningarna, dokumentfiltret tar den stavning som indexet sparade, och `search_register` frågar efter båda; `offset` och `limit` kommer efter sorteringen men inte i totalen; `sub_area` delas i delar som var och en blir ett villkor på vägen, med `%` och `_` som tecken, och ett delområde som inget delområde har är ett fel |
 | `tests/unit/mcp_server/test_mcp_calculate_date.py` (efter M8) | Resultatet och steget i varje enhet, `include_start` åt båda hållen och felet med arbetsdagar, helgdagarna i `skipped`, noterna om aftnar (också en afton efter resultatet), kort månad, lördag och helgdag; resultat utanför 2005–2100; genom MCP utan session, argument utanför gränserna, enheterna och riktningarna i schemat; att registerregeln godtar varje steg som verktyget skriver, underkänner det med resultatet en dag fel och godtar notens datum |
 | `tests/unit/mcp_server/test_mcp_find_amendments.py` (efter `calculate_date`) | Utdraget: ett kort avsnitt helt, text före fönstret utelämnad, ett långt utdrag kapat mellan ord vid 400 tecken, blanktecken som inte räknas som utelämnad text; svarets datum ur pilotens stämplar (efter svaret, båda efter eller båda före "Publikt svar", en utskriven logg, ingen stämpel, ett omöjligt datum); ordningen efter datum, titel och plats; schemat genom MCP och en felaktig hash som stoppas före sessionen |
 | `tests/unit/domain/test_swedish_calendar.py` (efter M8) | Påsk 2024–2032, helgdagarna 2027 som almanackan har dem, midsommardagen och alla helgons dag, aftnarna, arbetsdagar framåt och bakåt förbi påsk, midsommar och jul, med och utan aftnarna, månadens sista dag och skottår |
-| `tests/integration/test_mcp_documents.py` | De fyra dokumentverktygen på M5:s korpus med fyra påhittade hänvisningar: träffarna med kopior, filtren (också ett upphandlingsnummer), att läsa med nummer, plats eller båda, tvetydiga nummer, innehållsförteckningen, hänvisningarna i textordning, att det som hålls tillbaka inte visas och räknas (en gång, också via två avtalssidor), att inget visas mellan `process` och `index`, att serverns anslutning inte kan skriva, och ett anrop per verktyg genom SDK:ts klient i minnet |
+| `tests/integration/test_mcp_documents.py` | De fyra dokumentverktygen på M5:s korpus med fyra påhittade hänvisningar: träffarna med kopior, filtren (också ett upphandlingsnummer), att läsa med nummer, plats eller båda, tvetydiga nummer, innehållsförteckningen, hänvisningarna i textordning, att det som hålls tillbaka inte visas och räknas (en gång, också via två avtalssidor), att inget visas mellan `process` och `index`, att serverns anslutning inte kan skriva, och ett anrop per verktyg genom SDK:ts klient i minnet; med registret inläst igen med ett påhittat område utan filer (efter M12): området, dess avtal och dess upphandling ger felet om inlästa dokument i `search_documents` och `list_documents`, också bredvid ett inläst område och med en dokumenttyp, ett område där alla filer hålls tillbaka kallas inte inläst, utan index säger båda att indexet saknas, och ett pilotområde och ett avtal med bara upphandlingens gemensamma filer svarar som förut |
 | `tests/integration/test_mcp_amendments.py` (efter `calculate_date`) | `find_amendments` på samma korpus med tre filer i nya roller (ett ändringsdokument, Frågor och svar med tre frågor, ett odaterat ändringsdokument med ett avsnitt som hålls tillbaka) och nio påhittade hänvisningar: ändringarna av ett avsnitt och av hela filen, nyaste först och med svarets egen stämpel; inte ett förslag i frågan, ett nummer som saknas eller en hänvisning i ett upphandlingsdokument; en hänvisning via två avtalssidor en gång; en tvetydig ändring hos båda kandidaterna; ändrande och ändrade avsnitt som hålls tillbaka räknas; felen; inget mellan `process` och `index`; ett anrop genom MCP |
 | `tests/integration/test_mcp_register.py` | `list_documents` och `search_register` på samma korpus plus en påhittad registerrad: varje filter för sig och tillsammans, tidigare namn på raderna, registrets stavning, ett avtal som registret skriver på två sätt, upphandlingsnummer, okända värden, gränsen, `offset` och totalen, `%` och `_`, filer som hålls tillbaka, `list_documents` utan index, och ett anrop per verktyg genom MCP; med påhittade rader i tre nivåer: `sub_area` med delarna i båda ordningarna och med gemener, en del på valfri nivå, tillsammans med de andra filtren, och felet som räknar upp områdets delområden, också i ett område där nivå 1 är ett län |
 
-188 enhetstester i `tests/unit/mcp_server`, 42 i `tests/unit/domain/test_swedish_calendar.py` och
-114 integrationstester (M6 hade 84 och 87). Integrationstesterna använder samma korpus och samma
+209 enhetstester i `tests/unit/mcp_server`, 42 i `tests/unit/domain/test_swedish_calendar.py` och
+126 integrationstester (M6 hade 84 och 87). Integrationstesterna använder samma korpus och samma
 påhittade embedder (`TopicEmbedder`) som M5:s tester, och läser genom en skrivskyddad anslutning
 som servern gör.
 
