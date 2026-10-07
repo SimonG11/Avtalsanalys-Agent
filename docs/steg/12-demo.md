@@ -134,8 +134,10 @@ Andra iakttagelser från webbappen, som också lämnats vidare:
   fråga 1 börjar på sidan 26, som panelen visar, och slutar på sidan 27. I PDF.js ligger radslutet
   efter "enligt" i en egen tom textbit, så panelen godtar inte början som en del av citatet och
   visar "Citatet hittades inte i sidans text." bredvid "Kontrollerat mot avtalstexten". PR #23
-  (öppen) letar efter citatet på sidorna efter den citerade.
-- CopilotKit visar en engelsk rad, "Thought for a few seconds", mellan stegen.
+  (öppen) rättar det: panelen öppnar sidan 26, markerar början och säger att bara en del av
+  citatet finns på sidan.
+- CopilotKit visar en engelsk rad, "Thought for a few seconds", mellan stegen. PR #23 (öppen) byter
+  den mot svensk text.
 - Webbappen visar inte när kontrollen skickar tillbaka ett utkast; terminalen gör det.
 
 ## Kommandon

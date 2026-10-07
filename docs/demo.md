@@ -94,12 +94,11 @@ inom 30 dagar (6.21.9). Vilka av punkterna svaret tar med beror på vad du svara
 - Agenten frågar inte utan svarar för alla fall direkt: det är också ett rimligt svar. Säg att
   den här gången valde agenten att täcka alla fall, och gå vidare.
 - Panelen säger "Citatet hittades inte i sidans text": så blev det för källa 1 i webbappen
-  2026-10-07. Citatet ur 6.21.8 börjar på sidan 26 och slutet av den sista meningen står på sidan
-  27, och panelen letade bara på sidan 26. Källa 2 (6.21.8 i IT-drift Större) är uppdelad på
-  samma sätt. Citatet är ändå kontrollerat ordagrant mot avsnittets text i databasen
-  ("Kontrollerat mot avtalstexten"). Visa citatet i kortet i stället. PR #23 (öppen när detta
-  skrevs) låter panelen leta vidare på sidorna efter; prova källa 1 igen på Macen när den är
-  sammanslagen.
+  2026-10-07, före PR #23. Citatet ur 6.21.8 börjar på sidan 26 och slutar på sidan 27, och
+  panelen godtog inte början på sidan 26. Med PR #23 öppnar panelen sidan 26, markerar början och
+  säger "Bara en del av citatet finns på den här sidan. Resten finns på sidan före eller efter."
+  Citatet är i båda fallen kontrollerat ordagrant mot avsnittets text i databasen ("Kontrollerat
+  mot avtalstexten").
 
 ## Fråga 2: registret i stället för dokumenten
 
