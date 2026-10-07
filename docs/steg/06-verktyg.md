@@ -26,7 +26,7 @@ kommer senare, och `ask_user` ligger i agentens graf (M7).
 | `get_outline` | `sha256` | Filens titel, typ och avtalssidor, och alla avsnitt i ordning (plats, nummer, rubrik, nivå, första sida), utan de som hålls tillbaka; `held_back` räknar dem |
 | `resolve_reference` | `sha256`, `section_number?`, `section_position?`, `reference?` | Avsnittets citatfält och dess hänvisningar, eller bara de vars text innehåller `reference`: text, slag, status och de mål som får visas (avsnitt eller hel fil), och hur många mål som hålls tillbaka |
 | `list_documents` | `framework_area?`, `agreement_number?`, `document_type?` (minst ett), `limit` (50, högst 200) | `documents`: filerna i filtret med sha256, titel, typ, avtalssidor, ramavtalsområden, avtalsnummer, versionsdatum och antalet avsnitt som `get_outline` visar; avtalets dokument först, sedan upphandlingens och sist stöd för avrop; `total` räknar alla träffar |
-| `search_register` | `supplier?`, `agreement_number?`, `framework_area?`, `org_number?` (minst ett), `valid_on?`, `limit` (20, högst 20), `offset` (0) | `rows`: ett avtal i ett delområde per rad, med avtals- och upphandlingsnummer, leverantör, organisationsnummer, leverantörens tidigare namn (`former_names`), ramavtalsområde, delområde och datumen från, till och längsta förlängning; `total` räknar alla rader, och med `offset` bläddrar modellen vidare |
+| `search_register` | `supplier?`, `agreement_number?`, `framework_area?`, `sub_area?`, `org_number?` (minst ett), `valid_on?`, `limit` (20, högst 20), `offset` (0) | `rows`: ett avtal i ett delområde per rad, med avtals- och upphandlingsnummer, leverantör, organisationsnummer, leverantörens tidigare namn (`former_names`), ramavtalsområde, delområde och datumen från, till och längsta förlängning; `total` räknar alla rader, och med `offset` bläddrar modellen vidare |
 
 **Citatfälten** finns på varje avsnitt som ett verktyg ger: `sha256`, `file_title`,
 `document_type`, `page_titles` (avtalssidorna som länkar till filen), `section_position`,
@@ -134,7 +134,7 @@ dokumentets `sha256` och avsnittets `section_position`.
 En `Annotated`-typ per slags argument, med gränser och en svensk beskrivning som modellen läser.
 Namnen är kontraktets där dess punkt 5 har ett (`query`, `framework_area`, `agreement_number`,
 `sha256`, `section_number`, `reference` och `limit`); `document_type`, `section_position`,
-`supplier`, `org_number`, `valid_on` och `offset` är nya namn som ska skickas till
+`supplier`, `sub_area`, `org_number`, `valid_on` och `offset` är nya namn som ska skickas till
 webbappstråden. De valfria argumentens typer har `None` i sig (`framework_area: FrameworkArea =
 None`), så att beskrivningen hamnar på argumentet i JSON-schemat och inte inuti `anyOf`, där alla
 klienter inte letar. Dokumenttyperna listas som strängar, utan enumens engelska docstring. En
@@ -200,6 +200,21 @@ registret) som sidans organisationsnummer har, så att modellen kan svara på "h
 något annat?" ur raden. Provkörningen av agenten (M7) hittade den luckan: utan fältet kunde
 leverantören hittas på sitt gamla namn, men modellen fick aldrig se namnet.
 
+`sub_area` (tillagt efter M8) begränsar till delområden och regioner. Registrets delområde är en
+väg i upp till fem nivåer, i Bemanningstjänster till exempel "Bemanningstjänster /
+Bemanningstjänster - IT-tjänster upp till 1000 timmar / Övre Norrland". Argumentet delas vid
+"/", och vägen ska innehålla varje del, i vilken ordning som helst och utan hänsyn till versaler
+(ILIKE med `%` och `_` som vanliga tecken). Modellen skriver då de delar den vet, "IT-tjänster /
+Övre Norrland", och får 14 rader: de sju avtalen i båda delområdena för IT-tjänster i regionen.
+En enda delsträng av hela vägen hade gett noll rader för just den texten, och bara den sista
+nivån hade missat tjänstegruppen, som står på nivå två. `sub_area` räcker som enda filter.
+Finns ingen rad, frågar verktyget om något delområde alls har delarna (inom området, om det är
+angivet). Har inget det, är det ett fel som räknar upp områdets delområden (högst 40 namn,
+annars ett råd att söka med en kortare del), så att en felstavad region inte läses som "inga
+leverantörer där". Ett delområde som finns men som de andra filtren utesluter ger en tom lista.
+Filtret kom till efter provkörningen av M8: utan det fick agenten bläddra igenom alla 224 rader
+i Bemanningstjänster för att räkna upp leverantörerna i en region, och den slutade efter 60.
+
 ### 9. Utanför paketet
 
 - `db/session.py`: `create_db_engine(read_only=True)` sätter `default_transaction_read_only=on`
@@ -218,10 +233,10 @@ leverantören hittas på sitt gamla namn, men modellen fick aldrig se namnet.
 |---|---|
 | `tests/unit/mcp_server/test_mcp_server.py` | Verktygslistan i kontraktets ordning, läsande annoteringar, inga `session` eller `embedder` i schemat, slutna scheman (`additionalProperties: false`), svar som är modeller, svenska beskrivningar på verktyg och argument, inga `$defs`; argument utanför gränserna, tecknet NUL i varje texttyp och okända argumentnamn stoppas före sessionen, och kända namn går igenom; svaret som kompakt JSON med å, ä och ö som de är; databasfel och andra fel når modellen utan SQL eller lösenord; embeddern, dess timeout och arbetstråden; `/health` och Host-kontrollen över HTTP; kommandoraden |
 | `tests/unit/mcp_server/test_mcp_document_checks.py` | Nummer, plats eller båda; felet när avsnittet inte anges; sökningen utan embeddingmodell |
-| `tests/unit/mcp_server/test_mcp_register_checks.py` | Att ett filter krävs, organisationsnumrens former, `list_documents` utan index, gränserna, NUL, `offset` och standardvärdena i schemat, att varje dokumenttyp har en plats i ordningen |
-| `tests/unit/mcp_server/test_mcp_register_sql.py` | Med en påhittad session: ett avtal som registret skriver på två sätt hittas med båda stavningarna, dokumentfiltret tar den stavning som indexet sparade, och `search_register` frågar efter båda; `offset` och `limit` kommer efter sorteringen men inte i totalen |
+| `tests/unit/mcp_server/test_mcp_register_checks.py` | Att ett filter krävs (också att ett tomt `sub_area` inte räcker), organisationsnumrens former, `list_documents` utan index, gränserna, NUL, `offset` och standardvärdena i schemat, att varje dokumenttyp har en plats i ordningen |
+| `tests/unit/mcp_server/test_mcp_register_sql.py` | Med en påhittad session: ett avtal som registret skriver på två sätt hittas med båda stavningarna, dokumentfiltret tar den stavning som indexet sparade, och `search_register` frågar efter båda; `offset` och `limit` kommer efter sorteringen men inte i totalen; `sub_area` delas i delar som var och en blir ett villkor på vägen, med `%` och `_` som tecken, och ett delområde som inget delområde har är ett fel |
 | `tests/integration/test_mcp_documents.py` | De fyra dokumentverktygen på M5:s korpus med fyra påhittade hänvisningar: träffarna med kopior, filtren (också ett upphandlingsnummer), att läsa med nummer, plats eller båda, tvetydiga nummer, innehållsförteckningen, hänvisningarna i textordning, att det som hålls tillbaka inte visas och räknas (en gång, också via två avtalssidor), att inget visas mellan `process` och `index`, att serverns anslutning inte kan skriva, och ett anrop per verktyg genom SDK:ts klient i minnet |
-| `tests/integration/test_mcp_register.py` | `list_documents` och `search_register` på samma korpus plus en påhittad registerrad: varje filter för sig och tillsammans, tidigare namn på raderna, registrets stavning, ett avtal som registret skriver på två sätt, upphandlingsnummer, okända värden, gränsen, `offset` och totalen, `%` och `_`, filer som hålls tillbaka, `list_documents` utan index, och ett anrop per verktyg genom MCP |
+| `tests/integration/test_mcp_register.py` | `list_documents` och `search_register` på samma korpus plus en påhittad registerrad: varje filter för sig och tillsammans, tidigare namn på raderna, registrets stavning, ett avtal som registret skriver på två sätt, upphandlingsnummer, okända värden, gränsen, `offset` och totalen, `%` och `_`, filer som hålls tillbaka, `list_documents` utan index, och ett anrop per verktyg genom MCP; med påhittade rader i tre nivåer: `sub_area` med delarna i båda ordningarna och med gemener, en del på valfri nivå, tillsammans med de andra filtren, och felet som räknar upp områdets delområden |
 
 84 enhetstester och 87 integrationstester. Integrationstesterna använder samma korpus och samma
 påhittade embedder (`TopicEmbedder`) som M5:s tester, och läser genom en skrivskyddad anslutning
@@ -248,8 +263,11 @@ som servern gör.
   körs igen.
 - **Kopiorna i en sökträff** har bara fil, plats och avsnittsnummer. Modellen läser kopian med
   `read_section` för att få dess sidor.
-- **Nya argumentnamn** (`document_type`, `section_position`, `supplier`, `org_number`,
-  `valid_on`, `offset`) ska skickas till webbappstråden enligt kontraktets punkt 5.
+- **Nya argumentnamn** (`document_type`, `section_position`, `supplier`, `sub_area`,
+  `org_number`, `valid_on`, `offset`) ska skickas till webbappstråden enligt kontraktets punkt 5.
+- **`sub_area` viker inte accenter.** "ovre norrland" hittar inte "Övre Norrland" (databasen har
+  inte tillägget `unaccent`); felet räknar då upp områdets delområden. Tre vägar utanför piloten
+  har dubbla mellanslag i en nivå och hittas bara med en del utan dem.
 
 ## Så verifierar du M6 själv
 

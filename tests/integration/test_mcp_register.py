@@ -110,6 +110,67 @@ ADVANIA_SECOND = register_row(
     150, ADVANIA_SHORT, "Advania Sverige AB", ADVANIA_ORG, "IT-drift", "Tilläggstjänster"
 )
 
+# Invented rows with the register's three levels for Bemanningstjänster (service group, then
+# region), the same region in another area, and a region of its own.
+IT_UPTO = "Bemanningstjänster - IT-tjänster upp till 1000 timmar"
+IT_OVER = "Bemanningstjänster - IT-tjänster överstigande 1000 timmar"
+OFFICE = "Bemanningstjänster - Kontorstjänster upp till 1000 timmar"
+OFFICE_AGREEMENT = "23.3-14537-2023-005"
+RECRUITMENT = "23.3-9000-2024-001"
+REGION_ROWS = [
+    register_row(source_row, number, supplier, org, area, "unused").model_copy(
+        update={"sub_area_path": path}
+    )
+    for source_row, number, supplier, org, area, path in [
+        (
+            15,
+            A_HUB,
+            "A Hub Group AB",
+            "559199-9601",
+            "Bemanningstjänster",
+            ("Bemanningstjänster", IT_UPTO, "Övre Norrland"),
+        ),
+        (
+            16,
+            A_HUB,
+            "A Hub Group AB",
+            "559199-9601",
+            "Bemanningstjänster",
+            ("Bemanningstjänster", IT_OVER, "Övre Norrland"),
+        ),
+        (
+            17,
+            A_HUB,
+            "A Hub Group AB",
+            "559199-9601",
+            "Bemanningstjänster",
+            ("Bemanningstjänster", IT_UPTO, "Stockholm"),
+        ),
+        (
+            18,
+            OFFICE_AGREEMENT,
+            "Advania Sverige AB",
+            ADVANIA_ORG,
+            "Bemanningstjänster",
+            ("Bemanningstjänster", OFFICE, "Övre Norrland"),
+        ),
+        (
+            19,
+            RECRUITMENT,
+            "NetBin Sverige AB",
+            NETBIN_ORG,
+            "Rekryteringstjänster",
+            ("Rekryteringstjänster", "Rekrytering av chefer", "Övre Norrland"),
+        ),
+    ]
+]
+IT_NORTH = [
+    (A_HUB, f"Bemanningstjänster / {IT_UPTO} / Övre Norrland"),
+    (A_HUB, f"Bemanningstjänster / {IT_OVER} / Övre Norrland"),
+]
+OFFICE_NORTH = [(OFFICE_AGREEMENT, f"Bemanningstjänster / {OFFICE} / Övre Norrland")]
+RECRUITMENT_NORTH = [(RECRUITMENT, "Rekryteringstjänster / Rekrytering av chefer / Övre Norrland")]
+
 TERMS_ENTRY = DocumentEntry(
     sha256=TERMS,
     file_title="Allmänna villkor",
@@ -570,9 +631,92 @@ def test_without_a_filter_each_tool_says_what_it_needs(sessions: sessionmaker[Se
         ):
             list_documents(session)
         with pytest.raises(
-            MissingArgumentError, match="supplier, agreement_number, framework_area och org_number"
+            MissingArgumentError,
+            match="supplier, agreement_number, framework_area, sub_area och org_number",
         ):
             search_register(session, valid_on=date(2026, 10, 6))
+
+
+# --- search_register by sub-area -----------------------------------------------------------------
+
+
+@pytest.fixture
+def regions(indexed: Engine) -> Engine:
+    """The register again, with the invented three-level rows; no index needed."""
+    with session_factory(indexed).begin() as session:
+        load_register(session, REGISTER_VERSION, [*REGISTER, NETBIN_SECOND, *REGION_ROWS])
+    return indexed
+
+
+@pytest.mark.parametrize(
+    ("filters", "rows"),
+    [
+        # Every part must be in the path, in any order and any case.
+        ({"sub_area": "IT-tjänster / Övre Norrland"}, IT_NORTH),
+        ({"sub_area": "Övre Norrland / IT-tjänster"}, IT_NORTH),
+        ({"sub_area": "it-tjänster / övre norrland"}, IT_NORTH),
+        # One part at any level: the region, or the service group of the path.
+        (
+            {"sub_area": "Övre Norrland", "framework_area": "Bemanningstjänster"},
+            IT_NORTH + OFFICE_NORTH,
+        ),
+        ({"sub_area": "Övre Norrland"}, IT_NORTH + OFFICE_NORTH + RECRUITMENT_NORTH),
+        ({"sub_area": "Kontorstjänster"}, OFFICE_NORTH),
+        # Together with the other filters.
+        ({"sub_area": "Övre Norrland", "supplier": "a hub"}, IT_NORTH),
+        (
+            {"sub_area": "Övre Norrland", "agreement_number": "23.3-14537-2023"},
+            IT_NORTH + OFFICE_NORTH,
+        ),
+        ({"sub_area": "Stockholm", "supplier": "Advania"}, []),  # it exists; no such agreement
+        ({"sub_area": "Övre Norrland", "valid_on": date(2030, 1, 1)}, []),
+    ],
+)
+def test_a_sub_area_keeps_the_paths_that_have_every_part(
+    regions: Engine,
+    sessions: sessionmaker[Session],
+    filters: dict[str, Any],
+    rows: list[tuple[str, str]],
+) -> None:
+    with sessions() as session:
+        result = search_register(session, **filters)
+
+    # Sorted here: how ö sorts against u depends on the database's collation.
+    assert sorted(found(result)) == sorted(rows)
+    assert result.total == len(rows)
+
+
+@pytest.mark.parametrize(
+    ("filters", "message"),
+    [
+        (
+            {"sub_area": "Övre Norland", "framework_area": "bemanningstjänster"},
+            "Inget delområde i Bemanningstjänster innehåller 'Övre Norland'. Delområden: "
+            f"{IT_UPTO}; {IT_OVER}; {OFFICE}; Stockholm; Övre Norrland.",
+        ),
+        (
+            {"sub_area": "Övre Norland"},
+            "Inget delområde innehåller 'Övre Norland'. Ange framework_area",
+        ),
+        # As LIKE wildcards they would match every path.
+        ({"sub_area": "%%"}, "Inget delområde innehåller '%%'."),
+        ({"sub_area": "_ / %"}, "Inget delområde innehåller '_ / %'."),
+        # The region is there, but not in this area.
+        (
+            {"sub_area": "Övre Norrland", "framework_area": "IT-drift"},
+            "Inget delområde i IT-drift innehåller 'Övre Norrland'. Delområden: "
+            "IT-drift Mindre, upp till 200 anställda; Tilläggstjänster.",
+        ),
+    ],
+    ids=["misspelt in an area", "misspelt", "percent", "underscore", "another area"],
+)
+def test_a_sub_area_no_path_has_is_an_error_that_lists_the_areas_sub_areas(
+    regions: Engine, sessions: sessionmaker[Session], filters: dict[str, Any], message: str
+) -> None:
+    with sessions() as session, pytest.raises(NotFoundError) as error:
+        search_register(session, **filters)
+
+    assert str(error.value).startswith(message)
 
 
 # --- through MCP --------------------------------------------------------------------------------

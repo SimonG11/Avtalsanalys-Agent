@@ -18,7 +18,8 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
 from avtalsagent.domain.search import SearchFilters
-from avtalsagent.mcp_server.tools.search_register import search_register
+from avtalsagent.mcp_server.errors import NotFoundError
+from avtalsagent.mcp_server.tools.search_register import search_register, sub_area_parts
 from avtalsagent.mcp_server.visibility import document_filters, register_agreements
 
 TWO_WAYS = ["23.3-12000-2020-001", "23.3-12000-2020-01"]
@@ -36,14 +37,30 @@ def sql(statement: Select[Any]) -> str:
 
 
 class Register:
-    """Stands in for a Session: the register's agreements and the spellings the scopes hold."""
+    """Stands in for a Session: the register's agreements and the spellings the scopes hold.
 
-    def __init__(self, indexed: Collection[str] = ()) -> None:
+    `search_register`'s count is always 0, so a sub-area filter is always
+    looked up; `sub_areas` is the answer to that lookup, and `names` the
+    sub-area names an error then lists.
+    """
+
+    def __init__(
+        self,
+        indexed: Collection[str] = (),
+        *,
+        sub_areas: bool = True,
+        names: Collection[str] = (),
+    ) -> None:
         self.indexed = set(indexed)
+        self.sub_areas = sub_areas
+        self.names = sorted(names)
         self.scope_lookups: list[str] = []  # the spellings looked for in document_scope
         self.statements: list[str] = []  # every other statement, as SQL
 
     def scalars(self, statement: Select[Any]) -> list[str]:
+        if sql(statement).startswith("SELECT DISTINCT sub_area.name FROM sub_area"):
+            self.statements.append(sql(statement))
+            return self.names
         assert sql(statement) == "SELECT agreement.agreement_number FROM agreement"
         return [ADVANIA, *TWO_WAYS]
 
@@ -53,6 +70,8 @@ class Register:
             self.scope_lookups.append(spelling)
             return CARD if spelling in self.indexed else None
         self.statements.append(sql(statement))
+        if sql(statement).startswith("SELECT sub_area.id FROM sub_area"):
+            return 7 if self.sub_areas else None
         return 0  # search_register's count
 
     def execute(self, statement: Select[Any]) -> list[object]:
@@ -124,3 +143,66 @@ def test_the_offset_skips_rows_after_the_order_but_not_in_the_total() -> None:
     )
     assert "LIMIT" not in count
     assert "OFFSET" not in count
+
+
+# --- the sub-area filter ---
+
+
+@pytest.mark.parametrize(
+    ("written", "parts"),
+    [
+        ("Övre Norrland", ["Övre Norrland"]),
+        ("IT-tjänster / Övre Norrland", ["IT-tjänster", "Övre Norrland"]),
+        ("  IT-tjänster/Övre   Norrland / ", ["IT-tjänster", "Övre Norrland"]),
+        ("Stockholm-Arlanda/Arlandastad", ["Stockholm-Arlanda", "Arlandastad"]),
+        (" / ", []),
+    ],
+)
+def test_a_sub_area_is_read_as_parts(written: str, parts: list[str]) -> None:
+    assert sub_area_parts(written) == parts
+
+
+def test_each_part_of_a_sub_area_must_be_in_the_path_in_count_and_page() -> None:
+    register = Register()
+
+    search_register(stub(register), sub_area="IT-tjänster / Övre Norrland")
+
+    count, lookup, rows = register.statements
+    # icontains with autoescape: case-insensitive, and % or _ in the text is that character.
+    # The driver's format doubles each %; Postgres gets '%'.
+    for part in ("IT-tjänster", "Övre Norrland"):
+        condition = f"sub_area.path ILIKE '%%' || '{part}' || '%%' ESCAPE '/'"
+        assert condition in count
+        assert condition in rows
+        assert condition in lookup
+    assert lookup.endswith("LIMIT 1")
+
+
+def test_a_wildcard_in_a_sub_area_is_a_character() -> None:
+    register = Register()
+
+    search_register(stub(register), sub_area="100%_IT")
+
+    count = register.statements[0]
+    assert "'100/%%/_IT'" in count  # escaped with /, then doubled by the driver's format
+
+
+def test_a_sub_area_no_path_has_lists_the_areas_sub_areas() -> None:
+    register = Register(sub_areas=False, names=["Övre Norrland", "Stockholm"])
+
+    with pytest.raises(NotFoundError) as error:
+        search_register(stub(register), sub_area="Övre Norland", supplier="Randstad")
+
+    assert str(error.value) == (
+        "Inget delområde innehåller 'Övre Norland'. Ange framework_area, så listas områdets "
+        "delområden, eller sök med en kortare del av namnet."
+    )
+
+
+def test_a_sub_area_that_exists_gives_an_empty_page_not_an_error() -> None:
+    # Other filters can exclude every row: then there is simply no such agreement.
+    register = Register(sub_areas=True)
+
+    result = search_register(stub(register), sub_area="Övre Norrland", supplier="Advania")
+
+    assert (result.rows, result.total) == ([], 0)

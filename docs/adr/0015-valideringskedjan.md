@@ -113,7 +113,8 @@ Det som styr besluten:
 - Varje angivet avtal läses en gång till: ett eller flera MCP-anrop per avtal.
 - Kontrollen prövar det som svaret säger, inte att agenten har läst allt den borde. En uppräkning
   av leverantörer kan bli `verified` och ändå sakna några, om agenten slutade bläddra i
-  `search_register` (se docs/steg/08-validering.md, Kända begränsningar).
+  `search_register` (se docs/steg/08-validering.md, Kända begränsningar). Filtret på delområde
+  (`sub_area`, PR:n efter M8) gör att en region ryms på en sida.
 - Modellen måste ange `register_facts`. Glömmer den, är varje avtalsnummer och datum ur registret
   ett fel som skickas tillbaka, och efter försöken en reservation.
 - Senaste lydelsen kontrolleras inte ännu; prompten säger fortfarande åt agenten att leta efter
