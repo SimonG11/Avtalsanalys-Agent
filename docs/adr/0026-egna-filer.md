@@ -45,8 +45,10 @@ Det som styr besluten:
    för alla samtal tillsammans, eftersom klienten väljer tråd-id:t. Allt arbete går inte att
    begränsa innan det görs: pdfium bygger en sidas text hel, och en komprimerad sida kan ha
    miljoner tecken. Läsningen körs därför i en egen barnprocess, högst två åt gången, som dödas
-   efter 60 sekunder och har högst 1 GB minne; när pdfium inte får minne avbryter det bara
-   barnprocessen, inte API:t. Filnamnet rensas från sökvägar och styrtecken.
+   efter 60 sekunder och har högst 1 GB minne (på Linux, som i containern); när pdfium inte får
+   minne avbryter det bara barnprocessen, inte API:t. Barnprocessen skriver ingen core-fil, har en
+   gräns för CPU-tid som stoppar den också om API:t har dött, och dödas när API:t stoppas.
+   Filnamnet rensas från sökvägar och styrtecken.
 4. **Läsningen.** PDF läses ur textlagret med pypdfium2, Word med python-docx och text som UTF-8,
    utan Docling och utan OCR, så att en fil läses på någon sekund. Texten delas i avsnitt med
    inläsningens egna regler (`ingestion/step3_chunk.split_sections`), så att "punkt 6.2" i
@@ -103,8 +105,9 @@ Det som styr besluten:
 - **Kostnad i drift:** filerna ligger i Postgres som bytea, högst 10 MB och fem filer per samtal,
   i sju dagar, och högst 2 GB tillsammans. Varje modellanrop i API:t listar trådens filer (en
   indexerad fråga), och `list_uploads` läser alla en fils avsnitt. Varje uppladdning startar en
-  barnprocess (millisekunder med multiprocessings forkserver), och två läsningar samtidigt kan ta
-  upp till 1 GB minne var.
+  barnprocess (millisekunder med multiprocessings forkserver på Linux; på macOS, där kommandoraden
+  kan köras utanför containern, med spawn och några tiondels sekunder), och två läsningar
+  samtidigt kan ta upp till 1 GB minne var.
 - **Det agenten har läst ur en fil finns kvar längre än filen.** Det agenten har läst ur en fil
   (verktygssvaren och citaten) sparas i samtalets checkpoints, och i Langfuse när spårningen är på,
   och tas inte bort när filen tas bort eller blir sju dagar gammal.

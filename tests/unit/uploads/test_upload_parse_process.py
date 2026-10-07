@@ -3,12 +3,17 @@
 A file is read as `parse_upload` reads it, and a refusal comes back with its
 status and text; a child that takes too long is killed (422), one that
 aborts as pdfium does, or fails in another way, is 422 and logged with its
-exit code, and one that passes its memory limit is 413, while the parent
-goes on. A PDF with one page of a million characters, 40 kB on disk, is
-refused without taking the parent's memory. The children are not left
-running.
+exit code, and one that passes its memory limit is 413, also when a reader
+runs out of memory, while the parent goes on. A PDF with one page of a
+million characters, 40 kB on disk, is refused without taking the parent's
+memory. The child has its limits (address space, CPU time, no core file);
+closing the parser kills a child that is reading, and no child is left
+running. The children are started by the forkserver on Linux and spawned
+elsewhere.
 """
 
+import asyncio
+import json
 import multiprocessing
 import resource
 import sys
@@ -16,9 +21,10 @@ import time
 
 import pytest
 
+from avtalsagent.uploads import parse_process
 from avtalsagent.uploads.errors import TOO_HEAVY, TOO_SLOW, UNREADABLE, UploadRejected
 from avtalsagent.uploads.parse import UploadLimits, parse_upload
-from avtalsagent.uploads.parse_process import Parse, ProcessParser
+from avtalsagent.uploads.parse_process import CPU_MARGIN, Parse, ProcessParser
 from tests.unit.uploads import child_parsers
 from tests.unit.uploads.upload_files import AGREEMENT_PAGES, pdf_bytes, text_bomb_pdf
 
@@ -116,3 +122,53 @@ async def test_one_page_of_a_million_characters_is_refused_in_the_child() -> Non
     assert status in (413, 422)  # MemoryError in Python, or pdfium's abort
     grown_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - before
     assert grown_kb < 100 * 1024
+
+
+@pytest.mark.anyio
+async def test_a_reader_out_of_memory_is_413() -> None:
+    parser = ProcessParser(parse=child_parsers.reader_out_of_memory)
+
+    assert await refusal(parser) == (413, TOO_HEAVY)
+
+
+@linux_only
+@pytest.mark.anyio
+async def test_the_child_has_its_limits() -> None:
+    parser = ProcessParser(seconds=2.5, memory=512 * 1024 * 1024, parse=child_parsers.report_limits)
+
+    status, detail = await refusal(parser)
+
+    assert status == 418
+    assert json.loads(detail) == {
+        "as": [512 * 1024 * 1024] * 2,
+        "cpu": [3 + CPU_MARGIN] * 2,  # killed at the hard limit, past the time limit
+        "core": [0, 0],
+    }
+
+
+@pytest.mark.anyio
+async def test_closing_the_parser_kills_a_child_that_is_reading() -> None:
+    parser = ProcessParser(parse=child_parsers.sleep)  # the time limit is a minute
+    reading = asyncio.ensure_future(parser.parse(PDF, "avtal.pdf", LIMITS))
+    for _ in range(500):
+        if multiprocessing.active_children():
+            break
+        await asyncio.sleep(0.01)
+    started = time.monotonic()
+
+    parser.close()
+
+    with pytest.raises(UploadRejected) as raised:
+        await reading
+    assert raised.value.status_code == 422
+    assert time.monotonic() - started < 10
+    assert no_children_left()
+
+
+@pytest.mark.parametrize(("platform", "method"), [("linux", "forkserver"), ("darwin", "spawn")])
+def test_the_children_are_started_by_the_forkserver_on_linux_and_spawned_elsewhere(
+    platform: str, method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
+
+    assert parse_process._context().get_start_method() == method

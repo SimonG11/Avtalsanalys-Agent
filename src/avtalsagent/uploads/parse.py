@@ -25,8 +25,10 @@ How:
     `detect_kind`, then the kind's reader in `extract.py`, then
     `split_upload` (`sections.py`). A file a third-party reader fails on
     in some other way (python-docx on a broken archive, say) is 422 with
-    the text for an unreadable file; the error is logged. PDF pages without
-    text are named in a warning, since the agent does not see them.
+    the text for an unreadable file; the error is logged. A `MemoryError`
+    is raised as it is, which the child process answers with 413. PDF
+    pages without text are named in a warning, since the agent does not
+    see them.
 """
 
 import logging
@@ -107,7 +109,7 @@ def parse_upload(data: bytes, filename: str, limits: UploadLimits) -> ParsedFile
             blocks = docx_blocks(data, limits.max_characters)
         else:
             blocks = text_blocks(data, markdown=filename.lower().endswith((".md", ".markdown")))
-    except UploadRejected:
+    except (UploadRejected, MemoryError):  # the child answers MemoryError with 413
         raise
     except Exception:
         # A hostile or broken file can make a third-party reader fail in any way.

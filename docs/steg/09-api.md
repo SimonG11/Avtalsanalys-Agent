@@ -242,12 +242,12 @@ NUL-tecken för text (en textfil i UTF-16 får felet för text som inte är UTF-
 kontrolleras innan det öppnas: högst 100 MB uppackat, 5 000 delar och 16 MB per XML-del, bara
 okomprimerade och deflate-packade delar, och varje del packas upp en megabyte i taget och får inte
 bli större än arkivet säger, så en zip-bomb stoppas också när arkivet ljuger om storlekarna. En PDF
-läses med pypdfium2:s textlager, sida för sida, utan Docling och PyTorch (300 sidor tar ungefär en
-sekund), och läsningen slutar när texten passerar teckengränsen; en PDF utan text (inskannad) får
-422, och sidor utan text nämns i `warnings`. Ett avstavningsstreck i slutet av en rad, som pdfium
-ger som U+FFFE, blir "-" igen, så att ett citat av de tryckta orden stämmer. Word läses med
-python-docx (rubrikformat, listor, tabeller; högst 50 000 stycken och tabeller) och text som
-UTF-8, där Markdowns `#`-rubriker räknas. Texten delas sedan i avsnitt med inläsningens
+läses med pypdfium2:s textlager, sida för sida, utan Docling och PyTorch (300 sidor och 9 MB tar
+ett par sekunder), och läsningen slutar när texten passerar teckengränsen; en PDF utan text
+(inskannad) får 422, och sidor utan text nämns i `warnings`. Ett avstavningsstreck i slutet av en
+rad, som pdfium ger som U+FFFE, blir "-" igen, så att ett citat av de tryckta orden stämmer. Word
+läses med python-docx (rubrikformat, listor, tabeller; högst 50 000 stycken och tabeller) och
+text som UTF-8, där Markdowns `#`-rubriker räknas. Texten delas sedan i avsnitt med inläsningens
 egna regler (`ingestion/step3_chunk.split_sections`): vid numrerade rubriker som "6.2 Ansvar", och
 annars vid rubriker utan nummer, "§ 3" och "Bilaga 2". Ett avsnitt längre än 12 000 tecken delas
 i delar ("(del 2 av 3)"), som var och en har sidan den börjar på.
@@ -257,7 +257,12 @@ sekunders gräns och 1 GB minne. En del arbete går inte att begränsa innan det
 en sidas text hel, och en PDF på 40 kB kan ha en sida med tio miljoner tecken, som tar gigabyte.
 När pdfium inte får minne avbryter det hela processen. I barnprocessen dödas läsningen när tiden
 går ut, minnet är begränsat och en process som dör tar inget annat med sig: filen får 422, och
-API:ts andra samtal märker inget.
+API:ts andra samtal märker inget. Barnprocessen skriver ingen core-fil när den avbryts, och kärnan
+stoppar den efter 65 sekunders CPU-tid om API:t självt har dött utan att döda den. När API:t
+stoppas dödas de läsningar som pågår, så att `docker compose stop` inte väntar på dem. På Linux
+startas barnprocesserna av multiprocessings forkserver (millisekunder). På macOS, där kommandoraden
+kan köras utanför containern, startas de med spawn, plattformens standard (några tiondels
+sekunder), och där gäller inte minnesgränsen.
 
 **Lagringen.** Med `UPLOAD_STORE=postgres` (compose) ligger filerna i tabellerna `upload` (en rad
 per fil, med filens bytes) och `upload_section`, som API:t skapar själv när det startar, som
