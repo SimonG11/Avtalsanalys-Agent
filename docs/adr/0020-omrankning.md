@@ -66,9 +66,9 @@ Skälen:
   Valideringens utgångsläge, Qwen3-Reranker-0.6B, gjorde rangordningen sämre i toppen.
 - **Kostnaden är säker.** Omkring 30 sekunder per sökning på processorn, i två eller tre sökningar
   per fråga, skulle göra ett svar (median 34 s mot Postgres) ungefär tre gånger så långsamt.
-- **Agenten kompenserar redan.** Den söker igen med andra ord och filter, läser avsnitt och följer
-  hänvisningar och ändringar. I mätningen av svaren (M11) var 28 av 30 svar rätt och alla 71 citat
-  ordagranna, med sökningen som den är.
+- **Agenten kompenserar redan.** Den söker igen med andra ord och filter, läser hela avsnitt,
+  letar efter ändringar av dem och söker upp det avsnitten pekar vidare till. I mätningen av svaren
+  (M11) var 28 av 30 svar rätt och alla 71 citat ordagranna, med sökningen som den är.
 
 ## Konsekvenser
 
