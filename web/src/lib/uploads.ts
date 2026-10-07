@@ -46,15 +46,17 @@ export function checkFile(file: { name: string; size: number }): string | null {
 }
 
 const STATUS_MESSAGES: Record<number, string> = {
-  413: "Filen är större än 10 MB.",
+  409: "Konversationen har redan 5 filer. Ta bort en innan du laddar upp en ny.",
+  413: "Filen är för stor.",
   415: "Filtypen stöds inte. Ladda upp en PDF, en Word-fil (.docx) eller en textfil.",
-  422: "Filen har ingen text som går att läsa, till exempel en inskannad PDF.",
+  422: "Filen gick inte att läsa, till exempel en inskannad, tom eller lösenordsskyddad fil.",
   503: "Filen kunde inte sparas just nu. Försök igen om en stund.",
+  507: "Det finns inte plats för fler filer just nu. Försök igen senare.",
 };
 
 /**
- * The message for a failed upload: the backend's own Swedish `detail` when it gave one,
- * otherwise a message for the status code.
+ * The message for a failed upload: the backend's own Swedish `detail` when it gave one (it does
+ * for every error), otherwise a message for the status code.
  */
 export function uploadErrorMessage(status: number, body: unknown): string {
   if (typeof body === "object" && body !== null && "detail" in body) {

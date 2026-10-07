@@ -30,8 +30,9 @@ describe("uploadErrorMessage", () => {
   });
 
   it("falls back on a message for the status", () => {
-    assert.match(uploadErrorMessage(422, {}), /ingen text/);
-    assert.match(uploadErrorMessage(413, null), /10 MB/);
+    assert.match(uploadErrorMessage(422, {}), /inskannad/);
+    assert.match(uploadErrorMessage(413, null), /för stor/);
+    assert.match(uploadErrorMessage(507, {}), /inte plats/);
     assert.equal(uploadErrorMessage(500, { detail: "" }), "Filen kunde inte laddas upp.");
   });
 });

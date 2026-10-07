@@ -71,22 +71,17 @@ describe("parseAnswer", () => {
     assert.equal(framework.source, "framework");
     assert.equal(own.source, "upload");
     assert.equal(own.upload_id, "upl_1");
-    // An uploaded file's citation may have no hash, but then it needs its upload id.
-    const withoutHash = { ...upload, sha256: null };
-    assert.equal(
-      parseAnswer({ answer: { text: "x", status: "verified", citations: [withoutHash] } }).kind,
-      "answer",
-    );
+    // An uploaded file's citation needs its upload id, since the file is opened by it.
     const withoutId = { ...upload, upload_id: null };
     assert.equal(
       parseAnswer({ answer: { text: "x", status: "verified", citations: [withoutId] } }).kind,
       "invalid",
     );
-    const frameworkWithoutHash = { ...CITATION, sha256: null };
+    // A source without a hash is still shown, only without its PDF.
+    const withoutHash = { ...CITATION, sha256: null };
     assert.equal(
-      parseAnswer({ answer: { text: "x", status: "verified", citations: [frameworkWithoutHash] } })
-        .kind,
-      "invalid",
+      parseAnswer({ answer: { text: "x", status: "verified", citations: [withoutHash] } }).kind,
+      "answer",
     );
   });
 

@@ -145,16 +145,19 @@ AG-UI-klienten de strömmade delarna mot det. Tomma tankar visas inte. I dag ber
 OpenAI om sammanfattningen, så tidslinjen visar bara stegen. Webbappen behöver ingen ändring när
 backend börjar skicka tankarna.
 
-**Egna filer** (kontraktets punkter 33-38, backendens förslag som byggs nu). En fil hör till
+**Egna filer** (kontraktets punkter 33-38 och preciseringarna efter bygget). En fil hör till
 AG-UI-tråden, alltså konversationen, och webbappen använder samma `threadId` som agentens
 körningar. Webbappen skickar filen till `POST /api/uploads` med fälten `file` och `thread_id` och
-får `{upload_id, filename, kind, pages, sections, characters, warnings}`. Fel har en svensk
-`detail`, som brickan visar. `DELETE /api/uploads/{upload_id}?thread_id=…` tar bort en fil och
+får `{upload_id, filename, kind, pages, sections, characters, warnings, size, created_at}`, med
+`201` för en ny fil och `200` när samma fil redan finns i tråden. Fel har en svensk `detail`, som
+brickan visar: till exempel `409` när tråden redan har fem filer och `507` när lagringen är full.
+`DELETE /api/uploads/{upload_id}?thread_id=…` tar bort en fil och
 `GET /api/uploads/{upload_id}/file?thread_id=…` ger filen till källpanelen. Agenten läser filerna
 med verktygen `list_uploads` och `read_upload`. En källa i `answer.citations` har fältet `source`:
 `"framework"` för ramavtalen och `"upload"` för en egen fil, som då har `upload_id` och filnamnet i
-`file_title`. Webbappen väljer länken efter `source`, eftersom en egen fils källa också kan ha en
-`sha256`. En källa utan `source` kommer från ett svar före uppladdningen och räknas som ramavtalens.
+`file_title`. Webbappen väljer länken efter `source`, eftersom en egen fils källa också har en
+`sha256` (filens). En källa utan `source` kommer från ett svar före uppladdningen och räknas som
+ramavtalens. En källa utan `sha256` visas ändå, bara utan PDF, i stället för att hela svaret faller.
 En egen PDF har sidor; Word och text har `page: null`, och då visar källpanelen bara citatet.
 
 **Svaret** ligger i agentens delade tillstånd under nyckeln `answer`, och bara där. Backend
@@ -410,8 +413,9 @@ samma ordning som `ag-ui-langgraph` skickar händelserna:
 
 Mocken tar emot filer som API:t (`mock/uploads.ts`) och håller dem i minnet per tråd. Den följer
 kontraktet: PDF, Word och text upp till 10 MB, högst fem filer per tråd, och samma fil två gånger
-ger den första. En fil med "inskannad" i namnet saknar text, så mocken avvisar den som API:t
-avvisar en inskannad PDF.
+ger den första med `200`. En fil med "inskannad" i namnet saknar text, så mocken avvisar den som
+API:t avvisar en inskannad PDF. API:ts andra gränser (sidor, tecken, total lagring) finns inte i
+mocken, eftersom webbappen visar deras `detail` på samma sätt.
 
 Mocken lämnar in varje svar med `FinalAnswer` och sätter `answer` efter en paus för granskningen,
 utan händelser och utan svar på anropet, som den riktiga agenten gör. Pausen är 3 sekunder, och

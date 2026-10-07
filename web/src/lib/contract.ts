@@ -19,7 +19,9 @@ export const CitationSchema = z
     // "upload" for the person's own file (webbapp-kontrakt.md, point 37); answers from before
     // uploads have no `source`, and all their citations are from the framework agreements.
     source: z.enum(["framework", "upload"]).default("framework"),
-    // The framework document's hash. An uploaded file's citation may carry its hash or null.
+    // The cited file's hash: the framework document's, or the uploaded file's. The web app
+    // links a source by `source` and this hash, and shows one without a hash, without its PDF,
+    // rather than lose the whole answer.
     sha256: z
       .string()
       .regex(/^[0-9a-f]{64}$/, "sha256 must be 64 lowercase hex characters")
@@ -38,8 +40,8 @@ export const CitationSchema = z
     quote: z.string().min(1),
     verified: z.boolean(),
   })
-  .refine((citation) => (citation.source === "upload" ? !!citation.upload_id : !!citation.sha256), {
-    error: "a citation needs sha256, or upload_id when it is from an uploaded file",
+  .refine((citation) => citation.source !== "upload" || !!citation.upload_id, {
+    error: "a citation from an uploaded file needs its upload_id",
   });
 
 /** One row of the register as the check read it: an agreement has a row per sub-area. */

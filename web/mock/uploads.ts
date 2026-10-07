@@ -1,7 +1,7 @@
 /**
  * What: the mock's stand-in for the API's uploads (webbapp-kontrakt.md, points 33-34):
  *   POST   /api/uploads                         upload a file to a thread
- *   GET    /api/uploads?thread_id=…             the thread's files
+ *   GET    /api/uploads?thread_id=…             the thread's files, as {"uploads": [...]}
  *   DELETE /api/uploads/{upload_id}?thread_id=… remove one
  *   GET    /api/uploads/{upload_id}/file?…      the file itself, for the source panel
  *
@@ -10,9 +10,10 @@
  *
  * How: the files are kept in memory per thread, as long as the mock runs. The checks follow the
  * contract: PDF, Word and text up to 10 MB, at most five files per thread, and the same file
- * twice gives the first upload back. A file whose name says it is scanned ("inskannad") has no
- * text, so the mock refuses it like the API refuses a scanned PDF. Errors carry a Swedish
- * `detail`, as the API's do.
+ * twice gives the first upload back with 200. A file whose name says it is scanned
+ * ("inskannad") has no text, so the mock refuses it like the API refuses a scanned PDF. Errors
+ * carry a Swedish `detail`, as the API's do. The API's other limits (pages, characters, total
+ * storage) are left out: the web app shows their `detail` the same way.
  */
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -28,6 +29,8 @@ export interface StoredUpload {
   characters: number;
   warnings: string[];
   sha256: string;
+  size: number;
+  created_at: string;
   bytes: Uint8Array;
 }
 
@@ -54,8 +57,9 @@ export function uploadsOf(threadId: string): readonly StoredUpload[] {
 
 /** What the API answers about an upload: everything but the file itself. */
 export function describe(upload: StoredUpload) {
-  const { upload_id, filename, kind, pages, sections, characters, warnings } = upload;
-  return { upload_id, filename, kind, pages, sections, characters, warnings };
+  const { upload_id, filename, kind, pages, sections, characters, warnings, size, created_at } =
+    upload;
+  return { upload_id, filename, kind, pages, sections, characters, warnings, size, created_at };
 }
 
 function send(response: ServerResponse, status: number, body?: unknown): void {
@@ -103,7 +107,7 @@ async function upload(request: IncomingMessage, response: ServerResponse): Promi
   if (same) return send(response, 200, describe(same));
   if (files.length >= MAX_FILES) {
     return send(response, 409, {
-      detail: "Konversationen har redan fem filer. Ta bort en innan du laddar upp fler.",
+      detail: "Konversationen har redan 5 filer. Ta bort en innan du laddar upp en ny.",
     });
   }
   if (file.name.toLowerCase().includes("inskannad")) {
@@ -130,6 +134,8 @@ async function upload(request: IncomingMessage, response: ServerResponse): Promi
     characters: kind === "text" ? text.length : bytes.length,
     warnings: [],
     sha256,
+    size: bytes.length,
+    created_at: new Date().toISOString(),
     bytes,
   };
   byThread.set(threadId, [...files, stored]);
@@ -155,8 +161,10 @@ export function handleUploads(
       console.error(error);
       if (!response.headersSent) send(response, 500, { detail: "Mocken kunde inte läsa filen." });
     });
+  } else if (!threadId) {
+    send(response, 422, { detail: "Konversationens id saknas." });
   } else if (request.method === "GET" && url.pathname === "/api/uploads") {
-    send(response, 200, uploadsOf(threadId).map(describe));
+    send(response, 200, { uploads: uploadsOf(threadId).map(describe) });
   } else if (one && !stored) {
     send(response, 404, { detail: "Filen finns inte i den här konversationen." });
   } else if (one && stored && request.method === "DELETE" && !one[2]) {
@@ -166,10 +174,13 @@ export function handleUploads(
     );
     send(response, 204);
   } else if (one && stored && request.method === "GET" && one[2]) {
+    // A Word file is downloaded, PDF and text are shown, as the API does.
+    const disposition = stored.kind === "docx" ? "attachment" : "inline";
     response.writeHead(200, {
       "Content-Type": CONTENT_TYPES[stored.kind],
-      "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(stored.filename)}`,
+      "Content-Disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(stored.filename)}`,
       "Content-Length": stored.bytes.length,
+      "Cache-Control": "private, no-store",
     });
     response.end(stored.bytes);
   } else {
