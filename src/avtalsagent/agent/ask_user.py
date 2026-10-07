@@ -61,8 +61,9 @@ class AskUserArguments(BaseModel):
         min_length=MIN_OPTIONS,
         max_length=MAX_OPTIONS,
         description=(
-            "2-5 korta svarsalternativ, till exempel avtalen, delområdena eller fallen som "
-            "frågan kan gälla. Användaren kan också svara med egen text."
+            "2-5 korta svarsalternativ som delar upp det som avgör svaret, till exempel "
+            "leverantörerna, rollerna eller beloppsgränserna. Användaren kan också svara med "
+            "egen text."
         ),
     )
 

@@ -250,11 +250,16 @@ modellanrop med en sammanfattning `REASONING_START`, `REASONING_MESSAGE_START`,
 `REASONING_MESSAGE_CONTENT` (delar av texten), `REASONING_MESSAGE_END` och `REASONING_END`, före
 verktygsanropen från samma anrop. En sammanfattning i flera delar ger ett sådant block per del.
 `MESSAGES_SNAPSHOT` har varje sammanfattning som ett meddelande med rollen `reasoning` före
-modellens meddelande, med OpenAI:s id (`rs_…`) och delarna åtskilda av en radbrytning. Skickar
-webbappen tillbaka historiken med dem läggs inget till två gånger. `AvtalAguiAgent` är oförändrad:
-en ögonblicksbild av tillståndet är fortfarande bara `answer`, svaret strömmas aldrig som text och
-granskarens anrop strömmas inte. `ask_user` har nu alltid 2-5 alternativ (`options`), och agenten
-frågar mer sällan. `tests/unit/api/test_api_reasoning.py` kör appen med modellen som
+modellens meddelande, med OpenAI:s id (`rs_…`) och delarna åtskilda av en radbrytning. API:t tar
+bort webbappens resonemangsmeddelanden ur historiken den skickar tillbaka, eftersom checkpointen
+redan har dem i modellens meddelanden. Efter en körning som misslyckades eller stoppades, utan
+`MESSAGES_SNAPSHOT`, hade OpenAI annars fått samma resonemangspost två gånger och nekat varje
+följande anrop i tråden. I övrigt är `AvtalAguiAgent` oförändrad: en ögonblicksbild av
+tillståndet är fortfarande bara `answer`, svaret strömmas aldrig som text och granskarens anrop
+strömmas inte. `ask_user` har nu alltid 2-5 alternativ (`options`) i avbrottet, och agenten
+frågar mer sällan. Ett `ask_user`-anrop som bryter mot schemat nekas: det strömmas som ett steg
+utan `TOOL_CALL_RESULT` och utan avbrott, och i `MESSAGES_SNAPSHOT` har verktygsmeddelandet
+`error` satt. `tests/unit/api/test_api_reasoning.py` kör appen med modellen som
 `make_agent_model` bygger den, mot en låtsad OpenAI som strömmar som den riktiga.
 
 ## Kända begränsningar

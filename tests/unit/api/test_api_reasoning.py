@@ -28,6 +28,7 @@ from tests.unit.api.test_api_agui import (
     GOOD,
     OPTIONS,
     QUESTION,
+    BreakingSessions,
     app_on,
     client_of,
     of_type,
@@ -132,7 +133,9 @@ def response(response_id: str, status: str, output: list[dict[str, Any]]) -> dic
     }
 
 
-def app_on_fake_openai(replies: list[Reply]) -> tuple[FastAPI, FakeOpenAI]:
+def app_on_fake_openai(
+    replies: list[Reply], sessions: BreakingSessions | None = None
+) -> tuple[FastAPI, FakeOpenAI]:
     """The app with the agent's model as `make_agent_model` builds it, on the fake OpenAI."""
     fake = FakeOpenAI(replies)
     settings = Settings(
@@ -141,7 +144,7 @@ def app_on_fake_openai(replies: list[Reply]) -> tuple[FastAPI, FakeOpenAI]:
     model = make_agent_model(settings)
     http = httpx2.AsyncClient(transport=httpx2.MockTransport(fake.handle))
     model.root_async_client = openai.AsyncOpenAI(api_key=DUMMY_KEY, http_client=http)
-    return app_on(model), fake
+    return app_on(model, sessions=sessions), fake
 
 
 def reasoning_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -307,6 +310,42 @@ async def test_after_ask_user_and_in_a_follow_up_the_reasoning_goes_back_once_in
         "id": "rs_1",
         "summary": [{"type": "summary_text", "text": "".join(THINKING)}],
     }
+
+
+@pytest.mark.anyio
+async def test_after_a_failed_run_the_summary_the_client_kept_goes_back_once() -> None:
+    # A run that fails (or that the user stops) has no MESSAGES_SNAPSHOT: the client keeps the
+    # messages it built from the stream, the model's under the streamed id, not the
+    # checkpoint's. Its reasoning message sent back must not reach OpenAI a second time.
+    app, fake = app_on_fake_openai(
+        [
+            Reply([THINKING], "search_documents", {"query": "uppsägningstid"}),
+            Reply([[CHECKING]], "FinalAnswer", ANSWER),
+        ],
+        sessions=BreakingSessions(breaks={2}),
+    )
+
+    async with client_of(app) as client:
+        failed = await post(client, run_input("r1", QUESTION))
+        assert of_type(failed, "RUN_ERROR") != []
+        assert of_type(failed, "MESSAGES_SNAPSHOT") == []
+        [start] = of_type(failed, "TOOL_CALL_START")
+        arguments = "".join(event["delta"] for event in of_type(failed, "TOOL_CALL_ARGS"))
+        call = {
+            "id": start["toolCallId"],
+            "type": "function",
+            "function": {"name": start["toolCallName"], "arguments": arguments},
+        }
+        kept = [
+            *QUESTION,
+            {"id": "rs_1", "role": "reasoning", "content": "".join(THINKING)},
+            {"id": start["parentMessageId"], "role": "assistant", "toolCalls": [call]},
+        ]
+        follow_up = {"id": "u2", "role": "user", "content": "Försök igen."}
+        answered = await post(client, run_input("r2", [*kept, follow_up]))
+
+    assert of_type(answered, "RUN_ERROR") == []
+    assert [i for i in items(fake.requests[1]) if i[0] == "reasoning"] == [("reasoning", "rs_1")]
 
 
 def items(request: dict[str, Any]) -> list[tuple[str, str]]:

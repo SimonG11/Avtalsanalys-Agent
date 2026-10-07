@@ -92,7 +92,7 @@ def test_the_prompt_asks_for_an_answer_per_case_before_a_question_with_options()
 
     assert "svara för vart och ett" in rule and "säg vad som avgör" in rule
     assert "Fråga med ask_user bara när" in rule
-    assert f"Ge då {MIN_OPTIONS}-{MAX_OPTIONS} korta alternativ i options." in rule
+    assert f"Ge då {MIN_OPTIONS}-{MAX_OPTIONS} korta alternativ i options" in rule
 
 
 def test_final_answer_is_described_to_the_model_in_swedish() -> None:

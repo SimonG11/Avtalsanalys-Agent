@@ -392,7 +392,10 @@ modellen resonerar för lite. Regel 4 i prompten säger nu att agenten svarar f�
 några få fall och säger vad som avgör, och frågar med `ask_user` bara när fallen är för många eller
 svaren för långa, eller när svaret beror på uppgifter om användarens eget fall. `ask_user` kräver
 2-5 alternativ; ett anrop utan dem nekas, och modellen läser varför och kan fråga igen.
-Kommandoraden visar inga sammanfattningar.
+Kommandoraden visar inga sammanfattningar. En `ask_user`-fråga utan alternativ som väntar när
+ändringen driftsätts nekas när den besvaras: LangGraph kör verktygsanropet igen mot det nya
+schemat, användarens svar når inte modellen, och modellen läser att options saknas och frågar
+igen med alternativ.
 
 ## Kända begränsningar
 
