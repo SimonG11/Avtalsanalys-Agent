@@ -11,23 +11,25 @@ att agenten ska behöva fråga.
 Alla fem kördes mot den riktiga databasen 2026-10-07, både i terminalen och i webbappen, och
 reservfrågan i terminalen. Resultaten står i [steg 12](steg/12-demo.md). Körningen hittade ett fel:
 i webbappen föll fråga 3 första gången, eftersom API:ts AG-UI-adapter stoppade körningen efter 25
-steg i grafen, ungefär sex modellanrop. Webbappens körningar av fråga 3–5 gjordes med rättelsen,
-som finns i `main` sedan PR #22. Hämta `main` före demot. Beslutet bakom urvalet står i
+steg i grafen, ungefär sex modellanrop. Webbappens första körningar av fråga 3–5 gjordes med
+rättelsen provad lokalt. En andra körning av alla fem i webbappen gjordes med `main` efter PR #22
+och webbappen från PR #23. Hämta `main` före demot. Beslutet bakom urvalet står i
 [ADR 0022](adr/0022-demot.md).
 
 ## Ordningen
 
 | # | Fråga | Visar | Status | Tid i webbappen | Tid i terminalen |
 |---|---|---|---|---|---|
-| 1 | Uppsägningstiden i IT-drift | Agenten frågar när frågan är oklar | Verifierat | 52 s med dialogen | 54 s med dialogen |
-| 2 | q10 Nordlo Advance | Registret i stället för dokumenten | Verifierat | 12 s | 19 s |
-| 3 | q14 Lördagsarbete | Flera steg genom hänvisningar | Verifierat | 39 s | 50 s |
-| 4 | q21 Antal anbud | En rättelse ersätter klausulen | Verifierat | 32 s | 36 s |
-| 5 | q27 Rangordnad etta | Agenten gissar inte | Inget svar | 35 s | 31 s |
+| 1 | Uppsägningstiden i IT-drift | Agenten frågar när frågan är oklar | Verifierat | 52–55 s med dialogen | 54 s med dialogen |
+| 2 | q10 Nordlo Advance | Registret i stället för dokumenten | Verifierat | 12–14 s | 19 s |
+| 3 | q14 Lördagsarbete | Flera steg genom hänvisningar | Verifierat | 39–62 s | 50 s |
+| 4 | q21 Antal anbud | En rättelse ersätter klausulen | Verifierat | 32–45 s | 36 s |
+| 5 | q27 Rangordnad etta | Agenten gissar inte | Inget svar eller Verifierat | 35–48 s | 31 s |
 | R | q24 Lägsta takpris | Jämförelse mellan leverantörer | Verifierat | – | 42 s |
 
-Tiderna kommer från körningarna mot den riktiga databasen; terminalens tider räknar med att
-programmet startar. En fråga kan ta längre tid om
+Tiderna kommer från körningarna mot den riktiga databasen, två i webbappen (q14 tre) och en i
+terminalen; terminalens tider räknar med att programmet startar. Räkna med upp till en minut per
+fråga. En fråga kan ta längre tid om
 kontrollen skickar tillbaka ett utkast, och svaret kan formuleras olika mellan körningar.
 Fakta och källor ska vara desamma.
 
@@ -191,7 +193,8 @@ nämna ett företag.
 'framgår inte', och alla fyra fick det i mätningen mot den riktiga databasen."
 
 **Status:** mot den riktiga databasen blev det "Inget svar" (agenten markerar att frågan inte är
-besvarad). I mätningen med ersättaren blev det ibland "Verifierat" med samma innehåll. Båda är
+besvarad) i terminalen och i den första körningen i webbappen, och "Verifierat" med samma
+innehåll i den andra. Båda är
 rätt, och det beror på om agenten räknar "framgår inte" som ett svar. Säg det om frågan kommer.
 
 **Om det går fel:** nämner agenten ett företag är det fel. Visa källan och säg att det är just den

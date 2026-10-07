@@ -128,6 +128,20 @@ Rättelsen ger `AvtalAguiAgent` grafens egen gräns i konfigurationen; gränsen 
 och 5 igenom i webbappen (tiderna ovan). M12 ändrar inte koden, så rättelsen gjordes i PR #22, med
 ett test som kör en fråga med nio modellanrop genom `POST /agui`. Den är sammanslagen i `main`.
 
+En andra körning av fråga 1–5 i webbappen (12:36–12:41) gjordes med API:t från `main` efter
+PR #22 och webbappen från PR #23 (före sammanslagningen), utan fel i API:ts logg:
+
+| Fråga | Webbappen, andra körningen |
+|---|---|
+| 1 | Verifierat, 55 s med en fråga till användaren, 9 steg; källa 1 (6.21.8) markerad på sidan 26 |
+| 2 | Verifierat, 14 s, ett steg |
+| 3 | Verifierat, 62 s, 10 steg, och 54 s, 9 steg, med 9.9.2 markerad i källpanelen |
+| 4 | Verifierat, 45 s, 7 steg |
+| 5 | Verifierat, "framgår inte" med 10.5.1 som källa, 48 s, 8 steg |
+
+Fråga 5 fick alltså status Verifierat den här gången och Inget svar förra gången, med samma
+innehåll (se demoskriptet).
+
 Andra iakttagelser från webbappen, som också lämnats vidare:
 
 - Källpanelen markerar inte alltid ett citat som fortsätter på nästa sida. Citatet ur 6.21.8 i

@@ -241,7 +241,7 @@ från den riktiga databasen 2026-10-07 ([steg 12](docs/steg/12-demo.md)).
    webbappen hittade ett fel som mätningen inte kunde se: API:ts AG-UI-adapter stoppade en körning
    efter LangChains standardgräns på 25 steg i grafen, ungefär sex modellanrop, så fråga 3 föll. Felet är
    rättat i PR #22 med ett test. Fråga 3–5 gick igenom i webbappen med rättelsen provad lokalt,
-   innan PR #22 fanns. avtal-mcp, API:t och webbappen
+   och alla fem igen med `main` efter PR #22. avtal-mcp, API:t och webbappen
    kördes direkt på värden mot Postgres i Docker; containrarna byggs och startas i CI men har inte
    fått en fråga.
 
