@@ -133,11 +133,15 @@ adresserna inne i compose skiljer sig från dem på din dator. Allt annat i `.en
 
 ### 1. `api/agui.py` – agenten över AG-UI
 
-`AvtalAguiAgent` är `ag-ui-langgraph`s `LangGraphAgent` med fyra ändringar: en ögonblicksbild av
+`AvtalAguiAgent` är `ag-ui-langgraph`s `LangGraphAgent` med fem ändringar: en ögonblicksbild av
 tillståndet är bara `{"answer": ...}` (annars skickas alla meddelanden och det okontrollerade
 utkastet igen vid varje steg), `RUN_ERROR` har en fast svensk text (undantagets text kan innehålla
 en adress eller SQL), `ask_user` skickas bara som AG-UI:s utfall på `RUN_FINISHED` (ingen äldre
-`CUSTOM on_interrupt`), och inga `RAW`-kopior. `AgentRuns` håller det som alla körningar delar
+`CUSTOM on_interrupt`), inga `RAW`-kopior, och grafens egen gräns för antalet steg (`create_agent`s
+9 999) i varje körning. Adaptern fyller annars i LangChains standardgräns, 25 steg, och med
+middleware är ett modellanrop ungefär fyra steg: en fråga som behövde fler än ungefär sex
+modellanrop stoppades i webbappen (`GraphRecursionError`) men inte på kommandoraden. Det som
+begränsar en körning är `ModelCallLimitMiddleware`. `AgentRuns` håller det som alla körningar delar
 (modellen och checkpointern) och öppnar en ny MCP-session per körning. Routen är adapterns
 `add_langgraph_fastapi_endpoint`, utskriven. Går sessionen inte att öppna blir körningen
 `RUN_STARTED` och `RUN_ERROR`. Bryts den mitt i körningen (avtal-mcp startas om, ett 5xx-svar)
@@ -201,7 +205,7 @@ gång fäller jobbet i stället för att låta det vänta i timmar.
 
 | Fil | Antal | Vad den visar |
 |---|---|---|
-| `tests/unit/api/test_api_agui.py` | 13 | Hela appen genom httpx: en fråga strömmar stegen och slutar med det kontrollerade svaret, med `null` i fälten som saknas; varje ögonblicksbild är bara `answer`, först `null`; inga `RAW`-händelser; `ask_user` slutar med utfallet och utan `CUSTOM`; svaret återupptar körningen till ett kontrollerat svar, och historiken från klienten ger varje verktygsanrop exakt ett svar; en ny fråga medan `ask_user` väntar skickar samma fråga igen utan att köra grafen; ett fel ger den fasta texten utan lösenordet och loggas; efter ett verktygsanrop som misslyckades besvaras nästa fråga i tråden; en session som bryts mitt i körningen avslutar strömmen med `RUN_ERROR`; varje körning har en egen session som stängs; en session som inte går att öppna fäller bara sin körning; en felaktig kropp ger 422; hälsokontrollerna |
+| `tests/unit/api/test_api_agui.py` | 16 | Hela appen genom httpx: en fråga strömmar stegen och slutar med det kontrollerade svaret, med `null` i fälten som saknas; en fråga med nio modellanrop (fler än 25 steg) går till svar; varje ögonblicksbild är bara `answer`, först `null`; inga `RAW`-händelser; `ask_user` slutar med utfallet och utan `CUSTOM`; svaret återupptar körningen till ett kontrollerat svar, och historiken från klienten ger varje verktygsanrop exakt ett svar; en ny fråga medan `ask_user` väntar skickar samma fråga igen utan att köra grafen; ett fel ger den fasta texten utan lösenordet och loggas; efter ett verktygsanrop som misslyckades besvaras nästa fråga i tråden; en session som bryts mitt i körningen avslutar strömmen med `RUN_ERROR`; varje körning har en egen session som stängs; en session som inte går att öppna fäller bara sin körning; en felaktig kropp ger 422; hälsokontrollerna; en klient kan inte skriva `answer` eller kontrollens tillstånd |
 | `tests/unit/api/test_api_documents.py` | 9 | PDF:en inline med rätt typ; 404 för ett dokument som inte visas, för en Word-fil och för en fil som saknas på disken (loggad); 503 med fast text när databasen inte svarar; en felaktig hash stoppas innan något slås upp |
 | `tests/unit/api/test_api_app.py` | 10 | Livscykeln frågar avtal-mcp, öppnar checkpointern och PDF-routens motor och stänger dem i omvänd ordning; utan nyckel öppnas inget; en avtal-mcp som inte svarar stoppar starten; en del som inte går att öppna stänger dem som redan är öppna; en checkpointer som inte går att öppna stoppar starten; routerna finns före starten; motorn är läsande och stängs; `main` med adress och loggning; loggen visar aldrig nyckeln eller lösenordet, inte heller i en traceback |
 | `tests/unit/test_config.py` | 5 nya | `API_HOST` och `API_PORT`, porten inom gränserna, `redact` för nyckeln och lösenordet i adress, kodat och inom citattecken |
