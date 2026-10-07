@@ -9,6 +9,14 @@ stämmer vid stickprov. Det finns tester med fixtur-PDF:er.
 
 ## Resultat
 
+> **Ändrat i M4** ([04-extraktion.md](04-extraktion.md), [ADR 0009](../adr/0009-extraktion-avstamning-och-karantan.md)):
+> steg 3 tar också bort det certifikat som e-signeringstjänsten lägger sist i 25 undertecknade
+> leverantörsavtal, eftersom det namnger dem som skrivit under. Avsnitten är fortfarande 13 175,
+> bitarna är nu 13 979. `verify` räknar certifikatet till det som tas bort med avsikt: 94,6 % av
+> raderna finns i avsnitten, 4,9 % tas bort med avsikt och 0,5 % saknas. Kommandot `chunk` heter
+> nu `process` och kör också steg 4 och 5, och kontrollen mot innehållsförteckningen står i
+> inläsningsrapporten.
+
 Körningen 2026-10-05 på alla 207 filer i urvalet: 176 PDF med 3 924 sidor och 31 Word-filer.
 Docling 2.133 läste PDF:erna på processorn på ungefär två timmar med fyra kärnor. En omkörning
 läser bara nya filer och filer som en äldre parserversion läst. Siffrorna nedan är från steg 3
@@ -150,7 +158,7 @@ flowchart LR
 ```bash
 uv run alembic upgrade head                       # skapar tabellerna för avsnitten
 uv run python -m avtalsagent.ingestion parse      # steg 2: tolkar alla hämtade filer
-uv run python -m avtalsagent.ingestion chunk      # steg 3: avsnitt och bitar
+uv run python -m avtalsagent.ingestion process    # steg 3 (och 4–5 från M4): avsnitt och bitar
 uv run python -m avtalsagent.ingestion outline    # lista över filerna och hur de delades
 uv run python -m avtalsagent.ingestion outline 434b92193cab   # en fils innehållsförteckning
 uv run python -m avtalsagent.ingestion verify     # avsnitten mot varje PDF:s textlager
@@ -319,7 +327,8 @@ Steg 3 ersätter alla avsnitt i en transaktion, så tabellerna alltid motsvarar 
 
 ### 7. `ingestion/__main__.py` – kommandona
 
-`parse` tolkar alla hämtade filer och rapporterar sidor utan textlager. `chunk` delar upp de
+`parse` tolkar alla hämtade filer och rapporterar sidor utan textlager. `chunk` (från M4 en del
+av `process`) delar upp de
 tolkade filerna, sparar dem och kontrollerar varje fil som har en egen innehållsförteckning:
 varje nummer som förteckningen listar ska vara ett avsnitt (`contents_missing` i steg 3). Det är
 M3:s mål som en kontroll som vem som helst kan köra. `outline` listar filerna, eller skriver ut
@@ -357,7 +366,7 @@ uv run pytest
 docker compose up -d postgres --wait
 uv run alembic upgrade head
 uv run python -m avtalsagent.ingestion parse
-uv run python -m avtalsagent.ingestion chunk
+uv run python -m avtalsagent.ingestion process                # steg 3 (från M4 också 4 och 5)
 uv run python -m avtalsagent.ingestion outline                # alla filer
 uv run python -m avtalsagent.ingestion outline 434b92193cab   # jämför med PDF:ens innehåll
 uv run python -m avtalsagent.ingestion verify                 # avsnitten mot textlagret

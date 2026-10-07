@@ -11,6 +11,8 @@ How:
     The URL comes from an `sqlalchemy.url` set by the caller (the tests do
     this) or else from the settings via `create_db_engine()`. `Base.metadata`
     lets `alembic revision --autogenerate` compare the models with the database.
+    `alembic upgrade head --sql` (offline mode) prints the SQL instead of
+    running it, so a migration can be read and checked without a database.
 """
 
 from alembic import context
@@ -21,7 +23,12 @@ from avtalsagent.db.session import create_db_engine
 url = context.config.get_main_option("sqlalchemy.url")
 engine = create_db_engine(url)
 
-with engine.connect() as connection:
-    context.configure(connection=connection, target_metadata=Base.metadata)
+if context.is_offline_mode():
+    context.configure(url=engine.url, target_metadata=Base.metadata, literal_binds=True)
     with context.begin_transaction():
         context.run_migrations()
+else:
+    with engine.connect() as connection:
+        context.configure(connection=connection, target_metadata=Base.metadata)
+        with context.begin_transaction():
+            context.run_migrations()

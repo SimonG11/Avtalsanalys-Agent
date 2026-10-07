@@ -4,7 +4,7 @@ En agent som besvarar frågor om Statens inköpscentrals ramavtal (avropa.se) d�
 påstående har en verifierad källa. Inläsningen av avtalen är ett fast workflow, och
 frågebesvarandet är en agent i LangGraph som själv väljer verktyg och ordning.
 
-> **Status:** M3 (tolkning och uppdelning i avsnitt). Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
+> **Status:** M4 (extraktion, avstämning mot registret och inläsningsrapport). Projektet byggs en milstolpe i taget, M0–M12. Varje milstolpe
 > förklaras i [`docs/steg/`](docs/steg/) och varje designbeslut i [`docs/adr/`](docs/adr/).
 
 ## Kom igång
@@ -23,7 +23,8 @@ uv run pytest                         # kör testerna (integrationstesterna krä
 uv run python -m avtalsagent.register --download   # hämtar och läser in Excel-registret
 uv run python -m avtalsagent.ingestion fetch       # hämtar avtalsdokumenten för urvalet
 uv run python -m avtalsagent.ingestion parse       # tolkar dokumenten med Docling
-uv run python -m avtalsagent.ingestion chunk       # delar dem i avsnitt och bitar
+uv run python -m avtalsagent.ingestion process     # avsnitt, metadata, kontroll mot registret, rapport
+uv run python -m avtalsagent.ingestion run         # fetch, parse och process i ett svep
 uv run python -m avtalsagent.ingestion outline     # visar hur varje dokument delades
 uv run python -m avtalsagent.ingestion verify      # jämför avsnitten med PDF:ernas textlager
 ```
@@ -33,6 +34,12 @@ installerar PyTorch för processorn från `download.pytorch.org`, och den först
 Doclings modeller från Hugging Face, så miljön måste nå `download.pytorch.org`,
 `download-r2.pytorch.org` och `*.hf.co`. Senare körningar återanvänder det sparade resultatet för
 varje fil som samma parserversion redan har tolkat.
+
+`process` skriver inläsningsrapporten till `data/reports/` (markdown och JSON). Ett dokument som
+avviker från registret hålls i karantän; en avvikelse som en person har granskat och godkänt skrivs
+in i `accepted_findings.toml` i repots rot. Språkmodellen används bara när `OPENAI_API_KEY` är satt,
+och `fetch`, `process` och `run` tar `--area` för att välja andra ramavtalsområden än inställningen.
+`process` läser ändå alla hämtade filer; områdena avgör bara vilka avtal täckningen gäller.
 
 Kontroller som CI kör (pre-commit kör de tre första):
 

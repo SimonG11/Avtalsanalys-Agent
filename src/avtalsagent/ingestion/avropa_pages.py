@@ -32,7 +32,13 @@ from urllib.parse import parse_qs, urljoin, urlsplit, urlunsplit
 from bs4 import BeautifulSoup, Tag
 
 from avtalsagent.domain.documents import AgreementPage, DocumentLink
-from avtalsagent.domain.identifiers import IdentifierError, parse_agreement_number
+from avtalsagent.domain.identifiers import (
+    CASE_NUMBER_PATTERN,
+    OLD_NUMBER_PATTERN,
+    IdentifierError,
+    parse_agreement_number,
+    parse_procurement_number,
+)
 
 # Every agreement page lives under this path; the A-Ö index links to all of them.
 AGREEMENT_PAGE_PATH = "/ramavtal/ramavtalsomraden/"
@@ -41,7 +47,11 @@ AGREEMENT_PAGE_PATH = "/ramavtal/ramavtalsomraden/"
 _FILE_PATHS = ("/globalassets/", "/contentassets/")
 
 # Procurement numbers as written on the pages: 23.3-5890-2023, 23.3-2965-20, 6765/05.
-_PROCUREMENT_NUMBER = re.compile(r"\d+\.\d+-\d+-\d{4}|\d+\.\d+-\d+-\d{2}\b|\b\d+/\d{2}\b")
+# The forms are those of the documents (domain/identifiers.py); a number is kept in
+# the page's spelling, since the register writes it the same way.
+_PROCUREMENT_NUMBER = re.compile(
+    rf"(?<![\d.])(?:{CASE_NUMBER_PATTERN}|(?<![\d/]){OLD_NUMBER_PATTERN}(?![\d/]))"
+)
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 # The agreement number in a supplier card header: "Avtal: 23.3-14537-2023-014".
 _CARD_AGREEMENT = re.compile(r"Avtal:\s*(\S+)")
@@ -91,7 +101,13 @@ def _procurement_numbers(fact: str, soup: BeautifulSoup) -> tuple[str, ...]:
     cards are read too. A page with neither (e.g. a landing page that links
     to sub-pages) gets an empty tuple.
     """
-    numbers = list(_PROCUREMENT_NUMBER.findall(fact))
+    numbers: list[str] = []
+    for match in _PROCUREMENT_NUMBER.finditer(fact):
+        try:
+            parse_procurement_number(match.group())
+        except IdentifierError:
+            continue  # "21.3.12.20" has the shape but is no case number
+        numbers.append(match.group())
     for card in soup.select("li.contact-card"):
         agreement = _card_agreement_number(card)
         if agreement is None:

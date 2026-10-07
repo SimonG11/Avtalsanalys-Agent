@@ -13,6 +13,7 @@ Ett beslut ändras aldrig i efterhand. Ändras beslutet skrivs en ny ADR som ers
 | [0006](0006-registrets-datamodell.md) | Registrets datamodell och inläsning | Godkänt (PR #2) |
 | [0007](0007-hamtning-av-dokument.md) | Hämtning av dokumenten från avropa.se | Godkänt (PR #3) |
 | [0008](0008-tolkning-och-uppdelning.md) | Tolkning med Docling och uppdelning i numrerade avsnitt | Godkänt (PR #4), rättelser i PR #5 |
+| [0009](0009-extraktion-avstamning-och-karantan.md) | Extraktion, avstämning mot registret och karantän | Föreslaget (PR #6) |
 
 Mall: *Status*, *Kontext* (problemet), *Beslut*, *Konsekvenser* (vad vi vinner och vad det kostar),
 *Alternativ som valts bort*.

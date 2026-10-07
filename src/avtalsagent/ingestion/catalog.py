@@ -4,7 +4,8 @@ What:
     `procurements_for_areas` looks up the procurement numbers of framework
     areas in the register. `load_stored_documents` returns what earlier runs
     downloaded. `save_fetch` records the pages, the downloaded documents and
-    which page links to which document.
+    which page links to which document, and marks the stored pages that the
+    site no longer lists.
 
 Why:
     `step1_fetch.py` works on plain values so it can be tested without a
@@ -17,12 +18,14 @@ How:
     when this run downloaded it, so a failed download leaves the stored row as
     it was. The links of each page read in this run are replaced, so a link
     removed from a page disappears from the catalog while the downloaded file
-    stays on disk.
+    stays on disk. A page the index no longer lists is not deleted: it gets
+    `missing_since`, so step 5 can hold back files that no page publishes any
+    more, with the reason.
 """
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -74,9 +77,16 @@ def load_stored_documents(session: Session) -> dict[str, StoredDocument]:
 
 
 def save_fetch(
-    session: Session, pages: Sequence[AgreementPage], results: Sequence[FetchResult]
+    session: Session,
+    pages: Sequence[AgreementPage],
+    results: Sequence[FetchResult],
+    listed_page_urls: Collection[str],
 ) -> None:
-    """Record the pages, the stored documents and the page-to-document links."""
+    """Record the pages, the stored documents and the page-to-document links.
+
+    `listed_page_urls` are all pages the index on avropa.se lists in this run,
+    those read and those that could not be read.
+    """
     if pages:
         page_rows = [
             {
@@ -161,3 +171,22 @@ def save_fetch(
     ]
     if link_rows:
         session.execute(insert(models.AgreementPageDocument).values(link_rows))
+
+    # A stored page the index does not list gets missing_since, unless an earlier run
+    # set it (the first run that missed the page is kept). A listed page gets it
+    # cleared, also one that could not be read in this run.
+    listed = {*listed_page_urls, *page_urls}
+    session.execute(
+        update(models.AgreementPage)
+        .where(
+            models.AgreementPage.url.not_in(listed), models.AgreementPage.missing_since.is_(None)
+        )
+        .values(missing_since=func.now())
+    )
+    session.execute(
+        update(models.AgreementPage)
+        .where(
+            models.AgreementPage.url.in_(listed), models.AgreementPage.missing_since.is_not(None)
+        )
+        .values(missing_since=None)
+    )

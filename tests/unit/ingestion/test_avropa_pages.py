@@ -106,6 +106,27 @@ def test_procurement_number_can_come_from_the_supplier_card_only() -> None:
     assert page.documents == ()
 
 
+@pytest.mark.parametrize(
+    ("fact", "numbers"),
+    [
+        # Two procurements, each kept in the page's spelling (as in the register).
+        ("23.3-5890-2023, 23.3-2940-20", ("23.3-5890-2023", "23.3-2940-20")),
+        ("6765/05", ("6765/05",)),  # IBM: the old form
+        ("Se avsnitt 21.3.12.20", ()),  # two dots: a section number, not a case number
+    ],
+)
+def test_procurement_numbers_of_the_fact_are_read_with_the_shared_parser(
+    fact: str, numbers: tuple[str, ...]
+) -> None:
+    html = f"""
+    <html><body><h1>IT-drift</h1>
+    <div><h2 class="fakta-rubrik">Ramavtalsnummer</h2> {fact} </div>
+    </body></html>
+    """
+
+    assert parse_agreement_page(html, PAGE_URL).procurement_numbers == numbers
+
+
 def test_page_without_heading_is_an_error() -> None:
     with pytest.raises(PageLayoutError):
         parse_agreement_page("<html><body><p>Sidan finns inte</p></body></html>", PAGE_URL)

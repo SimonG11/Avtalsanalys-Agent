@@ -16,15 +16,17 @@ How:
     by the file's hash: the same file linked from several pages is parsed and
     split once. Each run replaces all sections and chunks in one transaction,
     so files that are no longer in the catalog disappear and a reader never
-    sees half a run.
+    sees half a run. A file's sections and chunks are sent as a list of rows
+    (executemany), which SQLAlchemy sends in batches: one statement with all
+    of them would pass Postgres' limit of 65,535 parameters at 6,554 sections
+    (10 parameters each). The pilot's largest file has 1,505.
 """
 
 from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 
-from sqlalchemy import delete, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import delete, insert, select
 from sqlalchemy.orm import Session
 
 from avtalsagent.db import models
@@ -123,38 +125,36 @@ def save_sections(
         )
         if document.sections:
             session.execute(
-                insert(models.DocumentSection).values(
-                    [
-                        {
-                            "sha256": document.sha256,
-                            "position": section.position,
-                            "number": section.number,
-                            "title": section.title,
-                            "level": section.level,
-                            "parent_position": section.parent,
-                            "path": list(section.path),
-                            "page_start": section.page_start,
-                            "page_end": section.page_end,
-                            "text": section.text,
-                        }
-                        for section in document.sections
-                    ]
-                )
+                insert(models.DocumentSection),
+                [
+                    {
+                        "sha256": document.sha256,
+                        "position": section.position,
+                        "number": section.number,
+                        "title": section.title,
+                        "level": section.level,
+                        "parent_position": section.parent,
+                        "path": list(section.path),
+                        "page_start": section.page_start,
+                        "page_end": section.page_end,
+                        "text": section.text,
+                    }
+                    for section in document.sections
+                ],
             )
         if document.chunks:
             session.execute(
-                insert(models.SectionChunk).values(
-                    [
-                        {
-                            "sha256": document.sha256,
-                            "section_position": chunk.section,
-                            "position": chunk.position,
-                            "context_header": chunk.context_header,
-                            "text": chunk.text,
-                        }
-                        for chunk in document.chunks
-                    ]
-                )
+                insert(models.SectionChunk),
+                [
+                    {
+                        "sha256": document.sha256,
+                        "section_position": chunk.section,
+                        "position": chunk.position,
+                        "context_header": chunk.context_header,
+                        "text": chunk.text,
+                    }
+                    for chunk in document.chunks
+                ],
             )
 
 
