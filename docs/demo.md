@@ -91,11 +91,12 @@ och svar.
 - Stegen ovanför svaret: varje verktyg agenten valde, med argumenten. När svaret har kommit är
   de ihopfällda till raden "Arbetade i … s · N steg"; klicka på den. "Visa svaret från
   verktyget" visar vad den fick tillbaka.
-- Agentens tankar, om de kommer: en egen rad i tidslinjen med OpenAI:s sammanfattning av
-  modellens resonemang, under sammanfattningens rubrik i fetstil. Rubriken och texten är på
-  engelska. "Tänker …" överst i tidslinjen säger bara att modellen arbetar, inte att en tanke
-  kommer. Med `low` kom en tanke i 1 av 8 demokörningar mot ersättaren (1 av 47 modellanrop), i
-  fråga 1, så lova den inte.
+- Agentens tankar: varje steg visar agentens syfte med det, en mening på svenska som "Hitta
+  regler om uppsägningstid i IT-driftavtalen.". Det är agentens egen motivering, som den skriver
+  med anropet, inte modellens dolda resonemang, och det kontrolleras inte; svaret gör det. Ibland
+  kommer också OpenAI:s sammanfattning av resonemanget, på engelska och under en rubrik i
+  fetstil: med `low` i 1 av 8 demokörningar mot ersättaren (1 av 47 modellanrop), så lova den
+  inte. "Tänker …" överst i tidslinjen säger bara att modellen arbetar.
 - Statusen "Verifierat" och citatet i källkortet under svaret. Källpanelen med PDF-sidan visar du
   hellre i fråga 3 (se "Om det går fel" nedan).
 
@@ -123,8 +124,8 @@ inom 30 dagar (6.21.9). Vilka av punkterna svaret tar med beror på vad du svara
 - Frågan har tre alternativ i stället för fyra, eller andra ord: välj det som gäller er egen
   uppsägning av det avropade kontraktet.
 - En tanke läser fel eller låter pratig: sammanfattningen skrivs av OpenAI, inte av agenten, och
-  kontrolleras inte. En gång läste den 6.21 som "the Sixth Amendment". Säg det och peka på svaret,
-  som är kontrollerat.
+  kontrolleras inte. En gång läste den 6.21 som "the Sixth Amendment". Inte heller stegens syfte
+  kontrolleras. Säg det och peka på svaret, som är kontrollerat.
 - Panelen säger "Citatet hittades inte i sidans text": så blev det för källa 1 i webbappen
   2026-10-07, före PR #23. Citatet ur 6.21.8 börjar på sidan 26 och slutar på sidan 27, och
   panelen godtog inte början på sidan 26. Med PR #23 öppnar panelen sidan 26, markerar början och

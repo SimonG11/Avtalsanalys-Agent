@@ -262,6 +262,12 @@ utan `TOOL_CALL_RESULT` och utan avbrott, och i `MESSAGES_SNAPSHOT` har verktygs
 `error` satt. `tests/unit/api/test_api_reasoning.py` kör appen med modellen som
 `make_agent_model` bygger den, mot en låtsad OpenAI som strömmar som den riktiga.
 
+Samma kväll fick varje steg mot avtal-mcp agentens eget syfte, en svensk mening om vad agenten
+vill ta reda på och varför, som argumentet `syfte` (ADR 0025, beslut 7). API:t ändrar inget i
+det: argumentet strömmas först i `TOOL_CALL_ARGS`, i delar som de andra argumenten, och finns
+kvar i verktygsanropen i `MESSAGES_SNAPSHOT`. avtal-mcp får det aldrig.
+`tests/unit/api/test_api_purpose.py` visar det.
+
 ## Kända begränsningar
 
 - **Ingen inloggning.** Den som når API:t och känner till ett tråd-id kan fortsätta tråden. Portarna
