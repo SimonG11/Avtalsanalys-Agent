@@ -8,8 +8,11 @@ sida med citatet markerat. När agenten behöver veta mer frågar den i en dialo
 
 > **Läge (2026-10-07):** byggd och testad mot en mock av agenten, som skickar samma händelser som
 > den riktiga agenten. Den följer kontraktet nedan, också det backend förtydligade 2026-10-07 efter
-> att agenten (M7) provkörts. Mot den riktiga agenten provas den när API:t (M9) finns. Webbappen
-> byggdes i en egen tråd, parallellt med backend.
+> att agenten (M7) provkörts. Den är också provad i webbläsaren mot API:t (M9) med den riktiga
+> modellen, med avtal-mcp:s verktyg utbytta mot två påhittade dokument: verifierat svar med
+> markerat citat, frågedialogen, en Word-fil utan PDF, ett svar ur registret och ett fel när
+> avtal-mcp inte svarar fungerade som med mocken. Webbappen byggdes i en egen tråd, parallellt med
+> backend.
 
 ## Vad du ser
 
@@ -173,7 +176,8 @@ En tabell med två etiketter per verktyg (pågår och klart), svenska namn på a
 argument som är huvudsaken för varje verktyg. `describeToolCall` gör ett verktygsanrop till rubrik,
 huvudargument och övriga argument. SHA-256 kortas till åtta tecken. Ett verktyg eller argument som
 inte finns i tabellen visas med sitt eget namn, så ett nytt verktyg i backend syns direkt.
-`isHiddenTool` säger vilka anrop som inte är steg: bara `FinalAnswer`.
+`isHiddenTool` säger vilka anrop som inte är steg: bara `FinalAnswer`. Argument som inte säger
+något visas inte: `offset` när det är 0, och avsnittets plats i filen när avsnittets nummer finns.
 
 ### 3. `src/lib/answerText.ts` och `src/lib/citation.ts` – källorna
 
@@ -302,7 +306,7 @@ Två nya jobb i `.github/workflows/ci.yml`:
 
 | Var | Vad | Antal |
 |---|---|---|
-| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null`), verktygens etiketter, hänvisningarna i texten, källornas namn, var korten hamnar och markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan) | 38 |
+| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null`), verktygens etiketter, hänvisningarna i texten, källornas namn, var korten hamnar och markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan) | 39 |
 | `mock/scenarios.test.ts` | Mockens händelser: ordningen, att svaren följer kontraktet, att varje verifierat citat finns på sin sida i test-PDF:en, de tre formerna av interrupt, att `ask_user` får svaret som resultat, båda sätten att svara och en körning som misslyckas | 9 |
 | `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, steg, svarskort, källpanel med markerat citat över två rader, dialogen i alla tre formerna, att Escape inte stänger den, eget svar, reservation, flera frågor efter varandra, en fråga vars körning misslyckas, en källa i en Word-fil utan sida och PDF, och ett svar ur registret utan källor | 11 |
 

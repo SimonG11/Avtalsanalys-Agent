@@ -32,6 +32,31 @@ describe("describeToolCall", () => {
     assert.deepEqual(description.details, [["dokument", "01234567…"]]);
   });
 
+  it("leaves out arguments that repeat a default or the section number", () => {
+    const sha256 = "0123456789abcdef".repeat(4);
+    assert.deepEqual(
+      describeToolCall("search_register", { framework_area: "IT-drift", offset: 0 }, "complete")
+        .details,
+      [["område", "IT-drift"]],
+    );
+    assert.deepEqual(
+      describeToolCall(
+        "read_section",
+        { sha256, section_number: "6.21.9", section_position: 4 },
+        "complete",
+      ).details,
+      [["dokument", "01234567…"]],
+    );
+    // A section without a number is found by its place, so the place is shown.
+    assert.deepEqual(
+      describeToolCall("read_section", { sha256, section_position: 0 }, "complete").details,
+      [
+        ["dokument", "01234567…"],
+        ["plats i filen", "0"],
+      ],
+    );
+  });
+
   it("shows unknown tools and arguments under their own names", () => {
     const description = describeToolCall("new_tool", { region: "Norr", empty: "" }, "inProgress");
     assert.deepEqual(description, {

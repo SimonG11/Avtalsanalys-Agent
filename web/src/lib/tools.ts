@@ -93,11 +93,24 @@ export function describeToolCall(
   const details: [string, string][] = [];
   for (const [key, value] of entries) {
     if (value === undefined || value === null || value === "") continue;
+    if (isRedundant(key, value, args)) continue;
     const text = formatValue(key, value);
     if (key === mainKey) subject = text;
     else details.push([ARGUMENT_LABELS[key] ?? key, text]);
   }
   return { title, subject, details };
+}
+
+/**
+ * Arguments that add nothing to the step. The model often sends `offset: 0`, the default, and
+ * both a section's number and its place in the file, where the number says it already.
+ */
+function isRedundant(key: string, value: unknown, args: unknown): boolean {
+  if (key === "offset") return value === 0;
+  if (key === "section_position") {
+    return isRecord(args) && typeof args.section_number === "string" && args.section_number !== "";
+  }
+  return false;
 }
 
 /** Long hashes are shortened, lists of words joined; other objects are written compactly. */
