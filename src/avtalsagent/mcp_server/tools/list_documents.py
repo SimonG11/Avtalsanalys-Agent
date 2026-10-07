@@ -24,9 +24,9 @@ Why:
 How:
     The filters are put in the register's spelling, with a number without a
     supplier's sequence as the procurement's filter
-    (`visibility.document_filters`, shared with the search, which also
-    raises a `NotFoundError` naming the loaded areas when no shown file
-    matches the area, agreement or procurement), and become the search's
+    (`visibility.document_filters`, which the search uses too; it raises a
+    `NotFoundError` naming the loaded areas when the area, agreement or
+    procurement matches no shown file), and become the search's
     own WHERE conditions on `document_scope`
     (`hybrid_search.scope_conditions`). A file is listed only when the
     visibility shows it: indexed (it has a scope) and not held back whole.

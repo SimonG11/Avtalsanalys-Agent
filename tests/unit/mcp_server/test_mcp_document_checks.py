@@ -238,8 +238,8 @@ def test_an_area_outside_the_pilot_says_which_areas_are_loaded(tool: Any) -> Non
         ),
         (
             {"framework_area": FURNITURE_AREA, "agreement_number": FURNITURE},
-            f"Ramavtalsområdet {FURNITURE_AREA} och avtalet {FURNITURE} finns i registret, men "
-            "deras dokument är inte inlästa.",
+            f"Både ramavtalsområdet {FURNITURE_AREA} och avtalet {FURNITURE} finns i registret, "
+            "men deras dokument är inte inlästa.",
         ),
         # A document type does not turn it into an empty answer.
         (
@@ -247,7 +247,13 @@ def test_an_area_outside_the_pilot_says_which_areas_are_loaded(tool: Any) -> Non
             f"Avtalet {FURNITURE} finns i registret, men avtalets dokument",
         ),
     ],
-    ids=["agreement", "procurement", "loaded area, agreement", "both", "agreement and type"],
+    ids=[
+        "agreement",
+        "procurement",
+        "loaded area, agreement",
+        "both",
+        "agreement and type",
+    ],
 )
 def test_an_agreement_or_procurement_outside_the_pilot_is_an_error(
     tool: Any, filters: dict[str, Any], start: str
@@ -257,6 +263,21 @@ def test_an_agreement_or_procurement_outside_the_pilot_is_an_error(
 
     assert str(error.value).startswith(start)
     assert "Svara med det registret säger (search_register)" in str(error.value)
+
+
+@TOOLS
+def test_an_area_outside_the_pilot_with_a_loaded_agreement_says_to_search_without_it(
+    tool: Any,
+) -> None:
+    with pytest.raises(NotFoundError) as error:
+        tool(cast(Session, Index()), framework_area=FURNITURE_AREA, agreement_number=ADVANIA)
+
+    # The agreement's documents are loaded, in another area: the register is not the answer.
+    assert str(error.value) == (
+        f"Ramavtalsområdet {FURNITURE_AREA} finns i registret, men områdets dokument är inte "
+        f"inlästa. Avtalet {ADVANIA} har inlästa dokument, men inte i det området. Sök igen "
+        f"utan framework_area, eller med området som search_register anger för avtalet {ADVANIA}."
+    )
 
 
 @pytest.mark.parametrize(
@@ -310,8 +331,9 @@ def test_a_file_held_back_whole_does_not_count_as_loaded() -> None:
     [None, [f.sha256 for f in FILES]],
     ids=["no index", "every file held back"],
 )
-def test_with_no_file_shown_no_filter_is_called_unloaded(held: list[str] | None) -> None:
-    # As between `process` and `index`: the tools say that the index is missing instead.
+def test_with_no_file_shown_no_filter_is_called_not_loaded(held: list[str] | None) -> None:
+    # No index (as between `process` and `index`) or every file held back: there is no loaded
+    # area to name, so the filters pass and the tools answer as before.
     index = Index(files=()) if held is None else Index(held=held)
 
     area = filters_of(index, framework_area=FURNITURE_AREA)

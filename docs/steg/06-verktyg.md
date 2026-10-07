@@ -66,10 +66,13 @@ användaren att områdets dokument inte är inlästa, …". Förut blev svaret e
 skulle troligen svara att det inte framgår, eller söka utan filtret och citera ett annat områdes
 villkor. Filerna matchas som i sökningens filter, så ett avtal utan eget leverantörskort räknas som
 inläst när upphandlingens gemensamma filer är det. Varje filter prövas för sig och utan
-dokumenttyp: ett inläst område med ett avtal utanför piloten ger felet för avtalet, och en
-dokumenttyp som avtalet inte har är fortfarande en tom lista. En fil som hålls tillbaka hel räknas
-inte, som i verktygens svar, så ett område där alla filer hålls tillbaka kallas inte inläst. Utan
-index visas ingen fil, och då säger verktygen som förut att sökindexet inte är byggt. Kontrollen
+dokumenttyp: ett inläst område med ett avtal utanför piloten ger felet för avtalet, ett område
+utanför piloten med ett inläst avtal säger att avtalets dokument finns i ett annat område och att
+modellen ska söka utan området, och en dokumenttyp som avtalet inte har är fortfarande en tom
+lista. En fil som hålls tillbaka hel räknas
+inte, som i verktygens svar, så ett område där alla filer hålls tillbaka kallas inte inläst. Visas
+ingen fil alls (inget index, eller alla filer hålls tillbaka) finns inget inläst område att räkna
+upp, och verktygen svarar som förut: utan index säger de att sökindexet inte är byggt. Kontrollen
 är en fråga mot `document_scope` per anrop, i `visibility.document_filters`, som båda verktygen
 tar sina filter från.
 
@@ -329,7 +332,7 @@ avsnittet eller på hela filen. Utan avsnitt kommer ändringarna av filen och av
 | Fil | Vad den visar |
 |---|---|
 | `tests/unit/mcp_server/test_mcp_server.py` | Verktygslistan i kontraktets ordning, läsande annoteringar, inga `session` eller `embedder` i schemat, slutna scheman (`additionalProperties: false`), svar som är modeller, svenska beskrivningar på verktyg och argument, inga `$defs`; argument utanför gränserna, tecknet NUL i varje texttyp och okända argumentnamn stoppas före sessionen, och kända namn går igenom; svaret som kompakt JSON med å, ä och ö som de är; databasfel och andra fel når modellen utan SQL eller lösenord; embeddern, dess timeout och arbetstråden; `/health` och Host-kontrollen över HTTP; kommandoraden |
-| `tests/unit/mcp_server/test_mcp_document_checks.py` | Nummer, plats eller båda; felet när avsnittet inte anges; sökningen utan embeddingmodell; med en påhittad session (efter M12): ett område, avtal eller en upphandling utanför piloten är ett fel som räknar upp de inlästa områdena, i båda dokumentverktygen och innan frågan bäddas in, också bredvid ett inläst område, för båda filtren samtidigt och med en dokumenttyp; pilotens filter och ett avtal med bara upphandlingens gemensamma filer går igenom; en fil som hålls tillbaka hel räknas inte; ingen fil som visas ger inget fel; kontrollen är en fråga utan dokumenttyp |
+| `tests/unit/mcp_server/test_mcp_document_checks.py` | Nummer, plats eller båda; felet när avsnittet inte anges; sökningen utan embeddingmodell; med en påhittad session (efter M12): ett område, avtal eller en upphandling utanför piloten är ett fel som räknar upp de inlästa områdena, i båda dokumentverktygen och innan frågan bäddas in, också bredvid ett inläst område, för båda filtren samtidigt och med en dokumenttyp, och ett område utanför piloten med ett inläst avtal ger rådet att söka utan området; pilotens filter och ett avtal med bara upphandlingens gemensamma filer går igenom; en fil som hålls tillbaka hel räknas inte; ingen fil som visas ger inget fel; kontrollen är en fråga utan dokumenttyp |
 | `tests/unit/mcp_server/test_mcp_register_checks.py` | Att ett filter krävs (också att ett tomt `sub_area` inte räcker), organisationsnumrens former, `list_documents` utan index, gränserna, NUL, `offset` och standardvärdena i schemat, att varje dokumenttyp har en plats i ordningen |
 | `tests/unit/mcp_server/test_mcp_register_sql.py` | Med en påhittad session: ett avtal som registret skriver på två sätt hittas med båda stavningarna, dokumentfiltret tar den stavning som indexet sparade, och `search_register` frågar efter båda; `offset` och `limit` kommer efter sorteringen men inte i totalen; `sub_area` delas i delar som var och en blir ett villkor på vägen, med `%` och `_` som tecken, och ett delområde som inget delområde har är ett fel |
 | `tests/unit/mcp_server/test_mcp_calculate_date.py` (efter M8) | Resultatet och steget i varje enhet, `include_start` åt båda hållen och felet med arbetsdagar, helgdagarna i `skipped`, noterna om aftnar (också en afton efter resultatet), kort månad, lördag och helgdag; resultat utanför 2005–2100; genom MCP utan session, argument utanför gränserna, enheterna och riktningarna i schemat; att registerregeln godtar varje steg som verktyget skriver, underkänner det med resultatet en dag fel och godtar notens datum |
@@ -339,7 +342,7 @@ avsnittet eller på hela filen. Utan avsnitt kommer ändringarna av filen och av
 | `tests/integration/test_mcp_amendments.py` (efter `calculate_date`) | `find_amendments` på samma korpus med tre filer i nya roller (ett ändringsdokument, Frågor och svar med tre frågor, ett odaterat ändringsdokument med ett avsnitt som hålls tillbaka) och nio påhittade hänvisningar: ändringarna av ett avsnitt och av hela filen, nyaste först och med svarets egen stämpel; inte ett förslag i frågan, ett nummer som saknas eller en hänvisning i ett upphandlingsdokument; en hänvisning via två avtalssidor en gång; en tvetydig ändring hos båda kandidaterna; ändrande och ändrade avsnitt som hålls tillbaka räknas; felen; inget mellan `process` och `index`; ett anrop genom MCP |
 | `tests/integration/test_mcp_register.py` | `list_documents` och `search_register` på samma korpus plus en påhittad registerrad: varje filter för sig och tillsammans, tidigare namn på raderna, registrets stavning, ett avtal som registret skriver på två sätt, upphandlingsnummer, okända värden, gränsen, `offset` och totalen, `%` och `_`, filer som hålls tillbaka, `list_documents` utan index, och ett anrop per verktyg genom MCP; med påhittade rader i tre nivåer: `sub_area` med delarna i båda ordningarna och med gemener, en del på valfri nivå, tillsammans med de andra filtren, och felet som räknar upp områdets delområden, också i ett område där nivå 1 är ett län |
 
-209 enhetstester i `tests/unit/mcp_server`, 42 i `tests/unit/domain/test_swedish_calendar.py` och
+211 enhetstester i `tests/unit/mcp_server`, 42 i `tests/unit/domain/test_swedish_calendar.py` och
 126 integrationstester (M6 hade 84 och 87). Integrationstesterna använder samma korpus och samma
 påhittade embedder (`TopicEmbedder`) som M5:s tester, och läser genom en skrivskyddad anslutning
 som servern gör.
@@ -358,6 +361,9 @@ som servern gör.
 - **`list_documents` räknar inte filer som hålls tillbaka hela.** En fil som var i karantän när
   indexet byggdes har inget omfång, så det går inte att säga vilka filter den skulle matcha.
   Avsnitt som hålls tillbaka räknas i `get_outline` och i hänvisningarna.
+- **Ett område där alla filer hålls tillbaka kallas inte inläst** (efter M12), fast
+  `read_section` säger att samma filer hålls tillbaka i granskningen. Det gäller tills `index`
+  körs igen efter ett godkännande.
 - **`get_outline` ger alla avsnitt.** Ett dokument med mycket stor innehållsförteckning ger ett
   långt svar; Microsofts produktvillkor har omkring 1 500 rubriker (steg 3, `step3_chunk.py`).
 - **Färre träffar än `limit`.** När något hålls tillbaka efter att indexet byggdes tar

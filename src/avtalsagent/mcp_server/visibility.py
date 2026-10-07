@@ -45,8 +45,9 @@ How:
     or procurement, each alone and without the document type: a type
     without documents is a plain empty answer. A file counts when the
     visibility shows it, so one the quarantine holds back whole does not,
-    as in the tools' answers. When no file is shown at all (no index), the
-    check passes, and the tools say that the index is missing.
+    as in the tools' answers. When no file is shown at all (no index, or
+    every file held back), there is no loaded area to name, so the check
+    passes and the tools answer as before.
 """
 
 from dataclasses import dataclass
@@ -187,13 +188,14 @@ def document_filters(
 
 
 def require_loaded(session: Session, visibility: Visibility, filters: SearchFilters) -> None:
-    """`NotFoundError` when no file the tools show matches the area, agreement or procurement.
+    """`NotFoundError` when the area, agreement or procurement, each alone, matches no shown file.
 
-    Each is matched alone, as the search's filter matches it, and the
-    document type is left out. The message names the areas whose documents
-    are loaded and tells the model to answer from the register. When no
-    file is shown at all (no index), nothing is raised: the tools say that
-    the index is missing.
+    Each is matched as the search's filter matches it, without the
+    document type. The message names the areas whose documents are loaded
+    and says what the model can do: answer from the register, or, when only
+    the area is missing and the agreement's documents are loaded, search
+    again without the area. When no file is shown at all (no index, or
+    every file held back), nothing is raised and the tools answer as before.
     """
     wanted: list[tuple[str, str, SearchFilters]] = []  # what, whose documents, its filter alone
     if (area := filters.framework_area) is not None:
@@ -210,21 +212,32 @@ def require_loaded(session: Session, visibility: Visibility, filters: SearchFilt
     matches: list[ColumnElement[bool]] = [and_(*scope_conditions(f)) for _, _, f in wanted]
     rows = session.execute(select(scope.sha256, scope.framework_areas, *matches))
     shown = [(areas, found) for sha256, areas, *found in rows if visibility.shows_file(sha256)]
-    if not shown:  # no index, as between `process` and `index`
+    if not shown:  # no index (as between `process` and `index`), or every file held back
         return
-    missing = [
-        (what, whose)
-        for n, (what, whose, _) in enumerate(wanted)
-        if not any(found[n] for _, found in shown)
-    ]
+    missing = [n for n in range(len(wanted)) if not any(found[n] for _, found in shown)]
     if not missing:
         return
-    named = " och ".join(what for what, _ in missing)
-    whose = missing[0][1] if len(missing) == 1 else "deras"
     loaded = ", ".join(sorted({name for areas, _ in shown for name in areas}))
+    if len(missing) == 1:
+        what, whose, _ = wanted[missing[0]]
+        named = _capitalised(what)
+    else:  # the area and the agreement or procurement: at most two
+        whose = "deras"
+        named = f"Både {wanted[0][0]} och {wanted[1][0]}"
+    said = f"{named} finns i registret, men {whose} dokument är inte inlästa. "
+    if missing == [0] and len(wanted) == 2:  # only the area: the agreement's are loaded elsewhere
+        other = wanted[1][0]
+        raise NotFoundError(
+            f"{said}{_capitalised(other)} har inlästa dokument, men inte i det området. "
+            f"Sök igen utan framework_area, eller med området som search_register anger för "
+            f"{other}."
+        )
     raise NotFoundError(
-        f"{named[0].upper()}{named[1:]} finns i registret, men {whose} dokument är inte inlästa. "
-        f"Områden med inlästa dokument: {loaded}. Svara med det registret säger "
+        f"{said}Områden med inlästa dokument: {loaded}. Svara med det registret säger "
         f"(search_register) och säg till användaren att {whose} dokument inte är inlästa, i "
         "stället för att svara att det inte framgår eller citera andra avtals dokument."
     )
+
+
+def _capitalised(text: str) -> str:
+    return f"{text[0].upper()}{text[1:]}"
