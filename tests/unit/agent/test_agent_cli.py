@@ -220,7 +220,12 @@ def test_the_models_calls_are_steps_but_ask_user_is_asked_when_the_run_stops() -
                 "id": "c1",
                 "type": "tool_call",
             },
-            {"name": "ask_user", "args": {"question": "Vilket?"}, "id": "c2", "type": "tool_call"},
+            {
+                "name": "ask_user",
+                "args": {"question": "Vilket?", "options": OPTIONS},
+                "id": "c2",
+                "type": "tool_call",
+            },
             {"name": "FinalAnswer", "args": {}, "id": "c3", "type": "tool_call"},
         ],
     )
@@ -522,12 +527,14 @@ async def test_a_question_prints_its_steps_and_the_users_reply_resumes_the_run()
 
 @pytest.mark.anyio
 async def test_without_input_for_the_agents_question_the_command_stops() -> None:
-    graph, _ = agent([tool_call("ask_user", {"question": "Vilket avtal menar du?"}, "c1")])
+    graph, _ = agent(
+        [tool_call("ask_user", {"question": "Vilket avtal menar du?", "options": OPTIONS}, "c1")]
+    )
     used, _, _, lines = terminal()
 
     with pytest.raises(cli.CommandError, match="inmatningen tog slut"):
         await cli.ask(graph, "Vilken uppsägningstid gäller?", THREAD, used)
-    assert lines.prompts == ["Svar: "]
+    assert lines.prompts == ["Svar (nummer eller egen text): "]
 
 
 @pytest.mark.anyio

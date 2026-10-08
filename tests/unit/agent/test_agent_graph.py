@@ -86,6 +86,10 @@ GOOD = {
 }
 BAD = {"id": 1, "sha256": SHA, "section_position": 41, "quote": "uppsägningstid på tre månader"}
 TODAY = date(2026, 10, 7)
+ASK_WHICH = {
+    "question": "Vilket avtal menar du?",
+    "options": ["IT-drift Större", "IT-drift Mindre"],
+}
 NOT_FOUND = (
     "Det finns inget avsnitt med nummer 99.9 i dokumentet. Kontrollera numret med get_outline."
 )
@@ -773,7 +777,7 @@ async def test_the_reviewer_reads_the_users_answer_to_ask_user() -> None:
     reviewer = ScriptedReviewer()
     graph, _ = build(
         [
-            tool_call("ask_user", {"question": "Vilket avtal menar du?"}, "c1"),
+            tool_call("ask_user", ASK_WHICH, "c1"),
             final_answer("Tre månader [1].", [GOOD], call_id="c2"),
         ],
         reviewer=reviewer,
@@ -794,7 +798,7 @@ async def test_a_cancelled_question_is_not_an_answer_from_the_user() -> None:
     reviewer = ScriptedReviewer()
     graph, _ = build(
         [
-            tool_call("ask_user", {"question": "Vilket avtal menar du?"}, "c1"),
+            tool_call("ask_user", ASK_WHICH, "c1"),
             final_answer("Tre månader [1].", [GOOD], call_id="c2"),
         ],
         reviewer=reviewer,
@@ -1071,20 +1075,36 @@ async def test_ask_user_pauses_the_run_and_the_answer_resumes_it() -> None:
 
 
 @pytest.mark.anyio
-async def test_ask_user_without_options_sends_only_the_question() -> None:
-    graph, _ = build([tool_call("ask_user", {"question": "Vilket avtal menar du?"}, "c1")])
+@pytest.mark.parametrize(
+    "options",
+    [None, ["IT-drift Större"], ["IT-drift Större", " "], [f"Avtal {n}" for n in range(6)]],
+    ids=["none", "one", "an empty one", "six"],
+)
+async def test_ask_user_without_two_to_five_options_is_refused_and_the_model_asks_again(
+    options: list[str] | None,
+) -> None:
+    args: dict[str, Any] = {"question": "Vilket avtal menar du?"}
+    if options is not None:
+        args["options"] = options
+    graph, model = build(
+        [tool_call("ask_user", args, "c1"), tool_call("ask_user", ASK_WHICH, "c2")]
+    )
 
     await graph.ainvoke(QUESTION, THREAD)
 
+    # The model read why as the call's result, and its next call asked with options.
+    [refused, *_] = tool_messages(model.calls[1], "ask_user")
+    assert refused.status == "error"
+    assert "options" in str(refused.content)
     [question] = (await graph.aget_state(THREAD)).interrupts
-    assert question.value == {"question": "Vilket avtal menar du?"}
+    assert question.value == ASK_WHICH
 
 
 @pytest.mark.anyio
 async def test_a_cancelled_question_tells_the_model_the_user_did_not_answer() -> None:
     graph, model = build(
         [
-            tool_call("ask_user", {"question": "Vilket avtal menar du?"}, "c1"),
+            tool_call("ask_user", ASK_WHICH, "c1"),
             final_answer("Det beror på avtalet.", answered=False, call_id="c2"),
         ]
     )
@@ -1111,7 +1131,7 @@ async def test_each_new_question_starts_without_the_last_answer() -> None:
         [
             final_answer("Tre månader [1].", [BAD], call_id="c1"),
             final_answer("Tre månader [1].", [GOOD], call_id="c2"),
-            tool_call("ask_user", {"question": "Vilket avtal menar du?"}, "c3"),
+            tool_call("ask_user", ASK_WHICH, "c3"),
         ]
     )
 
