@@ -8,7 +8,7 @@ What:
 
 Why:
     ag-ui-langgraph turns LangGraph's events into AG-UI's, which CopilotKit
-    reads (ADR 0010). Six of its defaults do not fit the contract
+    reads (ADR 0010). Seven of its defaults do not fit the contract
     (webbapp-kontrakt.md) or the API:
     - A state snapshot holds the whole state again with every step: every
       message, and the draft before its check (`structured_response`).
@@ -23,6 +23,25 @@ Why:
       `on_interrupt` event, which the library also sends by default, is
       off: the web app reads the outcome (the web thread confirmed this
       2026-10-07, and its tests run that shape alone).
+    - Several `ask_user` questions can wait at once (parallel calls in one
+      model message). The library resumes them with a key of its own
+      (`__agui_resume_map__`), or a lone answer as the answer itself, but
+      with more than one waiting LangGraph takes only a map from interrupt
+      id to answer: the run failed, and each new message got the same
+      questions back. With more than one waiting, the answers go by id, as
+      on the command line (`agent/__main__.py`); a cancelled one as
+      `ask_user`'s cancel mark. An answer to a question that is not waiting
+      is dropped, and a question left without an answer ends the run
+      again. Once one of them is answered, one question waits, and there
+      the library reads no ids: the first answer sent again would go to
+      the other question, and both sent again would give `ask_user` the
+      library's map as text. So with one question waiting, of several
+      answers only its own goes on, alone, the library's way, and a lone
+      answer with another id in LangGraph's form (32 hex digits) is
+      dropped; with no answer left, LangGraph resumes nothing, and the run
+      ends with the question again. A lone answer with the waiting
+      question's id, or with an id not in that form, goes the library's
+      way, as for an ordinary single question.
     - A RAW copy of every LangGraph event is off: nothing reads it.
     - Each run's config is filled in with LangChain's defaults, and their
       recursion limit (25 of LangGraph's steps) replaced the graph's own
@@ -68,7 +87,14 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
-from ag_ui.core import EventType, RunAgentInput, RunErrorEvent, RunStartedEvent
+from ag_ui.core import (
+    EventType,
+    Interrupt,
+    ResumeEntry,
+    RunAgentInput,
+    RunErrorEvent,
+    RunStartedEvent,
+)
 from ag_ui.encoder import EventEncoder
 from ag_ui_langgraph import LangGraphAgent
 from ag_ui_langgraph.agent import ProcessedEvents
@@ -77,7 +103,10 @@ from fastapi.responses import StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.pregel._utils import is_xxh3_128_hexdigest  # LangGraph's test of an interrupt id
+from langgraph.types import Command
 
+from avtalsagent.agent.ask_user import CANCELLED_MARK
 from avtalsagent.agent.graph import AGENT_NAME, AvtalAgent, build_agent
 from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.config import Settings
@@ -98,10 +127,57 @@ OpenTools = Callable[[Settings], AbstractAsyncContextManager[McpTools]]
 
 
 class AvtalAguiAgent(LangGraphAgent):
-    """`LangGraphAgent` whose snapshots hold only the answer and whose errors name no internals."""
+    """`LangGraphAgent` with its snapshots, errors, client state and resumes fitted to the API.
+
+    A snapshot holds only the answer, an error names no internals, the client's state is
+    dropped, and the answers to waiting `ask_user` questions go to them by id where an id names
+    a question (`_build_command_from_agui_resume`).
+    """
 
     def get_state_snapshot(self, state: dict[str, Any]) -> dict[str, Any]:
         return {"answer": state.get("answer")}
+
+    def _build_command_from_agui_resume(
+        self, entries: list[ResumeEntry], *, open_interrupts: list[Interrupt] | None = None
+    ) -> Command[Any]:
+        """The answers to the waiting questions as LangGraph takes them.
+
+        Several questions waiting: a map from interrupt id to answer, without
+        the answers to questions that do not wait. One question waiting:
+        - one answer, with its id or an id not in LangGraph's form (32 hex
+          digits): the library's command, unchanged;
+        - one answer with another id in LangGraph's form (an earlier
+          question's, sent again): an empty map;
+        - several answers: its own alone, as the library sends one answer,
+          or an empty map when none is its own.
+        An empty map resumes nothing, and the run ends with the question
+        again.
+        """
+        open_ids = {interrupt.id for interrupt in open_interrupts or []}
+        answers = {entry.interrupt_id: entry for entry in entries}  # the last answer per id
+        if len(open_ids) > 1:
+            # An answer to a question that is not waiting is dropped: LangGraph refuses the whole
+            # map over a key not in an interrupt id's form. When none is left, the map is empty:
+            # LangGraph resumes no question, and the run ends with the same ones again.
+            return Command(
+                resume={
+                    id_: _resume_value(entry) for id_, entry in answers.items() if id_ in open_ids
+                }
+            )
+        if len(open_ids) == 1:
+            # The library reads no ids here: it would send several answers as its own map, which
+            # ask_user would read as text, and a lone answer to the waiting question, whatever
+            # its id. An empty map resumes nothing: the run ends with the question again.
+            (waiting,) = open_ids
+            if len(entries) > 1:
+                if waiting not in answers:
+                    return Command(resume={})
+                return super()._build_command_from_agui_resume(
+                    [answers[waiting]], open_interrupts=open_interrupts
+                )
+            if len(entries) == 1 and _another_questions_answer(entries[0], waiting):
+                return Command(resume={})
+        return super()._build_command_from_agui_resume(entries, open_interrupts=open_interrupts)
 
     async def run(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
         async for event in super().run(_without_client_state(input)):
@@ -109,6 +185,16 @@ class AvtalAguiAgent(LangGraphAgent):
                 # The library has logged the exception; the browser gets the fixed text.
                 event = RunErrorEvent(type=EventType.RUN_ERROR, message=RUN_FAILED)
             yield event
+
+
+def _resume_value(entry: ResumeEntry) -> Any:
+    """What `ask_user` gets back for one answer: the answer, or the cancel mark it reads."""
+    return entry.payload if entry.status == "resolved" else {CANCELLED_MARK: True}
+
+
+def _another_questions_answer(entry: ResumeEntry, waiting: str) -> bool:
+    """Whether `entry` names a question other than `waiting` by an id in LangGraph's form."""
+    return entry.interrupt_id != waiting and is_xxh3_128_hexdigest(entry.interrupt_id)
 
 
 def _without_client_state(input: RunAgentInput) -> RunAgentInput:
