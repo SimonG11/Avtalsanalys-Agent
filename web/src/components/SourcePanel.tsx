@@ -18,6 +18,7 @@ import { documentTitle, locationLabel } from "@/lib/citation";
 import type { Citation } from "@/lib/contract";
 import type { QuoteMatch } from "@/lib/highlight";
 
+import { Icon } from "./icons";
 import styles from "./SourcePanel.module.css";
 
 const PdfViewer = dynamic(() => import("./PdfViewer"), {
@@ -55,13 +56,14 @@ export function SourcePanel({ citation, onClose }: { citation: Citation; onClose
           {location && <p className={styles.meta}>{location}</p>}
         </div>
         <button type="button" className={styles.close} onClick={onClose} aria-label="Stäng källan">
-          ×
+          <Icon name="close" size={18} />
         </button>
       </header>
 
       <blockquote className={styles.quote}>
         ”{citation.quote}”
         <footer className={citation.verified ? styles.verified : styles.unverified}>
+          <Icon name={citation.verified ? "shield" : "alert"} size={14} />
           {citation.verified
             ? "Kontrollerat mot avtalstexten"
             : "Kunde inte kontrolleras mot avtalstexten"}

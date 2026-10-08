@@ -133,6 +133,10 @@ Ett avsnitt som "14.2 Leverantören får säga upp…" förlorar sin mening när
 
 - **Agentloop + extern validering med återkoppling** motsvarar det etablerade *corrective RAG*/*self-RAG*-mönstret, men med deterministiska kontroller i stället för att modellen bedömer sig själv. ✅
 - **Parallella delagenter** via LangGraph `Send` för jämförelser över många avtal. ✅
+
+  > **Senare:** delagenterna byggdes inte. En jämförelse görs i samma loop, med en sökning per
+  > delområde eller avtal ([steg 7](steg/07-agent.md#middleware-som-inte-används-och-varför)).
+
 - **GraphRAG** väljs bort. Det bygger en kunskapsgraf med LLM, men vår graf finns redan explicit i dokumenten (hänvisningar och ändringar) och extraheras billigare och mer exakt med regex och struktur.
 - **Inläsningen är fortfarande ett workflow.** Ingen källa motiverar en agent där. ✅
 

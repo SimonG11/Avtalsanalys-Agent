@@ -1,5 +1,8 @@
 # M8 – Valideringskedjan: registeruppgifter, granskare och två nya försök
 
+> Filen beskriver M8 som den var när den byggdes, och några stycken har lagts till senare.
+> Läget efter körningen mot den riktiga databasen står i [steg 12](12-demo.md).
+
 **Mål:** bygga resten av valideringen efter agentens loop (arkitekturplanens avsnitt 6, lager 4 och
 5). Uppgifter ur registret i svaret (avtalsnummer, organisationsnummer, datum) ska jämföras med
 registret, så att ett svar ur registret kan bli kontrollerat. En andra modell, `gpt-6-astra`, ska
@@ -325,8 +328,12 @@ uv run pytest tests/unit
   för regeln eller kontrolleras på fel ställe (ADR 0017 och 0018). Regeln är provkörd med de riktiga
   modellerna på q21–q23, mot den fristående ersättaren för avtal-mcp.
 - **Granskaren kan ta fel.** Den kan underkänna ett rätt svar (det kostar ett nytt försök och i
-  värsta fall en reservation) eller godkänna ett svar som reglerna redan har godkänt. Hur ofta
-  mäts i utvärderingen (M11).
+  värsta fall en reservation) eller godkänna ett svar som reglerna redan har godkänt. Hur ofta är
+  inte mätt för sig: mätningen i M11 ([steg 11](11-utvardering.md)) jämför svaren med facit, inte
+  granskarens domar. Men i mätningen mot den riktiga databasen (steg 11, "Mot Postgres") fick
+  både q06, som domaren bedömde som fel, och q18, som den bedömde som delvis rätt, status
+  Kontrollerat, alltså godkända av granskaren. I q06 stöder källan svaret, och bara facit visar
+  att det är fel källa; i q18 saknas "exklusive moms".
 - **Granskaren kostar tid och pengar:** ett anrop per besvarat utkast som klarar reglerna, se
   Resultat.
 - **Granskaren läser bara den senaste frågan** och agentens följdfrågor efter den. En kort
