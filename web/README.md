@@ -1,7 +1,7 @@
 # Webbappen
 
 Chatt med agentens tankar och steg live, svar med källor och en källpanel med PDF:en där citatet
-är markerat, i ljust och mörkt läge. Next.js och CopilotKit, som pratar med agenten över AG-UI. Förklaringen av varje del finns i
+är markerat, i ljust och mörkt läge. Egna filer kan bifogas och jämföras med ramavtalen. Next.js och CopilotKit, som pratar med agenten över AG-UI. Förklaringen av varje del finns i
 [`docs/steg/10-webbapp.md`](../docs/steg/10-webbapp.md) och beslutet i
 [ADR 0010](../docs/adr/0010-webbapp-copilotkit-ag-ui.md).
 
@@ -46,8 +46,8 @@ Mot den riktiga agenten startar du API:t i stället för mocken. Webbappen hitta
 
 | Mapp | Innehåll |
 |---|---|
-| `src/app/` | Sidan och två routes: `api/copilotkit` (agenten) och `api/documents/[sha256]/pdf` |
-| `src/components/` | Chatten, tidslinjen, agentens fråga, svarskortet och källpanelen |
+| `src/app/` | Sidan och routes till API:t: `api/copilotkit` (agenten), `api/documents/[sha256]/pdf` och `api/uploads` (egna filer) |
+| `src/components/` | Chatten, tidslinjen, agentens fråga, de egna filerna, svarskortet och källpanelen |
 | `src/lib/` | Ren logik med tester: kontraktet, frågorna och tidslinjen, verktygens etiketter, hänvisningar och markering av citat |
 | `mock/` | Mocken: server, skriptade körningar och test-PDF:en |
 | `e2e/` | Webbläsartester med Playwright |

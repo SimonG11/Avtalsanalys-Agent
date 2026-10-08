@@ -124,6 +124,25 @@ describe("describeToolCall", () => {
     assert.equal(description.title, "Letar efter ändringar");
     assert.equal(description.subject, "3.2");
   });
+
+  it("names the person's uploaded file instead of its id", () => {
+    const names = new Map([["upl_1", "vårt-kontrakt.pdf"]]);
+    assert.deepEqual(
+      describeToolCall(
+        "read_upload",
+        { upload_id: "upl_1", query: "uppsägning" },
+        "complete",
+        names,
+      ),
+      { title: "Läste din fil", subject: "vårt-kontrakt.pdf", details: [["sökord", "uppsägning"]] },
+    );
+    // A file the web app does not know, e.g. after a reload, is shown by its id.
+    assert.equal(
+      describeToolCall("read_upload", { upload_id: "upl_2" }, "inProgress").subject,
+      "upl_2",
+    );
+    assert.equal(describeToolCall("list_uploads", {}, "inProgress").title, "Listar dina filer");
+  });
 });
 
 describe("summarizeResult", () => {
@@ -150,6 +169,13 @@ describe("summarizeResult", () => {
       summarizeResult("find_amendments", answer(2, 1)),
       "2 ändringar, 1 till som inte kan visas",
     );
+  });
+
+  it("counts the files list_uploads found, as a list or under `uploads`", () => {
+    assert.equal(summarizeResult("list_uploads", JSON.stringify([])), "Inga filer");
+    assert.equal(summarizeResult("list_uploads", JSON.stringify([{ upload_id: "a" }])), "1 fil");
+    assert.equal(summarizeResult("list_uploads", JSON.stringify({ uploads: [{}, {}] })), "2 filer");
+    assert.equal(summarizeResult("list_uploads", "Inga filer i tråden."), null);
   });
 
   it("gives nothing for other tools, an error text or a missing result", () => {

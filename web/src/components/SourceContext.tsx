@@ -2,9 +2,9 @@
 /**
  * What: lets any part of the chat open a citation in the source panel.
  *
- * Why: the answer card is rendered by CopilotKit inside the chat, far from the page layout that
+ * Why: the answer card is rendered deep inside the conversation, far from the page layout that
  * owns the source panel. A React context connects the two without passing callbacks through
- * CopilotKit's components.
+ * every component in between.
  *
  * How: AgentApp provides `openSource`; AnswerCard calls it when a citation is clicked.
  */

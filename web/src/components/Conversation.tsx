@@ -10,8 +10,9 @@
  * How: CopilotKit's `useAgent` holds the AG-UI agent and its messages; lib/turns.ts groups the
  * messages into one turn per question. A question is sent by adding a user message and asking
  * CopilotKit to run the agent, which goes through the CopilotKit runtime at /api/copilotkit to
- * the backend's AG-UI endpoint. Answers.tsx keeps each question's answer, and AskUser.tsx
- * shows the agent's question under the turn that asked it. The list keeps to the bottom while
+ * the backend's AG-UI endpoint. Answers.tsx keeps each question's answer, AskUser.tsx
+ * shows the agent's question under the turn that asked it, and Uploads.tsx keeps the files
+ * attached to each question. The list keeps to the bottom while
  * new things arrive, unless the person has scrolled up to read.
  */
 import { UseAgentUpdate, randomUUID, useAgent, useCopilotKit } from "@copilotkit/react-core/v2";
@@ -24,9 +25,12 @@ import type { ConversationMessage, Turn } from "@/lib/turns";
 
 import { PendingAnswerContext, useAskUser } from "./AskUser";
 import { Composer } from "./Composer";
+import { FileChip } from "./FileChip";
 import { TurnOutcome, useAnswers } from "./Answers";
 import type { Outcome } from "./Answers";
 import { Timeline } from "./Timeline";
+import { useUploads } from "./Uploads";
+import type { AttachedFile } from "./Uploads";
 import styles from "./Conversation.module.css";
 
 const UPDATES = [
@@ -48,6 +52,7 @@ export function Conversation() {
   const { agent, isReady } = useAgent({ agentId: AGENT_ID, updates: UPDATES });
   const { copilotkit } = useCopilotKit();
   const { byQuestion, durations } = useAnswers();
+  const uploads = useUploads();
   const [pendingAnswer, setPendingAnswer] = useState<((text: string) => void) | null>(null);
   const registerPendingAnswer = useCallback(
     (answer: ((text: string) => void) | null) => setPendingAnswer(() => answer),
@@ -65,7 +70,9 @@ export function Conversation() {
       return;
     }
     pin();
-    agent.addMessage({ id: randomUUID(), role: "user", content: text });
+    const id = randomUUID();
+    uploads.commit(id);
+    agent.addMessage({ id, role: "user", content: text });
     try {
       await copilotkit.runAgent({ agent });
     } catch (error) {
@@ -89,6 +96,11 @@ export function Conversation() {
       running={running}
       onSend={(text) => void send(text)}
       onStop={stop}
+      files={
+        pendingAnswer
+          ? null
+          : { attached: uploads.attached, onAdd: uploads.add, onRemove: uploads.remove }
+      }
     />
   );
 
@@ -99,7 +111,8 @@ export function Conversation() {
           <h2 className={styles.welcomeTitle}>Vad vill du veta om ramavtalen?</h2>
           <p className={styles.welcomeText}>
             Agenten söker själv i Statens inköpscentrals ramavtal och i registret över avtalen,
-            kontrollerar sitt svar och visar källorna, så att du kan läsa dem i avtalet.
+            kontrollerar sitt svar och visar källorna, så att du kan läsa dem i avtalet. Du kan
+            också bifoga ett eget avtal och be agenten jämföra det med ramavtalen.
           </p>
           {composer}
           {isReady && (
@@ -136,6 +149,7 @@ export function Conversation() {
                   turn={turn}
                   running={running && last}
                   waiting={last && pendingAnswer !== null}
+                  files={uploads.filesOf(turn.questionId)}
                   outcome={byQuestion.get(turn.questionId)}
                   milliseconds={durations.get(turn.questionId) ?? null}
                 >
@@ -158,6 +172,7 @@ function TurnView({
   turn,
   running,
   waiting,
+  files,
   outcome,
   milliseconds,
   children,
@@ -165,6 +180,7 @@ function TurnView({
   turn: Turn;
   running: boolean;
   waiting: boolean;
+  files: readonly AttachedFile[];
   outcome: Outcome | undefined;
   milliseconds: number | null;
   children: ReactNode;
@@ -172,6 +188,13 @@ function TurnView({
   const answered = outcome !== undefined && outcome.kind === "answer";
   return (
     <article className={styles.turn} data-testid="turn">
+      {files.length > 0 && (
+        <div className={styles.questionFiles}>
+          {files.map((file) => (
+            <FileChip key={file.key} file={file} />
+          ))}
+        </div>
+      )}
       <div className={styles.question} data-testid="question">
         {turn.question}
       </div>

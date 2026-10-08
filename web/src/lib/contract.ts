@@ -1,6 +1,7 @@
 /**
  * What: the data the web app receives from the agent, as Zod schemas and TypeScript types:
- * the answer in the shared state (`answer`) and the payload of the ask_user interrupt.
+ * the answer in the shared state (`answer`) and the payload of the ask_user interrupt. The
+ * uploads' own data is in lib/uploads.ts.
  *
  * Why: the backend and the web app are built in separate milestones (M7/M9 and M10). The
  * contract between them is described in docs/steg/10-webbapp.md ("Kontraktet med backend"); this
@@ -12,21 +13,36 @@
  */
 import { z } from "zod";
 
-export const CitationSchema = z.object({
-  id: z.number().int().positive(),
-  sha256: z.string().regex(/^[0-9a-f]{64}$/, "sha256 must be 64 lowercase hex characters"),
-  // Empty when the cited section could not be read.
-  file_title: z.string(),
-  // Null when no agreement page links to the file.
-  page_title: z.string().nullable(),
-  // Null for a section without a number, e.g. the text before the first heading.
-  section_number: z.string().nullable(),
-  section_title: z.string(),
-  // Null for a Word file, which has no pages.
-  page: z.number().int().positive().nullable(),
-  quote: z.string().min(1),
-  verified: z.boolean(),
-});
+export const CitationSchema = z
+  .object({
+    id: z.number().int().positive(),
+    // "upload" for the person's own file (webbapp-kontrakt.md, point 37); answers from before
+    // uploads have no `source`, and all their citations are from the framework agreements.
+    source: z.enum(["framework", "upload"]).default("framework"),
+    // The cited file's hash: the framework document's, or the uploaded file's. The web app
+    // links a source by `source` and this hash, and shows one without a hash, without its PDF,
+    // rather than lose the whole answer.
+    sha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/, "sha256 must be 64 lowercase hex characters")
+      .nullable(),
+    // Set for an uploaded file only.
+    upload_id: z.string().min(1).nullish(),
+    // Empty when the cited section could not be read. An uploaded file's name.
+    file_title: z.string(),
+    // Null when no agreement page links to the file, and for an uploaded file.
+    page_title: z.string().nullable(),
+    // Null for a section without a number, e.g. the text before the first heading.
+    section_number: z.string().nullable(),
+    section_title: z.string(),
+    // Null for a Word or text file, which has no pages.
+    page: z.number().int().positive().nullable(),
+    quote: z.string().min(1),
+    verified: z.boolean(),
+  })
+  .refine((citation) => citation.source !== "upload" || !!citation.upload_id, {
+    error: "a citation from an uploaded file needs its upload_id",
+  });
 
 /** One row of the register as the check read it: an agreement has a row per sub-area. */
 export const RegisterFactSchema = z.object({
@@ -95,7 +111,7 @@ export type AskUser = z.infer<typeof AskUserSchema>;
  * - the AG-UI standard interrupt, where the graph's value is in `metadata.langgraph.raw`;
  * - the older `on_interrupt` custom event, where the value is a JSON string.
  * The first shape that matches the schema wins. Returns null when neither does, so an
- * interrupt that is not ask_user never opens the dialog.
+ * interrupt that is not ask_user is never shown as a question.
  */
 export function parseAskUser(standard: unknown, legacyValue: unknown): AskUser | null {
   const candidates: unknown[] = [];

@@ -2,7 +2,7 @@
  * What: where the backend API is, read from the environment on the server.
  *
  * Why: the browser only talks to the web app's own server (same origin). That server forwards
- * agent runs and PDF requests to the API, so the API needs no CORS setup and its address can
+ * agent runs, PDF requests and uploads to the API, so the API needs no CORS setup and its address can
  * change between `npm run dev` (localhost) and Docker Compose (the `api` service) without a
  * new build.
  *
@@ -24,4 +24,10 @@ export function agentUrl(): string {
 /** The PDF of one document, identified by its SHA-256. */
 export function documentPdfUrl(sha256: string): string {
   return `${apiUrl()}/api/documents/${sha256}/pdf`;
+}
+
+/** The person's uploaded files (webbapp-kontrakt.md, points 33-34), or one of them. */
+export function uploadsUrl(uploadId?: string, path = ""): string {
+  const base = `${apiUrl()}/api/uploads`;
+  return uploadId === undefined ? base : `${base}/${encodeURIComponent(uploadId)}${path}`;
 }
