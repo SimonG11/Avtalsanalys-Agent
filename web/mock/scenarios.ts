@@ -131,10 +131,12 @@ class RunBuilder {
   }
 
   /**
-   * The model reasons before it acts. The backend asks for no summary of the reasoning, so the
-   * reasoning message is empty: CopilotKit shows only that the model thinks.
+   * The model reasons before it acts. With a text, the summary of its reasoning streams in
+   * pieces (webbapp-kontrakt.md, point 29); without one, the reasoning message is empty, as
+   * before the backend asked OpenAI for summaries. Like the real stream, the messages snapshot
+   * at the end has no reasoning messages; the client keeps the streamed ones.
    */
-  reason(): void {
+  reason(text = ""): void {
     const messageId = this.nextId("reasoning");
     this.push({ type: EventType.REASONING_START, messageId } as BaseEvent);
     this.push({
@@ -142,6 +144,9 @@ class RunBuilder {
       messageId,
       role: "reasoning",
     } as BaseEvent);
+    for (const delta of text.match(/\S+\s*/g) ?? []) {
+      this.push({ type: EventType.REASONING_MESSAGE_CONTENT, messageId, delta } as BaseEvent, 40);
+    }
     this.push({ type: EventType.REASONING_MESSAGE_END, messageId } as BaseEvent, 600, 300);
     this.push({ type: EventType.REASONING_END, messageId } as BaseEvent);
   }
@@ -183,6 +188,33 @@ class RunBuilder {
       toolCalls: [{ id: toolCallId, type: "function", function: { name, arguments: argsJson } }],
     });
     return toolCallId;
+  }
+
+  /**
+   * A call from an earlier run streamed again under the same id, as ag-ui-langgraph does for the
+   * ask_user call when a run resumes, before that call's result.
+   */
+  repeatCall(toolCallId: string): void {
+    for (const message of this.input.messages) {
+      const call =
+        message.role === "assistant"
+          ? message.toolCalls?.find((c) => c.id === toolCallId)
+          : undefined;
+      if (!call) continue;
+      this.push({
+        type: EventType.TOOL_CALL_START,
+        toolCallId,
+        toolCallName: call.function.name,
+        parentMessageId: message.id,
+      } as BaseEvent);
+      this.push({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId,
+        delta: call.function.arguments,
+      } as BaseEvent);
+      this.push({ type: EventType.TOOL_CALL_END, toolCallId } as BaseEvent);
+      return;
+    }
   }
 
   /** The tool's answer to a call, which may have been made in an earlier run. */
@@ -248,6 +280,23 @@ class RunBuilder {
    */
   askUser(value: { question: string; options: string[] }): void {
     this.callTool("ask_user", value);
+  }
+
+  /**
+   * An ask_user call the backend refuses before asking, here for want of options
+   * (webbapp-kontrakt.md, point 32): no result event and no interrupt, and in the messages
+   * snapshot a tool message with `error` set. The model then asks again.
+   */
+  refusedAskUser(question: string): void {
+    const toolCallId = this.callTool("ask_user", { question });
+    const error = "ask_user behöver 2-5 korta svarsalternativ.";
+    this.newMessages.push({
+      id: this.nextId("tool"),
+      role: "tool",
+      toolCallId,
+      content: error,
+      error,
+    });
   }
 
   interrupt(value: { question: string; options: string[] }, shape: InterruptShape): void {
@@ -395,7 +444,11 @@ function answerNoticePeriod(
 ): void {
   let answer = noticePeriodAnswer(context, area);
   run.step("research_agent", () => {
-    run.reason();
+    run.reason(
+      "**Letar efter reglerna om uppsägning**\n\n" +
+        `Frågan gäller hur ett kontrakt inom ${area} sägs upp. Jag söker i de allmänna ` +
+        "villkoren efter avsnitten om uppsägning.",
+    );
     run.toolCall(
       "search_documents",
       { query: "uppsägningstid kontrakt", framework_area: area },
@@ -404,12 +457,21 @@ function answerNoticePeriod(
         ["6.21.10", "Uppsägning vid väsentligt avtalsbrott", 2],
       ]),
     );
+    run.reason(
+      "**Läser avsnittet om uppsägning**\n\n" +
+        "Sökningen pekar på 6.21.9. Jag läser hela avsnittet, så att jag kan citera det ordagrant.",
+    );
     run.toolCall(
       "read_section",
       { sha256: context.documentSha256, section_number: "6.21.9" },
       { section_number: "6.21.9", page: 2, text: "Kunden har rätt att säga upp Kontraktet ..." },
     );
     if (endDate) {
+      run.reason(
+        "**Räknar ut sista dagen för uppsägning**\n\n" +
+          `Kontraktet ska upphöra ${endDate} och uppsägningstiden är tre månader, så jag ` +
+          "räknar tre månader bakåt.",
+      );
       const args = { start: endDate, amount: 3, unit: "months", direction: "before" };
       const calculation = monthsBefore(endDate, 3);
       run.toolCall("calculate_date", args, calculation);
@@ -523,7 +585,12 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
   if (resumed !== null) {
     // The person answered which area the question is about: ask_user returns the answer.
     const pending = pendingAskUser(input.messages);
-    if (pending) run.step("research_agent", () => run.toolResult(pending, resumed));
+    if (pending) {
+      run.step("research_agent", () => {
+        run.repeatCall(pending);
+        run.toolResult(pending, resumed);
+      });
+    }
     answerNoticePeriod(run, context, resumed || AREAS[0]);
   } else {
     // A new question: the previous answer no longer applies.
@@ -542,6 +609,7 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
             hits: AREAS.map((area) => ({ section_title: "Uppsägning", framework_areas: [area] })),
           },
         );
+        run.refusedAskUser(ASK_AREA.question);
         run.askUser(ASK_AREA);
       });
       run.messagesSnapshot();
@@ -558,6 +626,7 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
       answerFromRegister(run);
     } else if (lower.includes("vite")) {
       run.step("research_agent", () => {
+        run.reason();
         run.toolCall(
           "search_documents",
           { query: "vite försenad leverans" },
