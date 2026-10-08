@@ -446,6 +446,7 @@ läsarna och kontrollen genom grafen (ett citat ur filen godkänt med filens fä
 underkänt, en hash från ett annat samtal underkänd, ett datum ur filen godkänt i svaret),
 granskarens anteckning, källan i STATE_SNAPSHOT genom hela API:t, `--fil` och exempelavtalet
 som Markdown och som PDF.
+
 ## Middleware som inte används och varför
 
 Tillagt efter M12. LangChain har fler färdiga middleware än de som grafen använder
