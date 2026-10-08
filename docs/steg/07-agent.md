@@ -184,6 +184,7 @@ Inställningar (alla i `.env.example`):
 | Variabel | Standard | Vad |
 |---|---|---|
 | `AGENT_REASONING_EFFORT` | `low` | Hur mycket modellen resonerar: `low`, `medium`, `high` eller `xhigh` |
+| `AGENT_REASONING_SUMMARY` | `auto` | Sammanfattningen av resonemanget som modellen ger i varje anrop: `auto`, `concise`, `detailed` eller `off` (efter M12, [ADR 0025](../adr/0025-tankar-och-farre-motfragor.md)) |
 | `AGENT_MODEL_CALL_LIMIT` | 16 | Modellanrop per körning, nya försök inräknade |
 | `CITATION_RETRIES` | 1 | Nya försök efter ett underkänt utkast; 0 ger reservation direkt. Ersatt av `VALIDATION_RETRIES` (2) i M8 |
 | `MCP_TRANSPORT` | `stdio` | `stdio` startar avtal-mcp som barnprocess, `streamable_http` ansluter till `MCP_URL` |
@@ -383,6 +384,23 @@ OpenTelemetrys exportör i minnet i stället för till Langfuse:
 `tests/unit/evals/test_run_answer_eval.py` visar att mätningen namnger varje frågas spårning
 efter frågan och ger dem samma session.
 
+## Tankar och färre motfrågor
+
+2026-10-07, efter M12 ([ADR 0025](../adr/0025-tankar-och-farre-motfragor.md)). Simon provade
+webbappen och ville se hur agenten tänker och få färre motfrågor. `make_agent_model` ber nu OpenAI
+om en sammanfattning av resonemanget i varje anrop (`AGENT_REASONING_SUMMARY`, `auto` som
+standard). Sammanfattningen ligger kvar i modellens meddelande och skickas tillbaka med sitt id i
+nästa anrop, också efter `ask_user` och i en följdfråga. Den är på engelska; en rad i prompten om
+svenska ändrade inte det. Med resonemangsnivån `low` har de flesta anrop ingen sammanfattning:
+modellen resonerar för lite. Regel 4 i prompten säger nu att agenten svarar för vart och ett av
+några få fall och säger vad som avgör, och frågar med `ask_user` bara när fallen är för många eller
+svaren för långa, eller när svaret beror på uppgifter om användarens eget fall. `ask_user` kräver
+2-5 alternativ; ett anrop utan dem nekas, och modellen läser varför och kan fråga igen.
+Kommandoraden visar inga sammanfattningar. En `ask_user`-fråga utan alternativ som väntar när
+ändringen driftsätts nekas när den besvaras: LangGraph kör verktygsanropet igen mot det nya
+schemat, användarens svar når inte modellen, och modellen läser att options saknas och frågar
+igen med alternativ.
+
 ## Egna filer (2026-10-07)
 
 Simon vill kunna ladda upp egna filer i chatten och låta agenten jämföra dem med ramavtalen
@@ -446,6 +464,7 @@ läsarna och kontrollen genom grafen (ett citat ur filen godkänt med filens fä
 underkänt, en hash från ett annat samtal underkänd, ett datum ur filen godkänt i svaret),
 granskarens anteckning, källan i STATE_SNAPSHOT genom hela API:t, `--fil` och exempelavtalet
 som Markdown och som PDF.
+
 ## Middleware som inte används och varför
 
 Tillagt efter M12. LangChain har fler färdiga middleware än de som grafen använder
@@ -498,8 +517,11 @@ börjar om efter ett svar på `ask_user`.
 
 **Varför resonemangsnivån `low`.** `low` är standard sedan M7 (ADR 0013, punkt 3) och har inte
 heller någon mätning bakom sig. Provkörningarna i steg 7 och 8 och mätningarna och demot i steg 11
-och 12 kördes alla på `low`; ingen annan nivå är jämförd. Nivån kan ändras med
-`AGENT_REASONING_EFFORT` och i mätningen med `--effort` ([steg 11](11-utvardering.md)).
+och 12 kördes alla på `low`. Efter M12 kördes demofrågorna och de 30 testfrågorna också med
+`medium` mot ersättaren för avtal-mcp ([ADR 0025](../adr/0025-tankar-och-farre-motfragor.md)):
+fråga 1 tog upp till en halv minut längre, och standarden förblir `low`.
+Nivån kan ändras med `AGENT_REASONING_EFFORT` och i mätningen med `--effort`
+([steg 11](11-utvardering.md)).
 
 ## Kända begränsningar
 

@@ -28,6 +28,7 @@ Ett beslut ändras aldrig i efterhand. Ändras beslutet skrivs en ny ADR som ers
 | [0021](0021-sparning-med-langfuse.md) | Spårning med Langfuse: en spårning per fråga, samtalet som session, avstängd utan nycklar | Godkänt (PR #24) |
 | [0022](0022-demot.md) | Demot: fem frågor, fyra ur testsamlingen, körda mot den riktiga databasen, och README:n som ingång | Godkänt (PR #26, M12) |
 | [0023](0023-langgraph-utan-yttre-graf.md) | LangGraph och `create_agent` också utan den yttre grafen | Föreslaget |
+| [0025](0025-tankar-och-farre-motfragor.md) | Agentens tankar i strömmen som OpenAI:s sammanfattningar, och färre motfrågor med 2-5 alternativ | Föreslaget |
 | [0024](0024-baslinje-fast-workflow.md) | Baslinjen: ett fast arbetsflöde med agentens modell, kontroll och domare, och motfrågor i testsamlingen | Föreslaget |
 | [0026](0026-egna-filer.md) | Egna filer: API:t sparar dem per samtal, agenten läser dem med två egna verktyg och citaten kontrolleras som andra | Föreslaget |
 

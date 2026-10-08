@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     # The agent (M7, agent/; ADR 0013). How much the agent model reasons before each step;
     # the model takes these four levels and no temperature.
     agent_reasoning_effort: Literal["low", "medium", "high", "xhigh"] = "low"
+    # The summary of its reasoning the agent model is asked for in each call (ADR 0025), which
+    # the web app shows as the agent's thoughts: "auto", "concise" or "detailed" as OpenAI's
+    # `reasoning.summary`, or "off" for none.
+    agent_reasoning_summary: Literal["auto", "concise", "detailed", "off"] = "auto"
     # Model calls per run, new attempts included: a question, or its continuation after the
     # user has answered ask_user. A run that reaches the limit gets the status no_answer, so a
     # run that never settles has a bounded cost.

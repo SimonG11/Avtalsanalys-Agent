@@ -306,14 +306,12 @@ def _replies(interrupts: Sequence[Interrupt], terminal: Terminal) -> Any:
     return next(iter(replies.values())) if len(replies) == 1 else replies
 
 
-def _reply(payload: Any, terminal: Terminal) -> str:
+def _reply(payload: Mapping[str, Any], terminal: Terminal) -> str:
     """Ask the user the agent's question and read the answer: an option's number or text."""
-    fields = payload if isinstance(payload, Mapping) else {"question": payload}
-    options = [str(option) for option in fields.get("options") or []]
-    for text in question_lines(str(fields.get("question")), options):
+    options = [str(option) for option in payload["options"]]
+    for text in question_lines(str(payload["question"]), options):
         terminal.say(text)
-    prompt = "Svar (nummer eller egen text): " if options else "Svar: "
-    while (line := terminal.read_line(prompt)) is not None:
+    while (line := terminal.read_line("Svar (nummer eller egen text): ")) is not None:
         if line.strip():
             return choice(line, options)
     raise CommandError("Agenten väntar på ett svar på sin fråga, men inmatningen tog slut.")
