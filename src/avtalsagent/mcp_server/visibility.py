@@ -6,7 +6,9 @@ What:
     `register_procurements` and `register_area` find an agreement number, a
     procurement number or a framework area in the register and return the
     register's spellings; `document_filters` turns the document tools'
-    filters into the search's, in the spelling the index stored.
+    filters into the search's, in the spelling the index stored, and
+    `require_loaded` refuses an area, agreement or procurement whose
+    documents are not loaded.
 
 Why:
     The tools must fail closed, as the index does (ADR 0011): a file or
@@ -18,7 +20,14 @@ Why:
     quarantine does not hold it. After `process` and before `index` the
     tools show nothing. The register check turns a misspelt or unknown
     filter into an error the model can act on, instead of an empty result
-    it would take as "the agreements say nothing".
+    it would take as "the agreements say nothing". The register has every
+    framework area, but documents are loaded only for the pilot's, so a
+    filter the register knows can still match no file. That is an error
+    too, which names the areas that are loaded and tells the model to
+    answer from the register: an empty result would read as "framgår
+    inte", or lead the model to search without the filter and cite another
+    area's terms. Both document tools get their filters from
+    `document_filters`, so they refuse the same filters.
 
 How:
     The indexed files are read from `document_scope` and the quarantine from
@@ -30,11 +39,20 @@ How:
     ("23.3-12000-2020-001" and "23.3-12000-2020-01"), so an agreement number
     finds every spelling with its key. Step 6 stores one of them in the
     scopes, and the document filter uses that one.
+    Whether a filter's documents are loaded is one query on
+    `document_scope`, with the search's own condition
+    (`hybrid_search.scope_conditions`) for the area and for the agreement
+    or procurement, each alone and without the document type: a type
+    without documents is a plain empty answer. A file counts when the
+    visibility shows it, so one the quarantine holds back whole does not,
+    as in the tools' answers. When no file is shown at all (no index, or
+    every file held back), there is no loaded area to name, so the check
+    passes and the tools answer as before.
 """
 
 from dataclasses import dataclass
 
-from sqlalchemy import String, any_, bindparam, select
+from sqlalchemy import ColumnElement, String, and_, any_, bindparam, select
 from sqlalchemy.orm import Session
 
 from avtalsagent.db import models
@@ -43,6 +61,7 @@ from avtalsagent.domain.identifiers import agreement_key, procurement_key
 from avtalsagent.domain.search import SearchFilters
 from avtalsagent.ingestion.extraction_store import quarantine
 from avtalsagent.mcp_server.errors import NotFoundError
+from avtalsagent.retrieval.hybrid_search import scope_conditions
 
 
 @dataclass(frozen=True)
@@ -128,6 +147,7 @@ def register_area(session: Session, framework_area: str) -> str:
 
 def document_filters(
     session: Session,
+    visibility: Visibility,
     framework_area: str | None,
     agreement_number: str | None,
     document_type: DocumentType | None,
@@ -138,7 +158,8 @@ def document_filters(
     shared files, in the spelling the index stored for it; a number the
     register has as a procurement, without a supplier's sequence
     ("23.3-5890-2023"), keeps every file of the procurement. A number or
-    area the register does not have is a `NotFoundError`.
+    area the register does not have is a `NotFoundError`, and so is one
+    whose documents are not loaded (`require_loaded`).
     """
     area = None if framework_area is None else register_area(session, framework_area)
     agreement: str | None = None
@@ -156,9 +177,67 @@ def document_filters(
                     "som upphandling. Sök avtalet med search_register, till exempel på "
                     "leverantörens namn."
                 )
-    return SearchFilters(
+    filters = SearchFilters(
         framework_area=area,
         procurement_number=procurement,
         agreement_number=agreement,
         document_type=None if document_type is None else document_type.value,
     )
+    require_loaded(session, visibility, filters)
+    return filters
+
+
+def require_loaded(session: Session, visibility: Visibility, filters: SearchFilters) -> None:
+    """`NotFoundError` when the area, agreement or procurement, each alone, matches no shown file.
+
+    Each is matched as the search's filter matches it, without the
+    document type. The message names the areas whose documents are loaded
+    and says what the model can do: answer from the register, or, when only
+    the area is missing and the agreement's documents are loaded, search
+    again without the area. When no file is shown at all (no index, or
+    every file held back), nothing is raised and the tools answer as before.
+    """
+    wanted: list[tuple[str, str, SearchFilters]] = []  # what, whose documents, its filter alone
+    if (area := filters.framework_area) is not None:
+        wanted.append((f"ramavtalsområdet {area}", "områdets", SearchFilters(framework_area=area)))
+    if (agreement := filters.agreement_number) is not None:
+        alone = SearchFilters(agreement_number=agreement)
+        wanted.append((f"avtalet {agreement}", "avtalets", alone))
+    if (procurement := filters.procurement_number) is not None:
+        alone = SearchFilters(procurement_number=procurement)
+        wanted.append((f"upphandlingen {procurement}", "upphandlingens", alone))
+    if not wanted:
+        return
+    scope = models.DocumentScope
+    matches: list[ColumnElement[bool]] = [and_(*scope_conditions(f)) for _, _, f in wanted]
+    rows = session.execute(select(scope.sha256, scope.framework_areas, *matches))
+    shown = [(areas, found) for sha256, areas, *found in rows if visibility.shows_file(sha256)]
+    if not shown:  # no index (as between `process` and `index`), or every file held back
+        return
+    missing = [n for n in range(len(wanted)) if not any(found[n] for _, found in shown)]
+    if not missing:
+        return
+    loaded = ", ".join(sorted({name for areas, _ in shown for name in areas}))
+    if len(missing) == 1:
+        what, whose, _ = wanted[missing[0]]
+        named = _capitalised(what)
+    else:  # the area and the agreement or procurement: at most two
+        whose = "deras"
+        named = f"Både {wanted[0][0]} och {wanted[1][0]}"
+    said = f"{named} finns i registret, men {whose} dokument är inte inlästa. "
+    if missing == [0] and len(wanted) == 2:  # only the area: the agreement's are loaded elsewhere
+        other = wanted[1][0]
+        raise NotFoundError(
+            f"{said}{_capitalised(other)} har inlästa dokument, men inte i det området. "
+            f"Sök igen utan framework_area, eller med området som search_register anger för "
+            f"{other}."
+        )
+    raise NotFoundError(
+        f"{said}Områden med inlästa dokument: {loaded}. Svara med det registret säger "
+        f"(search_register) och säg till användaren att {whose} dokument inte är inlästa, i "
+        "stället för att svara att det inte framgår eller citera andra avtals dokument."
+    )
+
+
+def _capitalised(text: str) -> str:
+    return f"{text[0].upper()}{text[1:]}"

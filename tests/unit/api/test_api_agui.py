@@ -19,13 +19,14 @@ import anyio
 import httpx
 import pytest
 from fastapi import FastAPI
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import SecretStr
 
+from avtalsagent.agent.ask_user import NOT_ANSWERED
 from avtalsagent.agent.checkpointer import serializer
 from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.agent.sections import CitedSection
@@ -59,6 +60,17 @@ SECTION = CitedSection(
 GOOD = {"id": 1, "sha256": SHA, "section_position": 41, "quote": QUOTE}
 PASSWORD = "hemligt-lösen-42"
 OPTIONS = ["IT-drift Större", "IT-drift Mindre"]
+
+
+def app_settings() -> Settings:
+    """The settings every test's app runs with, read in the test.
+
+    Built at import, they would read the environment before conftest.py removes Langfuse's
+    keys from it, and the tests would trace to that project.
+    """
+    return Settings(
+        _env_file=None, database_url=f"postgresql+psycopg://avtalsagent:{PASSWORD}@db:5432/x"
+    )
 
 
 @pytest.fixture
@@ -165,9 +177,6 @@ def app_with(
     open_trace: OpenTracing = open_tracing,
 ) -> tuple[FastAPI, ScriptedModel]:
     model = ScriptedModel(script=script)
-    settings = Settings(
-        _env_file=None, database_url=f"postgresql+psycopg://avtalsagent:{PASSWORD}@db:5432/x"
-    )
     open_tools = (sessions or Sessions(tools or [search_documents])).open
 
     @asynccontextmanager
@@ -179,7 +188,7 @@ def app_with(
         yield NoDocuments()
 
     app = create_app(
-        settings,
+        app_settings(),
         make_model=lambda settings: model,
         make_answer_reviewer=lambda settings: ScriptedReviewer(),
         open_tools=open_tools,
@@ -291,6 +300,26 @@ async def test_a_question_with_many_steps_is_not_stopped_by_langchains_default_l
 
 
 @pytest.mark.anyio
+async def test_a_model_that_never_answers_is_stopped_by_the_model_call_limit() -> None:
+    # The run's recursion limit is the graph's own 9 999 (above). What ends a loop that never
+    # hands in an answer is ModelCallLimitMiddleware: a finished run without an answer.
+    limit = app_settings().agent_model_call_limit
+    searches = [
+        tool_call("search_documents", {"query": f"sökning {n}"}, f"c{n}") for n in range(2 * limit)
+    ]
+    app, model = app_with(searches)
+
+    async with client_of(app) as client:
+        events = await post(client, run_input("r1", QUESTION))
+
+    assert of_type(events, "RUN_ERROR") == []
+    assert events[-1]["type"] == "RUN_FINISHED"
+    assert "outcome" not in events[-1]
+    assert len(model.calls) == limit
+    assert of_type(events, "STATE_SNAPSHOT")[-1]["snapshot"]["answer"]["status"] == "no_answer"
+
+
+@pytest.mark.anyio
 async def test_with_tracing_a_run_is_a_trace_in_the_threads_session() -> None:
     exporter = InMemorySpanExporter()
     keys = Settings(
@@ -397,6 +426,224 @@ async def test_the_answer_to_ask_user_resumes_the_run_to_a_checked_answer() -> N
     answered = [m.tool_call_id for m in sent if isinstance(m, ToolMessage)]
     assert calls == answered == ["c1"]
     assert sum(isinstance(m, HumanMessage) for m in sent) == 1
+
+
+WHICH = "Vilket avtal menar du?"
+WHO = "Vem säger upp avtalet?"
+PARTIES = ["Kunden", "Leverantören"]
+
+
+def two_questions() -> AIMessage:
+    """The model asks two things at once: two `ask_user` calls in one message."""
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "ask_user",
+                "args": {"question": WHICH, "options": OPTIONS},
+                "id": "c1",
+                "type": "tool_call",
+            },
+            {
+                "name": "ask_user",
+                "args": {"question": WHO, "options": PARTIES},
+                "id": "c2",
+                "type": "tool_call",
+            },
+        ],
+    )
+
+
+def open_questions(events: list[dict[str, Any]]) -> dict[str, str]:
+    """The questions a run ended with, by their text: question -> interrupt id."""
+    interrupts = events[-1]["outcome"]["interrupts"]
+    return {i["metadata"]["langgraph"]["raw"]["question"]: i["id"] for i in interrupts}
+
+
+def tool_results(sent: list[BaseMessage]) -> list[tuple[str, Any]]:
+    """The tool results a model call was sent, as (tool call id, content), in id order."""
+    return sorted((m.tool_call_id, m.content) for m in sent if isinstance(m, ToolMessage))
+
+
+@pytest.mark.anyio
+async def test_two_questions_answered_together_resume_the_run_to_a_checked_answer() -> None:
+    app, model = app_with([two_questions(), final_answer("Tre månader [1].", [GOOD], call_id="c3")])
+
+    async with client_of(app) as client:
+        first = await post(client, run_input("r1", QUESTION))
+        asked = open_questions(first)
+        history = of_type(first, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        resume = [
+            {"interruptId": asked[WHICH], "status": "resolved", "payload": OPTIONS[0]},
+            {"interruptId": asked[WHO], "status": "resolved", "payload": PARTIES[0]},
+        ]
+        second = await post(client, run_input("r2", history, resume=resume))
+
+    assert set(asked) == {WHICH, WHO}
+    assert of_type(second, "RUN_ERROR") == []
+    assert "outcome" not in second[-1]
+    assert of_type(second, "STATE_SNAPSHOT")[-1]["snapshot"]["answer"]["status"] == "verified"
+    # The model read each answer as the result of its own question, once.
+    assert tool_results(model.calls[1]) == [("c1", OPTIONS[0]), ("c2", PARTIES[0])]
+
+
+@pytest.mark.anyio
+async def test_two_questions_answered_one_at_a_time_end_with_the_other_still_open() -> None:
+    app, model = app_with([two_questions(), final_answer("Tre månader [1].", [GOOD], call_id="c3")])
+
+    async with client_of(app) as client:
+        first = await post(client, run_input("r1", QUESTION))
+        asked = open_questions(first)
+        history = of_type(first, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        which = [{"interruptId": asked[WHICH], "status": "resolved", "payload": OPTIONS[0]}]
+        second = await post(client, run_input("r2", history, resume=which))
+        calls_after_one_answer = len(model.calls)
+        history = of_type(second, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        who = [{"interruptId": asked[WHO], "status": "resolved", "payload": PARTIES[0]}]
+        third = await post(client, run_input("r3", history, resume=who))
+
+    # The other question is the run's only one, with the id it had; the model waits for both.
+    assert of_type(second, "RUN_ERROR") == []
+    assert second[-1]["type"] == "RUN_FINISHED"
+    assert open_questions(second) == {WHO: asked[WHO]}
+    assert calls_after_one_answer == 1
+    assert of_type(third, "RUN_ERROR") == []
+    assert of_type(third, "STATE_SNAPSHOT")[-1]["snapshot"]["answer"]["status"] == "verified"
+    assert tool_results(model.calls[1]) == [("c1", OPTIONS[0]), ("c2", PARTIES[0])]
+
+
+# An id in the form of LangGraph's interrupt ids (32 hex digits) that no question has.
+UNKNOWN_ID = "0123456789abcdef" * 2
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "more",
+    [[], [{"interruptId": UNKNOWN_ID, "status": "resolved", "payload": PARTIES[1]}]],
+    ids=["alone", "with an answer to no question"],
+)
+async def test_the_first_answer_sent_again_leaves_the_other_question_waiting(
+    more: list[dict[str, Any]],
+) -> None:
+    app, model = app_with([two_questions(), final_answer("Tre månader [1].", [GOOD], call_id="c3")])
+
+    async with client_of(app) as client:
+        first = await post(client, run_input("r1", QUESTION))
+        asked = open_questions(first)
+        history = of_type(first, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        which = [{"interruptId": asked[WHICH], "status": "resolved", "payload": OPTIONS[0]}]
+        second = await post(client, run_input("r2", history, resume=which))
+        history = of_type(second, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        again = await post(client, run_input("r3", history, resume=[*which, *more]))
+        calls_after_again = len(model.calls)
+        who = [{"interruptId": asked[WHO], "status": "resolved", "payload": PARTIES[0]}]
+        third = await post(client, run_input("r4", history, resume=who))
+
+    # One question waits, and the library would give it the first answer (alone) or its own
+    # map (with more). No answer is the waiting question's, so it comes back, as it was.
+    assert of_type(again, "RUN_ERROR") == []
+    assert again[-1]["type"] == "RUN_FINISHED"
+    assert open_questions(again) == {WHO: asked[WHO]}
+    assert calls_after_again == 1
+    assert of_type(third, "RUN_ERROR") == []
+    assert of_type(third, "STATE_SNAPSHOT")[-1]["snapshot"]["answer"]["status"] == "verified"
+    assert tool_results(model.calls[1]) == [("c1", OPTIONS[0]), ("c2", PARTIES[0])]
+
+
+@pytest.mark.anyio
+async def test_both_answers_sent_after_the_first_resume_the_other_question_with_its_own() -> None:
+    app, model = app_with([two_questions(), final_answer("Tre månader [1].", [GOOD], call_id="c3")])
+
+    async with client_of(app) as client:
+        first = await post(client, run_input("r1", QUESTION))
+        asked = open_questions(first)
+        history = of_type(first, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        which = [{"interruptId": asked[WHICH], "status": "resolved", "payload": OPTIONS[0]}]
+        second = await post(client, run_input("r2", history, resume=which))
+        history = of_type(second, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        who = [{"interruptId": asked[WHO], "status": "resolved", "payload": PARTIES[0]}]
+        third = await post(client, run_input("r3", history, resume=[*which, *who]))
+
+    # The library would send both as its own map, and ask_user would read that map as text.
+    assert of_type(third, "RUN_ERROR") == []
+    assert "outcome" not in third[-1]
+    assert of_type(third, "STATE_SNAPSHOT")[-1]["snapshot"]["answer"]["status"] == "verified"
+    assert tool_results(model.calls[1]) == [("c1", OPTIONS[0]), ("c2", PARTIES[0])]
+
+
+@pytest.mark.anyio
+async def test_one_answer_with_an_id_not_in_langgraphs_form_answers_the_waiting_question() -> None:
+    # The library's way for one waiting question and one answer, which a client that does not
+    # send LangGraph's ids relies on; only an id in that form can name another question.
+    app, model = app_with(
+        [
+            tool_call("ask_user", {"question": WHICH, "options": OPTIONS}, "c1"),
+            final_answer("Tre månader [1].", [GOOD], call_id="c2"),
+        ]
+    )
+
+    async with client_of(app) as client:
+        first = await post(client, run_input("r1", QUESTION))
+        history = of_type(first, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        resume = [{"interruptId": "fråga-1", "status": "resolved", "payload": OPTIONS[0]}]
+        second = await post(client, run_input("r2", history, resume=resume))
+
+    assert of_type(second, "RUN_ERROR") == []
+    assert of_type(second, "STATE_SNAPSHOT")[-1]["snapshot"]["answer"]["status"] == "verified"
+    assert tool_results(model.calls[1]) == [("c1", OPTIONS[0])]
+
+
+@pytest.mark.anyio
+async def test_one_of_two_questions_cancelled_reaches_the_model_as_not_answered() -> None:
+    app, model = app_with([two_questions(), final_answer("Tre månader [1].", [GOOD], call_id="c3")])
+
+    async with client_of(app) as client:
+        first = await post(client, run_input("r1", QUESTION))
+        asked = open_questions(first)
+        history = of_type(first, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        resume = [
+            {"interruptId": asked[WHICH], "status": "resolved", "payload": OPTIONS[0]},
+            {"interruptId": asked[WHO], "status": "cancelled"},
+        ]
+        second = await post(client, run_input("r2", history, resume=resume))
+
+    assert of_type(second, "RUN_ERROR") == []
+    assert "outcome" not in second[-1]
+    assert tool_results(model.calls[1]) == [("c1", OPTIONS[0]), ("c2", NOT_ANSWERED)]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "stale",
+    [
+        UNKNOWN_ID,  # an interrupt id's form: LangGraph would pass it over itself
+        "fråga-1",  # any other: LangGraph would refuse the whole map
+    ],
+    ids=["an id no question has", "not an interrupt id"],
+)
+async def test_an_answer_to_a_question_that_is_not_waiting_is_dropped(stale: str) -> None:
+    app, model = app_with([two_questions(), final_answer("Tre månader [1].", [GOOD], call_id="c3")])
+
+    async with client_of(app) as client:
+        first = await post(client, run_input("r1", QUESTION))
+        asked = open_questions(first)
+        history = of_type(first, "MESSAGES_SNAPSHOT")[-1]["messages"]
+        only_stale = [{"interruptId": stale, "status": "resolved", "payload": OPTIONS[0]}]
+        second = await post(client, run_input("r2", history, resume=only_stale))
+        resume = [
+            *only_stale,
+            {"interruptId": asked[WHICH], "status": "resolved", "payload": OPTIONS[1]},
+            {"interruptId": asked[WHO], "status": "resolved", "payload": PARTIES[1]},
+        ]
+        third = await post(client, run_input("r3", history, resume=resume))
+
+    # With no answer left, nothing is resumed: the run ends with the same two questions.
+    assert of_type(second, "RUN_ERROR") == []
+    assert open_questions(second) == asked
+    assert of_type(third, "RUN_ERROR") == []
+    assert of_type(third, "STATE_SNAPSHOT")[-1]["snapshot"]["answer"]["status"] == "verified"
+    assert len(model.calls) == 2
+    assert tool_results(model.calls[1]) == [("c1", OPTIONS[1]), ("c2", PARTIES[1])]
 
 
 @pytest.mark.anyio
