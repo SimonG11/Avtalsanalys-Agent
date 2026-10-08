@@ -78,6 +78,14 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8000/api/documents/$sha/pdf")" = 404
           # The checkpoint tables were created when the API opened its checkpointer.
           docker compose exec -T postgres psql -U avtalsagent -d avtalsagent -tAc "SELECT to_regclass('checkpoints')" | grep -x checkpoints
+          # The upload store created its tables: a text file goes in, is listed and sent back to
+          # its own thread only, and is deleted.
+          printf 'Hej från CI.' > /tmp/ci.txt
+          id=$(curl -fsS -F thread_id=ci -F file=@/tmp/ci.txt http://127.0.0.1:8000/api/uploads | jq -r .upload_id)
+          curl -fsS "http://127.0.0.1:8000/api/uploads?thread_id=ci" | grep "$id"
+          curl -fsS "http://127.0.0.1:8000/api/uploads/$id/file?thread_id=ci" | grep -x 'Hej från CI.'
+          test "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8000/api/uploads/$id/file?thread_id=other")" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "http://127.0.0.1:8000/api/uploads/$id?thread_id=ci")" = 204
       - name: Build and start the web app
         run: |
           docker compose build web

@@ -27,6 +27,7 @@ Ett beslut ändras aldrig i efterhand. Ändras beslutet skrivs en ny ADR som ers
 | [0020](0020-omrankning.md) | Omrankning: mätt med två modeller, inte inbyggd | Godkänt (PR #25) |
 | [0021](0021-sparning-med-langfuse.md) | Spårning med Langfuse: en spårning per fråga, samtalet som session, avstängd utan nycklar | Godkänt (PR #24) |
 | [0022](0022-demot.md) | Demot: fem frågor, fyra ur testsamlingen, körda mot den riktiga databasen, och README:n som ingång | Godkänt (PR #26, M12) |
+| [0026](0026-egna-filer.md) | Egna filer: API:t sparar dem per samtal, agenten läser dem med två egna verktyg och citaten kontrolleras som andra | Föreslaget |
 | [0023](0023-langgraph-utan-yttre-graf.md) | LangGraph och `create_agent` också utan den yttre grafen | Föreslaget |
 
 Mall: *Status*, *Kontext* (problemet), *Beslut*, *Konsekvenser* (vad vi vinner och vad det kostar),

@@ -184,6 +184,12 @@ En fråga från början till slut:
 5. Webbappen visar svaret med status, källorna med citatet och PDF-sidan, och registerraderna
    ([steg 10](docs/steg/10-webbapp.md)).
 
+Har användaren laddat upp en egen fil i samtalet (PDF med text, Word eller text) får agenten två
+verktyg till, `list_uploads` och `read_upload`, och kan jämföra filen med ramavtalen. Filerna
+ligger i API:t och inte i avtal-mcp, syns bara i sitt samtal och kontrolleras som andra källor;
+i svaret märks de "Din fil" ([ADR 0026](docs/adr/0026-egna-filer.md),
+[demosteget](docs/demo.md#egna-filer-jämför-ett-eget-avtal)).
+
 | Del | Mapp | Byggd med | Beslut |
 |---|---|---|---|
 | Registret | `src/avtalsagent/register/` | Excel-listan till Postgres, leverantörer på organisationsnummer | [ADR 0006](docs/adr/0006-registrets-datamodell.md) |
@@ -195,6 +201,7 @@ En fråga från början till slut:
 | API:t | `src/avtalsagent/api/` | FastAPI över AG-UI, PDF-routen | [0014](docs/adr/0014-api-och-compose.md) |
 | Webbappen | `web/` | Next.js och CopilotKit | [0010](docs/adr/0010-webbapp-copilotkit-ag-ui.md) |
 | Spårningen | `src/avtalsagent/observability/` | Langfuse, avstängd utan nycklar | [0021](docs/adr/0021-sparning-med-langfuse.md) |
+| Egna filer | `src/avtalsagent/uploads/` | Uppladdning per samtal, tolkning i en egen process, lagret i Postgres; verktygen i `agent/` | [0026](docs/adr/0026-egna-filer.md) |
 | Mätningarna | `evals/` | Testsamlingen, mätningen av sökningen och av svaren | [0011](docs/adr/0011-hybridsokning.md), [0019](docs/adr/0019-matning-av-svaren.md) |
 
 ### Var agenten bestämmer och var koden bestämmer
@@ -362,6 +369,10 @@ prioritetsordning inför presentationen.
   gjorde de första placeringarna sämre ([ADR 0020](docs/adr/0020-omrankning.md)).
 - **Villkoren för återanvändning** av avropa.se:s dokument är inte bekräftade. Repot innehåller
   därför inga PDF-, Word- eller Excel-filer, bara korta utdrag som testdata.
+- **Egna filer utan OCR.** En uppladdad fil läses ur sitt textlager, så en inskannad PDF avvisas.
+  Högst 10 MB, 300 sidor och fem filer per samtal, och en fil tas bort efter sju dagar. Det
+  agenten har läst ur filen ligger kvar i samtalets historik. Jämförelsen är bara körd mot en
+  ersättare för avtal-mcp, med ett påhittat avtal ([ADR 0026](docs/adr/0026-egna-filer.md)).
 
 ## Dokumentationen
 
