@@ -231,9 +231,9 @@ IT-konsulttjänster där fem klausuler avviker från ramavtalets allmänna villk
 
 **Före:** bygg PDF:en med
 `uv run python examples/uppladdning/render_pdf.py /tmp/exempelavtal-it-konsult.pdf`, eller ladda
-upp Markdown-filen som den är. Öppna en ny flik, bifoga filen med gemet i chattfältet och ställ
-frågan. Gemet kommer med webbappens ändring för uppladdning. Finns det inte, kör steget i
-terminalen (nedan).
+upp Markdown-filen som den är. Öppna en ny flik, bifoga filen med gemet ("Bifoga fil") i
+chattfältet, eller dra den till fältet, och ställ frågan. Filen syns i fältet med "Laddar upp …"
+tills den är uppladdad, och frågan skickas först då.
 
 **Fråga:** `Jämför punkt 7 om skadestånd i mitt avtal med ramavtalet för IT-konsulttjänster. Vad avviker?`
 
@@ -265,9 +265,9 @@ ett lägre vite (2.19.1.3, som avropet får ändra) och ansvarsbegränsningen vi
 avsnitten.
 
 **Status:** körd 2026-10-07 mot en ersättare för avtal-mcp, inte mot databasen och inte i
-webbappen. Punkt 7 tog 66 s genom API:t och blev Verifierat. Hela avtalet tog 4 min 19 s i
-terminalen, eftersom kontrollen underkände två utkast, och blev Verifierat med alla fem
-avvikelserna. Kör båda en gång dagen före.
+webbappen, där gemet kom med PR #36. Punkt 7 tog 66 s genom API:t och blev Verifierat. Hela
+avtalet tog 4 min 19 s i terminalen, eftersom kontrollen underkände två utkast, och blev
+Verifierat med alla fem avvikelserna. Kör båda en gång i webbappen dagen före.
 
 **I terminalen (nivå B):**
 
