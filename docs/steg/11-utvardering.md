@@ -388,7 +388,7 @@ förtydligandet och svarade rätt; baslinjen på a01 svarade fel. Utkastet med d
 a09), tre där den ska svara för varje fall (a01, a02 och a04) och tre kontroller där svaret är
 detsamma överallt (a05, a06 och a07). Frågan a03 är struken, eftersom den ligger på gränsen mellan
 få fall och för många. Frågorna är skrivna för den nya regel 4, så mätningen av den kräver både
-den här grenen och PR #34 (regel 4 och `ask_user` med 2–5 alternativ); den här grenen ensam mäter
+den här grenen och PR #38 (regel 4 och `ask_user` med 2–5 alternativ); den här grenen ensam mäter
 den gamla regeln. Frågedomarens prompt och rapportens metodtext följer den nya regeln. Simon
 godkände frågorna som facit 2026-10-08 (resultatet står nedan). Kör
 `uv run python -m evals.run_answer_eval --gold evals/datasets/ambiguous_sv.jsonl`, med
@@ -513,8 +513,8 @@ Rapporterna (fyra körningar och tre jämförelser) ligger utanför repot, efter
 
 Simon godkände de åtta oklara frågorna (v2) som facit 2026-10-08. Samma dag kördes de en gång för
 agenten och en gång för baslinjen, med resonemangsnivån `low` och mot ersättaren för avtal-mcp
-(ingen Postgres). Den nya regel 4 finns bara i PR #34, så körningen gick på en lokal gren där
-PR #34:s gren (`claude/tankar-fragor-2gc1kx`) var sammanslagen med den här (commit 175b2ce, utan
+(ingen Postgres). Den nya regel 4 finns bara i PR #38 (som ersätter #34), så körningen gick på en
+lokal gren där dess gren (`claude/tankar-fragor-2gc1kx`) var sammanslagen med den här (175b2ce, utan
 oincheckade ändringar, inte pushad). Modellerna och gränserna var desamma som i jämförelsen
 ovan, och svarsdomarens prompt likaså. Frågedomarens prompt i körningen följde den nya regel 4 och
 hade raden om fler än fem alternativ (domarnas sha256 `6c128d582c28` mot `c9ee05406838`). Ingen

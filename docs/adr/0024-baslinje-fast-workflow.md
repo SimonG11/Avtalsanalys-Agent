@@ -23,7 +23,7 @@ påstående, inte ett mätt resultat.
   som den är ställd"), eftersom testfrågorna ska gå att besvara som de är ställda. Att fråga
   användaren när frågan passar flera delområden med olika svar är en av sakerna ett arbetsflöde
   inte kan, men det syns inte i siffrorna. De oklara frågorna i
-  `evals/datasets/ambiguous_sv.jsonl` är åtta, skrivna för den nya regel 4 (PR #34): två där
+  `evals/datasets/ambiguous_sv.jsonl` är åtta, skrivna för den nya regel 4 (PR #38): två där
   agenten ska fråga, tre där den ska svara för varje fall och tre kontroller där svaret är
   detsamma i alla alternativ ([steg 11](../steg/11-utvardering.md)).
 - **Ingen Postgres i utvecklingsmiljön.** Som i ADR 0019 körs mätningen mot den tillfälliga
@@ -105,7 +105,7 @@ påstående, inte ett mätt resultat.
    modell och nivå) avgör om motfrågan låter användaren välja mellan de väntade alternativen, och en
    motfråga räknas som rätt bara då. För en kontrollfråga är det rätt att inte fråga, och en
    motfråga räknas som onödig. Detsamma gäller en fråga med få fall och korta svar, där agenten
-   enligt den nya regel 4 (PR #34) ska svara för vart och ett och facit täcker alla fall. En
+   enligt den nya regel 4 (PR #38) ska svara för vart och ett och facit täcker alla fall. En
    fråga där inget av körningen sparades räknas inte bland motfrågorna, eftersom det inte går
    att se om agenten frågade. Rapporten får avsnittet Motfrågor. Baslinjen kan inte fråga och får
    0 av de frågor där den borde.
@@ -140,7 +140,7 @@ påstående, inte ett mätt resultat.
   ligger i repot (`evals/reports/` ignoreras), i
   `/mnt/project-files/case-tokentek/implementering/matning-2026-10-07/`. Jämförelsen bör köras
   om mot den riktiga databasen innan den visas.
-- **Resultat, oklara frågor (2026-10-08, mot ersättaren, med PR #34).** De åtta oklara frågorna
+- **Resultat, oklara frågor (2026-10-08, mot ersättaren, med PR #38).** De åtta oklara frågorna
   kördes på `low`, en gång per arm. Agenten frågade i båda frågorna där den skulle men skilde
   fallen åt bara i a08, frågade i onödan i a02 och a07 (2 av 5 med den rättade räkningen, där
   a04 inte räknas; rapporterna säger 2 av 6) och fick 6 av 8 mot baslinjens 5 av 8, där agentens
