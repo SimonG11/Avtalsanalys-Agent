@@ -90,7 +90,12 @@ export function Timeline({
               {item.kind === "thought" ? (
                 <Thought text={item.text} />
               ) : item.kind === "tool" ? (
-                <AgentStep name={item.name} args={item.args} result={item.result} />
+                <AgentStep
+                  name={item.name}
+                  args={item.args}
+                  result={item.result}
+                  failed={item.failed}
+                />
               ) : (
                 <Draft
                   outcome={item.outcome}
@@ -147,41 +152,57 @@ function renderBold(text: string) {
 }
 
 /**
- * One tool call: what the agent is doing in Swedish, the arguments it chose, what the tool found
- * when that fits on a line (a date calculation, a number of amendments, the person's answer),
- * and the tool's raw answer behind a disclosure.
+ * One tool call: what the agent is doing in Swedish, why in its own words (its `syfte`, point
+ * 39), the arguments it chose, what the tool found when that fits on a line (a date calculation,
+ * a number of amendments, the person's answer), and the tool's raw answer behind a disclosure.
+ * A call that was refused or failed says so with its error, and not as a step that was done.
  */
 export function AgentStep({
   name,
   args,
   result,
+  failed = false,
 }: {
   name: string;
   args: unknown;
   result?: string;
+  failed?: boolean;
 }) {
-  const status = result === undefined ? "inProgress" : "complete";
+  const status = failed ? "failed" : result === undefined ? "inProgress" : "complete";
   const done = status === "complete";
   const { names } = useUploads();
-  const { title, subject, details } = describeToolCall(name, args, status, names);
+  const { title, subject, details, purpose } = describeToolCall(name, args, status, names);
   const isQuestion = name === "ask_user";
-  const outcome = done
-    ? isQuestion
-      ? `Du svarade: ${result}`
-      : summarizeResult(name, result)
-    : null;
+  const outcome = failed
+    ? result?.split("\n")[0].trim() || "Anropet gick inte igenom."
+    : done
+      ? isQuestion
+        ? `Du svarade: ${result}`
+        : summarizeResult(name, result)
+      : null;
+  const marker =
+    status === "failed"
+      ? `${styles.marker} ${styles.markerWarn}`
+      : status === "inProgress"
+        ? `${styles.marker} ${styles.markerRunning}`
+        : styles.marker;
 
   return (
     <div className={styles.row} data-testid="agent-step" data-tool={name} data-status={status}>
-      <span className={done ? styles.marker : `${styles.marker} ${styles.markerRunning}`}>
-        <Icon name={TOOL_ICONS[name] ?? "tool"} size={15} />
+      <span className={marker}>
+        <Icon name={failed ? "alert" : (TOOL_ICONS[name] ?? "tool")} size={15} />
       </span>
       <div className={styles.body}>
         <div className={styles.title}>
           {title}
-          {!done && " …"}
+          {status === "inProgress" && " …"}
           {subject && <span className={styles.subject}>{subject}</span>}
         </div>
+        {purpose && (
+          <p className={styles.thought} data-testid="step-purpose">
+            {purpose}
+          </p>
+        )}
         {!isQuestion && details.length > 0 && (
           <div className={styles.details}>
             {details.map(([label, value]) => (

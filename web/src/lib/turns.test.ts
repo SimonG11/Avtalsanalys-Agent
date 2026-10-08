@@ -41,6 +41,7 @@ describe("buildTurns", () => {
         name: "search_documents",
         args: { query: "uppsägning" },
         result: '{"hits": []}',
+        failed: false,
       },
     ]);
   });
@@ -76,6 +77,7 @@ describe("buildTurns", () => {
       name: "search_documents",
       args: { query: "upp" },
       result: undefined,
+      failed: false,
     });
   });
 
@@ -176,10 +178,40 @@ describe("buildTurns and refused questions", () => {
   });
 });
 
+describe("buildTurns and refused calls", () => {
+  it("marks a call the backend refused for want of syfte as failed, and keeps the new call", () => {
+    const refusal = "Anropet nekades: syfte saknas. Ange i syfte en kort mening.";
+    const [turn] = buildTurns([
+      QUESTION,
+      { id: "a1", role: "assistant", toolCalls: [call("c1", "search_register", "{}")] },
+      { id: "t1", role: "tool", toolCallId: "c1", content: refusal, error: refusal },
+      {
+        id: "a2",
+        role: "assistant",
+        toolCalls: [call("c2", "search_register", '{"syfte": "Hitta avtalen."}')],
+      },
+      { id: "t2", role: "tool", toolCallId: "c2", content: '{"rows": []}' },
+    ]);
+    assert.deepEqual(
+      turn.items.map((item) => item.kind === "tool" && [item.id, item.failed, item.result]),
+      [
+        ["c1", true, refusal],
+        ["c2", false, '{"rows": []}'],
+      ],
+    );
+  });
+});
+
 describe("currentActivity", () => {
   it("names the step that waits for its result, the check, or the model's next move", () => {
     assert.equal(currentActivity([]), "Tänker …");
-    const search = { kind: "tool", id: "c", name: "search_documents", args: {} } as const;
+    const search = {
+      kind: "tool",
+      id: "c",
+      name: "search_documents",
+      args: {},
+      failed: false,
+    } as const;
     assert.equal(currentActivity([{ ...search, result: undefined }]), "Söker i dokumenten …");
     assert.equal(currentActivity([{ ...search, result: "{}" }]), "Tänker …");
     assert.equal(
@@ -198,7 +230,7 @@ describe("stepCount", () => {
     assert.equal(
       stepCount([
         { kind: "thought", id: "r", text: "" },
-        { kind: "tool", id: "c", name: "read_section", args: {}, result: "{}" },
+        { kind: "tool", id: "c", name: "read_section", args: {}, result: "{}", failed: false },
         { kind: "draft", id: "d", outcome: "submitted", reason: null },
       ]),
       2,

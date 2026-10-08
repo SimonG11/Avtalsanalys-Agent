@@ -18,7 +18,30 @@ describe("describeToolCall", () => {
         ["avtal", "23.3-6372-2021-001"],
         ["antal", "5"],
       ],
+      purpose: null,
     });
+  });
+
+  it("shows the agent's syfte as the step's purpose, not among the arguments", () => {
+    const description = describeToolCall(
+      "search_documents",
+      { syfte: " Hitta regler om uppsägningstid i IT-driftavtalen. ", query: "uppsägningstid" },
+      "complete",
+    );
+    assert.equal(description.purpose, "Hitta regler om uppsägningstid i IT-driftavtalen.");
+    assert.equal(description.subject, "uppsägningstid");
+    assert.deepEqual(description.details, []);
+    // While it streams, the purpose grows; an empty or missing one is no purpose.
+    assert.equal(
+      describeToolCall("read_section", { syfte: "Läsa vill" }, "inProgress").purpose,
+      "Läsa vill",
+    );
+    assert.equal(describeToolCall("read_section", { syfte: "" }, "inProgress").purpose, null);
+    assert.equal(describeToolCall("read_section", { syfte: 3 }, "inProgress").purpose, null);
+  });
+
+  it("keeps the present tense for a call that was refused or failed", () => {
+    assert.equal(describeToolCall("search_register", {}, "failed").title, "Söker i registret");
   });
 
   it("uses the past tense when the tool has answered and shortens hashes", () => {
@@ -63,6 +86,7 @@ describe("describeToolCall", () => {
       title: "new_tool",
       subject: null,
       details: [["region", "Norr"]],
+      purpose: null,
     });
   });
 
@@ -76,6 +100,7 @@ describe("describeToolCall", () => {
       title: "Frågar dig",
       subject: "Vilket område?",
       details: [["alternativ", "IT-drift, Bemanningstjänster"]],
+      purpose: null,
     });
   });
 
@@ -99,6 +124,7 @@ describe("describeToolCall", () => {
         ["enhet", "månader"],
         ["riktning", "före"],
       ],
+      purpose: null,
     });
     // include_start is shown only when the start day belongs to the period.
     const withStart = { ...args, unit: "working_days", direction: "after", include_start: true };
@@ -134,7 +160,12 @@ describe("describeToolCall", () => {
         "complete",
         names,
       ),
-      { title: "Läste din fil", subject: "vårt-kontrakt.pdf", details: [["sökord", "uppsägning"]] },
+      {
+        title: "Läste din fil",
+        subject: "vårt-kontrakt.pdf",
+        details: [["sökord", "uppsägning"]],
+        purpose: null,
+      },
     );
     // A file the web app does not know, e.g. after a reload, is shown by its id.
     assert.equal(

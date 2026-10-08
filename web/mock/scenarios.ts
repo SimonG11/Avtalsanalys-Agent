@@ -295,13 +295,13 @@ class RunBuilder {
   }
 
   /**
-   * An ask_user call the backend refuses before asking, here for want of options
-   * (webbapp-kontrakt.md, point 32): no result event and no interrupt, and in the messages
-   * snapshot a tool message with `error` set. The model then asks again.
+   * A call the backend refuses before the tool runs (webbapp-kontrakt.md, points 32 and 39): an
+   * ask_user call without options, or a call to avtal-mcp without `syfte`. It streams as a step
+   * but gets no result event (and an ask_user call no interrupt), and in the messages snapshot its
+   * tool message has `error` set. The model then calls again.
    */
-  refusedAskUser(question: string): void {
-    const toolCallId = this.callTool("ask_user", { question });
-    const error = "ask_user behöver 2-5 korta svarsalternativ.";
+  refusedCall(name: string, args: Record<string, unknown>, error: string): void {
+    const toolCallId = this.callTool(name, args);
     this.newMessages.push({
       id: this.nextId("tool"),
       role: "tool",
@@ -464,7 +464,11 @@ function answerNoticePeriod(
     );
     run.toolCall(
       "search_documents",
-      { query: "uppsägningstid kontrakt", framework_area: area },
+      {
+        syfte: `Hitta reglerna om uppsägning av kontrakt inom ${area}.`,
+        query: "uppsägningstid kontrakt",
+        framework_area: area,
+      },
       searchHits(context, [
         ["6.21.9", "Uppsägning", 2],
         ["6.21.10", "Uppsägning vid väsentligt avtalsbrott", 2],
@@ -476,7 +480,11 @@ function answerNoticePeriod(
     );
     run.toolCall(
       "read_section",
-      { sha256: context.documentSha256, section_number: "6.21.9" },
+      {
+        syfte: "Läsa hela avsnittet om uppsägning, så att svaret kan citera det ordagrant.",
+        sha256: context.documentSha256,
+        section_number: "6.21.9",
+      },
       { section_number: "6.21.9", page: 2, text: "Kunden har rätt att säga upp Kontraktet ..." },
     );
     if (endDate) {
@@ -485,7 +493,13 @@ function answerNoticePeriod(
           `Kontraktet ska upphöra ${endDate} och uppsägningstiden är tre månader, så jag ` +
           "räknar tre månader bakåt.",
       );
-      const args = { start: endDate, amount: 3, unit: "months", direction: "before" };
+      const args = {
+        syfte: `Räkna ut sista dagen för uppsägning, tre månader före ${endDate}.`,
+        start: endDate,
+        amount: 3,
+        unit: "months",
+        direction: "before",
+      };
       const calculation = monthsBefore(endDate, 3);
       run.toolCall("calculate_date", args, calculation);
       answer = {
@@ -551,12 +565,19 @@ function answerFromUpload(run: RunBuilder, context: MockContext, file: UploadedF
     );
     run.toolCall(
       "search_documents",
-      { query: "uppsägningstid kontrakt" },
+      {
+        syfte: "Hitta ramavtalets regler om uppsägning att jämföra filen med.",
+        query: "uppsägningstid kontrakt",
+      },
       searchHits(context, [["6.21.9", "Uppsägning", 2]]),
     );
     run.toolCall(
       "read_section",
-      { sha256: context.documentSha256, section_number: "6.21.9" },
+      {
+        syfte: "Läsa ramavtalets avsnitt om uppsägning ordagrant.",
+        sha256: context.documentSha256,
+        section_number: "6.21.9",
+      },
       { section_number: "6.21.9", page: 2, text: "Kunden har rätt att säga upp Kontraktet ..." },
     );
   });
@@ -601,7 +622,7 @@ function answerAttachment(run: RunBuilder): void {
   run.step("research_agent", () => {
     run.toolCall(
       "search_documents",
-      { query: "säkerhetsnivå avrop bilaga" },
+      { syfte: "Hitta var säkerhetsnivån vid avrop bestäms.", query: "säkerhetsnivå avrop bilaga" },
       { hits: [{ sha256: WORD_FILE_SHA256, section_number: null, section_title: "Avropsbilaga" }] },
     );
   });
@@ -662,7 +683,18 @@ function answerFromRegister(run: RunBuilder): void {
     }),
   ];
   run.step("research_agent", () => {
-    run.toolCall("search_register", { framework_area: "IT-drift" }, { rows, total: rows.length });
+    // The first call lacks its syfte, so the backend refuses it and the model calls again.
+    run.refusedCall(
+      "search_register",
+      { framework_area: "IT-drift" },
+      "Anropet nekades: syfte saknas. Ange i syfte en kort mening, högst 200 tecken, om vad du " +
+        "vill ta reda på med anropet och varför, och anropa search_register igen.",
+    );
+    run.toolCall(
+      "search_register",
+      { syfte: "Ta fram avtalen inom IT-drift ur registret.", framework_area: "IT-drift" },
+      { rows, total: rows.length },
+    );
   });
   run.handIn(
     answerOf({
@@ -684,7 +716,11 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
 
   if (lower.includes("[fel]")) {
     run.step("research_agent", () => {
-      run.toolCall("search_documents", { query: question.slice(0, 80) }, { hits: [] });
+      run.toolCall(
+        "search_documents",
+        { syfte: "Hitta det frågan gäller i avtalen.", query: question.slice(0, 80) },
+        { hits: [] },
+      );
     });
     run.fail("Mocken avbröt körningen.");
     return run.events;
@@ -715,12 +751,19 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
       run.step("research_agent", () => {
         run.toolCall(
           "search_documents",
-          { query: "uppsägningstid kontrakt" },
+          {
+            syfte: "Ta reda på vilka ramavtal som har regler om uppsägningstid.",
+            query: "uppsägningstid kontrakt",
+          },
           {
             hits: AREAS.map((area) => ({ section_title: "Uppsägning", framework_areas: [area] })),
           },
         );
-        run.refusedAskUser(ASK_AREA.question);
+        run.refusedCall(
+          "ask_user",
+          { question: ASK_AREA.question },
+          "ask_user behöver 2-5 korta svarsalternativ.",
+        );
         run.askUser(ASK_AREA);
       });
       run.messagesSnapshot();
@@ -740,7 +783,10 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
         run.reason();
         run.toolCall(
           "search_documents",
-          { query: "vite försenad leverans" },
+          {
+            syfte: "Hitta reglerna om vite vid försenad leverans.",
+            query: "vite försenad leverans",
+          },
           searchHits(context, [["7.2", "Vite vid försenad leverans", 3]]),
         );
       });
@@ -759,7 +805,11 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
       run.step("research_agent", () => {
         run.toolCall(
           "read_section",
-          { sha256: context.documentSha256, section_number: "7.2" },
+          {
+            syfte: "Läsa avsnittet om vite ordagrant, eftersom kontrollen inte fann citatet.",
+            sha256: context.documentSha256,
+            section_number: "7.2",
+          },
           { section_number: "7.2", page: 3, text: "Om Leverantören inte levererar i tid ..." },
         );
       });
@@ -804,7 +854,11 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
       );
     } else {
       run.step("research_agent", () => {
-        run.toolCall("search_documents", { query: question.slice(0, 80) }, { hits: [] });
+        run.toolCall(
+          "search_documents",
+          { syfte: "Hitta det frågan gäller i avtalen.", query: question.slice(0, 80) },
+          { hits: [] },
+        );
       });
       run.handIn(
         answerOf({

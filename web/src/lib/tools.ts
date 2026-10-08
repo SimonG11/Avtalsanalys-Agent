@@ -7,8 +7,9 @@
  *
  * How: the timeline (components/Timeline.tsx) calls `describeToolCall` for every tool call.
  * Unknown tools still get a step, with the raw tool name, so a tool added to avtal-mcp later
- * shows up without a code change here. `summarizeResult` gives the step a line with what the tool found, for the tools
- * whose answer has one.
+ * shows up without a code change here. The agent's `syfte`, the sentence in which it says why it
+ * makes the call, is not an argument but the step's thought. `summarizeResult` gives the step a
+ * line with what the tool found, for the tools whose answer has one.
  */
 
 export interface ToolLabel {
@@ -42,6 +43,13 @@ export const TOOL_LABELS: Record<string, ToolLabel> = {
  * from the state, and the timeline shows the check of each draft instead (lib/turns.ts).
  */
 export const ANSWER_TOOL = "FinalAnswer";
+
+/**
+ * The argument in which the agent says, in one Swedish sentence, what it wants to find out with a
+ * call to avtal-mcp and why (webbapp-kontrakt.md, point 39). The model writes it first, so it
+ * streams before the other arguments.
+ */
+export const PURPOSE_ARGUMENT = "syfte";
 
 /** Swedish names for the arguments the tools take; other arguments keep their own name. */
 const ARGUMENT_LABELS: Record<string, string> = {
@@ -98,6 +106,8 @@ export interface ToolCallDescription {
   subject: string | null;
   /** The other arguments as label and value, e.g. ["avtal", "23.3-..."]. */
   details: [string, string][];
+  /** What the agent said it wants to find out with the call, or null when it said nothing. */
+  purpose: string | null;
 }
 
 /**
@@ -107,24 +117,27 @@ export interface ToolCallDescription {
 export function describeToolCall(
   name: string,
   args: unknown,
-  status: "inProgress" | "executing" | "complete",
+  status: "inProgress" | "executing" | "complete" | "failed",
   fileNames: ReadonlyMap<string, string> = new Map(),
 ): ToolCallDescription {
   const label = TOOL_LABELS[name];
   const title = label ? (status === "complete" ? label.done : label.running) : name;
   const entries = isRecord(args) ? Object.entries(args) : [];
   const mainKey = MAIN_ARGUMENT[name];
+  const stated = isRecord(args) ? args[PURPOSE_ARGUMENT] : undefined;
+  const purpose = typeof stated === "string" && stated.trim() ? stated.trim() : null;
 
   let subject: string | null = null;
   const details: [string, string][] = [];
   for (const [key, value] of entries) {
+    if (key === PURPOSE_ARGUMENT) continue;
     if (value === undefined || value === null || value === "") continue;
     if (isRedundant(key, value, args)) continue;
     const text = formatValue(key, value, fileNames);
     if (key === mainKey) subject = text;
     else details.push([ARGUMENT_LABELS[key] ?? key, text]);
   }
-  return { title, subject, details };
+  return { title, subject, details, purpose };
 }
 
 /**
