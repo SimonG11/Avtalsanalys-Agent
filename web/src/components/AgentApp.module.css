@@ -6,23 +6,78 @@
 
 .header {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 16px;
-  align-items: baseline;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 56px;
+  padding: 8px 16px 8px 20px;
 }
 
 .brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.name {
   margin: 0;
-  font-size: 1.15rem;
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 650;
 }
 
 .tagline {
-  margin: 0;
+  overflow: hidden;
+  color: var(--text-3);
   font-size: 0.85rem;
-  color: var(--text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tools {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.textButton,
+.iconButton {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-2);
+  font-size: 0.875rem;
+}
+
+.textButton {
+  padding: 0 10px;
+}
+
+.iconButton {
+  justify-content: center;
+  width: 34px;
+}
+
+.textButton:hover,
+.iconButton:hover {
+  background: var(--surface-2);
+  color: var(--text);
 }
 
 .main {
@@ -33,7 +88,7 @@
 }
 
 .withSource {
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 46%);
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 46%);
 }
 
 .chat {
@@ -41,14 +96,17 @@
   min-height: 0;
 }
 
-/* CopilotChat fills the column and scrolls inside it. */
-.chat > * {
-  height: 100%;
-}
-
 @media (max-width: 900px) {
+  .tagline {
+    display: none;
+  }
+
   .withSource {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr);
   }
+}
+
+.iconButton[hidden] {
+  display: none;
 }

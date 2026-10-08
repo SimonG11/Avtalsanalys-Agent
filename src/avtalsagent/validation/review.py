@@ -35,7 +35,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
-from avtalsagent.agent.schemas import RegisterFact
+from avtalsagent.agent.schemas import RegisterFact, SourceKind
 
 Support = Literal["supported", "partly", "unsupported"]
 
@@ -83,6 +83,8 @@ class ReviewSource(BaseModel):
     text: str  # empty when `same_as` is set
     # The [n] of an earlier source with the same section, whose text is not sent twice.
     same_as: int | None = None
+    # "upload" for a file the user uploaded: the reviewer is told it is the user's document.
+    source: SourceKind = "framework"
 
 
 class FollowUp(BaseModel):

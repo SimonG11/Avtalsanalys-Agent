@@ -1,8 +1,11 @@
 # M10 – Webbappen
 
+> Filen beskriver M10 som den var när den byggdes, och några stycken har lagts till senare.
+> Läget efter körningen mot den riktiga databasen står i [steg 12](12-demo.md).
+
 **Mål:** en webbsida där man ställer en fråga om ramavtalen och ser hur agenten arbetar: vilka
 verktyg den anropar, svaret med källhänvisningar och, med ett klick på en källa, PDF:en på rätt
-sida med citatet markerat. När agenten behöver veta mer frågar den i en dialog.
+sida med citatet markerat. När agenten behöver veta mer frågar den i chatten.
 
 **Klart när:** hela flödet fungerar i webbläsaren, inklusive en fråga som kräver förtydligande.
 
@@ -14,17 +17,25 @@ sida med citatet markerat. När agenten behöver veta mer frågar den i en dialo
 > avtal-mcp inte svarar fungerade som med mocken. Efter M8 visar den också reservationerna,
 > registerraderna som ett svar bygger på och att svaret kontrolleras. Webbappen byggdes i en egen
 > tråd, parallellt med backend.
+>
+> Efter Simons provkörning 2026-10-07 fick webbappen ett nytt gränssnitt: egna färger som går att
+> läsa i både ljust och mörkt läge, en chatt där agentens tankar och steg syns i en tidslinje
+> under frågan, ungefär som i Claude, och agentens frågor i chatten i stället för i en ruta ovanpå.
+> Tankarna visas när backend skickar dem (kontraktets punkt 29). Egna filer kommer i en senare PR,
+> när backend har dem.
 
 ## Vad du ser
 
 | Del | Vad den visar |
 |---|---|
-| Chatten | Frågorna och svaren. Innan första frågan finns tre exempelfrågor att klicka på. |
-| Agentens steg | Ett kort per verktygsanrop, live medan agenten arbetar: "Söker i dokumenten" blir "Sökte i dokumenten" när verktyget har svarat. Kortet visar huvudargumentet ("uppsägningstid") och de andra argumenten med svenska namn. En datumuträkning visar uträkningen ("2027-02-17 minus 3 månader = 2026-11-17 (tisdag)") och en sökning efter ändringar antalet ändringar. Verktygets hela svar går att fälla ut. Agentens fråga till dig är också ett steg, "Frågar dig". När agenten lämnar in sitt svar (`FinalAnswer`) står det "Kontrollerar svaret …" tills svaret är klart. Granskningen tar i median 9 sekunder. Medan modellen resonerar mellan stegen står det "Tänker …", och sedan "Tänkte efter". |
-| Svarskortet | Status (**Verifierat**, **Med reservation** eller **Inget svar**) med en rad om vad som kontrollerades, svarstexten där `[1]` och `[2]` är knappar, reservationerna, avtalen ur registret som svaret bygger på, och en lista med källorna: dokument, avsnitt, sida och citat. Ett citat som inte kunde kontrolleras mot avtalstexten får en varning. Svarstextens stycken och listor behåller sina radbrytningar. |
+| Chatten | En fråga i taget med agentens arbete och svaret under, och ett chattfält längst ner. Enter skickar och Skift+Enter ger en ny rad. Medan agenten arbetar blir knappen "Stoppa". Innan första frågan finns fyra exempelfrågor att klicka på. "Ny konversation" börjar om. |
+| Tidslinjen | Hur agenten arbetade med frågan, live. Överst står vad den gör just nu ("Söker i dokumenten …", "Tänker …", "Kontrollerar svaret …"). Under den kommer agentens tankar och steg i den ordning de kom. Ett steg är ett verktygsanrop: "Söker i dokumenten" blir "Sökte i dokumenten" när verktyget har svarat, med huvudargumentet ("uppsägningstid") och de andra argumenten med svenska namn. En datumuträkning visar uträkningen ("2027-02-17 minus 3 månader = 2026-11-17 (tisdag)") och en sökning efter ändringar antalet ändringar. Verktygets hela svar går att fälla ut. Varje utkast som agenten lämnar in (`FinalAnswer`) är också ett steg: "Kontrollerar svaret …" under kontrollen, "Kontrollen skickade tillbaka utkastet" med skälet, eller "Kontrollerade svaret". När svaret har kommit fälls tidslinjen ihop till en rad ("Arbetade i 12 s · 3 steg") som öppnas med ett klick. |
+| Agentens tankar | En tanke är modellens sammanfattning av sitt resonemang. Den strömmar in ord för ord, och en första rad i fetstil blir tankens rubrik. Ett tomt resonemang visas inte. |
+| Svarskortet | Status (**Verifierat**, **Med reservation** eller **Inget svar**) med en rad om vad som kontrollerades, svarstexten där `[1]` och `[2]` är knappar, reservationerna, avtalen ur registret som svaret bygger på, och källorna som kort: dokument, avsnitt, sida och citat. Ett citat som inte kunde kontrolleras mot avtalstexten får en varning. Svarstextens stycken och listor behåller sina radbrytningar. |
 | Källpanelen | Öppnas till höger när man klickar på en källa. PDF:en visas på sidan med citatet och citatet är markerat i gult. Källans sida är sidan där avsnittet börjar, så ett citat längre ner i ett avsnitt över flera sidor kan stå på en senare sida. Då visar panelen den sidan och säger det ("Citatet står på sida 4. Avsnittet börjar på sida 3."). Om citatet inte finns på någon av sidorna står det i panelen. En Word-fil har ingen PDF, och då visar panelen bara citatet. |
-| Frågedialogen | När agenten anropar `ask_user` öppnas en dialog med frågan och svarsalternativen som knappar. Man kan också skriva ett eget svar. Agenten fortsätter med svaret. |
+| Agentens fråga | När agenten anropar `ask_user` kommer frågan i chatten, under stegen som ledde dit, med svarsalternativen som knappar. Ett eget svar skrivs i chattfältet, som då säger "Skriv ett eget svar…". Frågan är också ett steg, och den visar svaret ("Du svarade: IT-drift"). Agenten fortsätter med svaret. |
 | Fel | Om agenten inte kan svara, till exempel när API:t inte svarar, står det under frågan i stället för ett svarskort. |
+| Tema | Appen följer datorns ljusa eller mörka läge. Knappen uppe till höger byter, till exempel till ljust läge för en projektor, och webbläsaren minns valet. All text har minst kontrasten 4,5:1 mot sin bakgrund i båda lägena (WCAG AA). |
 
 ## Flödet
 
@@ -89,7 +100,7 @@ svenska namn från planen:
 | `search_register` | `sok_register` | Söker i registret |
 | `find_amendments` | `hitta_andringar` | Letar efter ändringar |
 | `calculate_date` | `berakna_datum` | Räknar ut datum |
-| `ask_user` | `fraga_anvandaren` | Frågar dig, och frågedialogen |
+| `ask_user` | `fraga_anvandaren` | Frågar dig, och frågan i chatten |
 
 Argumenten `query`, `agreement_number`, `framework_area`, `sub_area`, `document_type`, `sha256`,
 `section_number`, `section_position`, `reference`, `supplier`, `org_number`, `valid_on`, `limit`,
@@ -111,12 +122,24 @@ tre utkast per fråga. Ett utkast som formatkontrollen avvisar får svaret "Erro
 …" och räknas inte. Det godkända utkastets svar ("Svaret är lämnat för kontroll.") kommer först
 med meddelandehistoriken när körningen är klar.
 
-Webbappen visar varken utkasten eller kontrollens svar. I stället för ett steg står det
+Webbappen visar varje utkast som ett steg i tidslinjen, men inte utkastets text. Steget säger
 "Kontrollerar svaret …" från att `FinalAnswer`-anropet kommer tills anropet får ett svar,
-`answer` sätts, agenten anropar nästa verktyg eller körningen slutar. Kontrollens svar på ett
-underkänt utkast kan också komma först i slutet, så utkastets rad försvinner när agenten gör
-något nytt, och nästa utkast får en ny. Svaret läses bara ur tillståndet. Grafens steg
-(`AnswerCheck.before_agent` och `AnswerCheck.after_agent`) läser webbappen inte.
+`answer` sätts, agenten anropar nästa verktyg eller körningen slutar. Ett underkänt utkast blir
+"Kontrollen skickade tillbaka utkastet" med kontrollens skäl, texten efter kolonet. Kontrollens
+svar kan komma först i slutet, så ett utkast utan svar som följs av mer arbete räknas som
+underkänt, och skälet visas när det kommer. Ett utkast med formatfel visas inte. Svaret läses bara
+ur tillståndet. Grafens steg (`AnswerCheck.before_agent` och `AnswerCheck.after_agent`) läser
+webbappen inte.
+
+**Agentens tankar** kommer som AG-UI:s `REASONING_*`-händelser före verktygsanropen från samma
+modellanrop (kontraktets punkter 29-30). AG-UI-klienten gör dem till meddelanden med rollen
+`reasoning`. Webbappen visar dem i tidslinjen i den ordning de kom, med rubriken i fetstil som
+tankens rubrik. Sammanfattningarna är på engelska, och med `AGENT_REASONING_EFFORT=low` har bara
+ungefär vart tjugonde modellanrop en. En sammanfattning i flera delar kommer som flera tankar
+medan den strömmar. `MESSAGES_SNAPSHOT` har den som ett meddelande med delarna ihop, och då byter
+AG-UI-klienten de strömmade delarna mot det. Tomma tankar visas inte. I dag ber agenten inte
+OpenAI om sammanfattningen, så tidslinjen visar bara stegen. Webbappen behöver ingen ändring när
+backend börjar skicka tankarna.
 
 **Svaret** ligger i agentens delade tillstånd under nyckeln `answer`, och bara där. Backend
 strömmar inte svaret som ett chattmeddelande (metadata `emit-messages: False` på det modellanropet)
@@ -202,9 +225,20 @@ sätt, och webbappen klarar vart och ett för sig:
 - den äldre formen: en `CUSTOM`-händelse `on_interrupt` vars värde är `{question, options}` som
   JSON-text. Den är `ag-ui-langgraph`s standard.
 
-En interrupt som inte har den formen öppnar ingen dialog. Svaret skickas tillbaka som en vanlig
+En interrupt som inte har den formen visas inte som en fråga. Svaret skickas tillbaka som en vanlig
 sträng, alternativet eller det man skrev, och körningen fortsätter med det. Svaret blir också
 verktygets resultat, så steget "Frågar dig" blir klart när körningen fortsätter.
+
+Ett `ask_user`-anrop utan alternativ eller med fler än fem avvisar backend innan något frågas
+(kontraktets punkt 32). Anropet strömmar som ett steg men får inget svar och ingen interrupt, och
+i `MESSAGES_SNAPSHOT` har dess verktygsmeddelande `error`. Modellen frågar då igen. Webbappen visar
+inte det avvisade anropet: det försvinner när meddelandet med `error` kommer, eller när agenten
+fortsätter med annat. Bara en interrupt är en fråga till användaren.
+
+När körningen fortsätter efter svaret skickar `ag-ui-langgraph` `ask_user`-anropet en gång till,
+med samma id, före resultatet. AG-UI-klienten behåller ett steg per id men lägger de nya
+argumenten efter de gamla, så `parsePartialJson` läser det första hela objektet och frågan står
+kvar i steget.
 
 ## Vad som byggdes, fil för fil
 
@@ -215,7 +249,7 @@ Allt ligger i `web/`. Kod och identifierare är på engelska, texten i gränssni
 Zod-scheman för svaret och för frågan till användaren, och två rena funktioner. `parseAnswer`
 läser `answer` ur tillståndet och ger "inget svar än", ett svar eller ett fel med fältets sökväg.
 `parseAskUser` provar de två formerna av interrupt i tur och ordning och ger `null` om ingen passar,
-så att webbappen inte öppnar dialogen för en interrupt som inte är `ask_user`.
+så att webbappen inte visar en interrupt som inte är `ask_user` som en fråga.
 
 ### 2. `src/lib/tools.ts` – svenska namn på verktygen
 
@@ -268,13 +302,26 @@ visas: `locateQuote` läser den sidan och upp till tio sidor efter, och tar den 
 citatet. Finns det ingen tar den den första sidan med en del av citatet (ett citat över en
 sidbrytning), och annars den citerade sidan, där panelen säger att citatet inte hittades.
 
-### 5. `src/lib/answerAnchors.ts` – var svarskortet hamnar
+### 5. `src/lib/turns.ts` och `src/lib/partialJson.ts` – frågorna och tidslinjen
 
-Varje fråga får sitt svarskort efter det sista meddelandet som hör till frågan, alltså före nästa
-fråga. Funktionen räknar ut det från meddelandelistan, så korten hamnar rätt även när en fråga
-pausats av en dialog och fortsatt i en ny körning. `isLatestToolCall` säger om ett verktygsanrop
-är det senaste i den senaste frågan, så att "Kontrollerar svaret …" bara visas för det utkast som
-kontrolleras nu.
+AG-UI ger en platt lista med meddelanden: frågan, agentens tankar, dess verktygsanrop och
+verktygens svar. `buildTurns` gör listan till en fråga i taget med dess tidslinje. Varje
+användarmeddelande börjar en ny fråga, och tankar, verktygsanrop och utkast hamnar under den i den
+ordning de kom. Ett verktygsanrop får svaret från verktygsmeddelandet med samma id. Det fungerar
+också när en fråga pausats av `ask_user` och fortsatt i en ny körning, eftersom båda körningarna
+hör till samma fråga. `currentActivity` ger raden överst i tidslinjen, `stepCount` antalet steg och
+`splitThought` en tankes rubrik.
+
+Ett verktygs argument strömmar in som JSON-text i delar. `parsePartialJson` läser en halv
+JSON-text genom att stänga strängar och klamrar som är öppna och släppa en nyckel utan värde, så
+steget visar argumenten medan de skrivs.
+
+### 5a. `src/lib/theme.ts` – ljust och mörkt läge
+
+Färgerna är variabler i `src/app/globals.css`, med ett värde för ljust och ett för mörkt läge.
+Utan val följer appen datorns läge (`prefers-color-scheme`). Ett val i knappen sparas i
+`localStorage` och sätts som `data-theme` på `<html>`. Ett litet skript i sidans `<head>` sätter
+det innan sidan ritas, så att den inte blinkar i fel läge.
 
 ### 5b. `src/lib/registerFacts.ts` och `src/lib/answerStatus.ts` – registret och statusen
 
@@ -301,15 +348,17 @@ vidare. Om API:t inte svarar blir det `502`, och en fil som saknas blir `404`.
 
 | Fil | Del |
 |---|---|
-| `AgentApp.tsx` | Sidan: CopilotKit, rubriken, chatten och källpanelen bredvid varandra (under varandra på smala skärmar). |
-| `Chat.tsx` | CopilotKits chatt med svenska texter, exempelfrågorna och `useRenderTool` som ritar varje verktygsanrop som ett steg, utom `FinalAnswer`. Raden CopilotKit visar när modellen resonerar ("Thinking…", "Thought for a few seconds") finns inte bland dess etiketter, så `ReasoningHeader` ersätter den med "Tänker …" och "Tänkte efter". |
-| `AnswerCheck.tsx` | Raden "Kontrollerar svaret …" för ett `FinalAnswer`-anrop. CopilotKit ger ett verktyg i backend samma status medan argumenten strömmar och medan det väntar på svar, så raden kan inte skilja på att agenten skriver och att svaret kontrolleras. |
-| `AgentSteps.tsx` | Ett steg: etikett, argument, en snurra medan verktyget arbetar, en rad om vad verktyget fann och verktygets hela svar. |
-| `Answers.tsx` | Sparar varje frågas svar när körningen är klar och placerar svarskortet i chatten. Svaret sparas bara om körningen lyckades och skickade tillstånd, annars skulle en misslyckad fråga få förra frågans svar. En misslyckad körning får ett felmeddelande. |
-| `AnswerCard.tsx` | Svarskortet: status med en förklarande rad, text med hänvisningar, reservationerna, avtalen ur registret och källistan. |
+| `AgentApp.tsx` | Sidan: CopilotKit, rubriken med "Ny konversation" och temaknappen, chatten och källpanelen bredvid varandra (under varandra på smala skärmar). |
+| `Conversation.tsx` | Chatten: välkomstvyn med exempelfrågorna, en fråga i taget med tidslinje, agentens fråga och svar, och chattfältet längst ner. Den skickar frågan med CopilotKits `runAgent` och följer meddelandena med `useAgent`. Vyn följer med nedåt medan agenten skriver, så länge man inte själv har rullat upp. |
+| `Composer.tsx` | Chattfältet: växer med texten, Enter skickar och knappen stoppar en körning som pågår. |
+| `Timeline.tsx` | Tidslinjen för en fråga: raden med vad agenten gör nu eller hur länge den arbetade, tankarna, stegen och utkasten. Ett steg har ikon, etikett, argument, en snurra medan verktyget arbetar, en rad om vad verktyget fann och verktygets hela svar. |
+| `AskUser.tsx` | Agentens fråga, med `useInterrupt`: ett kort i chatten per fråga, med en knapp per alternativ. Det första obesvarade kortet säger till chattfältet att det som skrivs där är svaret. |
+| `Answers.tsx` | Sparar varje frågas svar när körningen är klar, och hur länge agenten arbetade. Svaret sparas bara om körningen lyckades och skickade tillstånd, annars skulle en misslyckad fråga få förra frågans svar. En misslyckad körning får ett felmeddelande. |
+| `AnswerCard.tsx` | Svarskortet: status med ikon och en förklarande rad, text med hänvisningar, reservationerna, avtalen ur registret och källorna. |
 | `SourcePanel.tsx` | Källpanelen: källans uppgifter, citatet och PDF:en, och vilken sida citatet står på när det inte är avsnittets första. |
 | `PdfViewer.tsx` | PDF:en med `react-pdf` (PDF.js). När dokumentet har laddats väljer `locateQuote` sidan med citatet. Sidan ritas med sitt textlager, citatet markeras och panelen rullar till markeringen. Svarar API:t `404` (en Word-fil) säger den att det inte finns någon PDF. |
-| `ClarifyDialog.tsx` | Frågedialogen, med `useInterrupt`. Den kan inte stängas utan svar, eftersom agenten väntar på det: Escape är avstängt (`closedby="none"`), och dialogen öppnas igen om den ändå stängs. |
+| `ThemeToggle.tsx` | Knappen som byter mellan ljust och mörkt läge. |
+| `icons.tsx` | Appens ikoner som små SVG:er i textens färg, så att de syns i båda lägena. |
 | `SourceContext.tsx` | Låter en hänvisning i ett svarskort öppna källpanelen. |
 
 ### 9. `mock/` – en låtsasagent
@@ -320,9 +369,9 @@ samma ordning som `ag-ui-langgraph` skickar händelserna:
 
 | Fråga som innehåller | Vad mocken gör |
 |---|---|
-| uppsägning och ett område (IT-drift, Programvaror, Bemanningstjänster) | Resonerar en stund, söker, läser avsnittet och svarar **Verifierat** med två källor. Med ett datum i frågan (2027-02-17) räknar mocken också ut sista dagen för uppsägning med `calculate_date`. |
-| uppsägning utan område | Söker och anropar `ask_user`, som frågar vilket ramavtalsområde som menas, med båda händelserna. Fortsätter sedan med svaret. Med `[legacy]` i frågan kommer bara den äldre händelsen, med `[outcome]` bara standardformen. |
-| vite | Kontrollen underkänner första utkastet, och skälet kommer först med meddelandehistoriken i slutet. Mocken läser avsnittet och svarar **Med reservation** med två reservationer. Den andra källans citat finns inte i PDF:en, och den tredje källans citat står på sidan efter den där avsnittet börjar. |
+| uppsägning och ett område (IT-drift, Programvaror, Bemanningstjänster) | Tänker före varje steg, med tankar som strömmar ord för ord, söker, läser avsnittet och svarar **Verifierat** med två källor. Med ett datum i frågan (2027-02-17) räknar mocken också ut sista dagen för uppsägning med `calculate_date`. |
+| uppsägning utan område | Söker, anropar `ask_user` en gång utan alternativ (backend avvisar det) och sedan rätt, och frågar vilket ramavtalsområde som menas, med båda händelserna. Fortsätter sedan med svaret och skickar då `ask_user`-anropet en gång till före resultatet, som backend. Med `[legacy]` i frågan kommer bara den äldre händelsen, med `[outcome]` bara standardformen. |
+| vite | Resonerar utan text, som dagens backend. Kontrollen underkänner första utkastet, och skälet kommer först med meddelandehistoriken i slutet. Mocken läser avsnittet och svarar **Med reservation** med två reservationer. Den andra källans citat finns inte i PDF:en, och den tredje källans citat står på sidan efter den där avsnittet börjar. |
 | bilaga | Svarar **Inget svar** med en källa i en Word-fil: utan sida, utan avsnittsnummer och utan PDF. Texten har stycken och en lista. |
 | avtalsnummer | Söker i registret och svarar **Verifierat** utan citat, med tre registerrader för två påhittade avtal. Det första har två delområden och sitt nummer skrivet på två sätt. |
 | `[fel]` | Gör ett steg och avslutar med `RUN_ERROR`, som när backend fallerar. |
@@ -365,6 +414,11 @@ Två nya jobb i `.github/workflows/ci.yml`:
   i våra tester med version 1.77 knöt den ibland samma tillstånd till flera körningar, så
   svarskortet visades flera gånger. Webbappen sparar i stället svaret när körningen är klar
   (`RUN_FINISHED`) och bestämmer själv var kortet hamnar.
+- **Egen chatt, CopilotKit utan gränssnitt.** CopilotKits färdiga chatt bytte till mörka färger
+  bara med en klass `.dark` på sidan, inte efter datorns läge, och i mörkt läge blev texten svår
+  att läsa. Den visade också varje verktygsanrop som ett eget meddelande och frågan som en ruta
+  ovanpå. Webbappen använder nu bara CopilotKits hooks (`useAgent`, `useInterrupt` och `runAgent`)
+  och ritar chatten själv med egna färger. Kopplingen till agenten över AG-UI är densamma.
 - **PDF.js äldre bygge (`legacy`).** PDF.js 6 använder nya JavaScript-funktioner som inte alla
   webbläsare har ännu. Chromium 141 saknar till exempel `Map.getOrInsertComputed`, och PDF:en
   kunde inte visas där. Det äldre bygget har ersättningar för funktionerna.
@@ -380,9 +434,9 @@ Två nya jobb i `.github/workflows/ci.yml`:
 
 | Var | Vad | Antal |
 |---|---|---|
-| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null` och svar utan M8:s fält), verktygens etiketter och raden om vad de fann, hänvisningarna i texten, källornas namn, var korten hamnar, raden under statusen, registerraderna per avtal, markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan, radslut i en tom bit) och sidan med citatet | 60 |
-| `mock/scenarios.test.ts` | Mockens händelser: ordningen, att svaren följer kontraktet, att bara det inlämnade `FinalAnswer` saknar svar, pausen för granskningen, det underkända utkastet, att varje verifierat citat finns i test-PDF:en från sin sida och framåt, de tre formerna av interrupt, att `ask_user` får svaret som resultat, båda sätten att svara, datumuträkningen och en körning som misslyckas | 13 |
-| `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, steg, "Tänkte efter", en datumuträkning, "Kontrollerar svaret …", svarskort, källpanel med markerat citat över två rader, dialogen i alla tre formerna, att Escape inte stänger den, eget svar, reservationer och ett dolt underkänt utkast, flera frågor efter varandra, en fråga vars körning misslyckas, ett citat på sidan efter avsnittets första, en källa i en Word-fil utan sida och PDF, och ett svar ur registret med en rad per avtal | 13 |
+| `src/lib/*.test.ts` | Kontraktet (också fälten som kan vara `null` och svar utan M8:s fält), verktygens etiketter och raden om vad de fann, hänvisningarna i texten, källornas namn, frågorna och deras tidslinjer (tankar, steg, argument som strömmar, godkända, underkända och felformaterade utkast, avvisade frågor), halva och dubblerade JSON-texter, tankarnas rubriker, raden under statusen, registerraderna per avtal, markeringen av citat (radbrytningar, bindestreck, ligaturer, accenter, delvis träff vid sidans kant, felcitat mitt på sidan, radslut i en tom bit) och sidan med citatet | 79 |
+| `mock/scenarios.test.ts` | Mockens händelser: ordningen, att svaren följer kontraktet, att bara det inlämnade `FinalAnswer` saknar svar, pausen för granskningen, det underkända utkastet, att varje verifierat citat finns i test-PDF:en från sin sida och framåt, de tre formerna av interrupt, det avvisade `ask_user`-anropet, att `ask_user` får svaret som resultat, båda sätten att svara, datumuträkningen och en körning som misslyckas | 13 |
+| `e2e/app.spec.ts` | Hela flödet i Chromium mot mocken: exempelfråga, tankar och steg live, en datumuträkning, "Kontrollerar svaret …", tidslinjen som fälls ihop och öppnas, svarskort, källpanel med markerat citat över två rader, agentens fråga i chatten i alla tre formerna, eget svar i chattfältet, reservationer och ett underkänt utkast med skälet, flera frågor efter varandra, en fråga vars körning misslyckas, ett citat på sidan efter avsnittets första, en källa i en Word-fil utan sida och PDF, ett svar ur registret med en rad per avtal, och kontrasten på all text i mörkt och ljust läge | 14 |
 
 ## Så verifierar du M10 själv
 
@@ -394,13 +448,14 @@ docker compose -f web/compose.mock.yaml up --build
 
 Öppna http://localhost:3000 och prova:
 
-1. Klicka på exempelfrågan **Uppsägning i IT-drift**. Två steg visas, sedan "Kontrollerar svaret
-   …" och ett verifierat svar.
+1. Klicka på exempelfrågan **Uppsägning i IT-drift**. Tidslinjen visar agentens tankar och två
+   steg medan de kommer, sedan "Kontrollerar svaret …" och ett verifierat svar. Då fälls
+   tidslinjen ihop till en rad, som öppnas med ett klick.
    Klicka på `[1]` och se citatet markerat på sidan 2 i PDF:en.
-2. Skriv *Vilken uppsägningstid gäller för ett kontrakt?* Dialogen frågar vilket område som menas.
-   Välj ett, eller skriv ett eget svar.
-3. Skriv *Vilket vite gäller vid försenad leverans?* Kontrollen underkänner första utkastet, men
-   det syns bara som en längre väntan. Svaret har två reservationer, och källa 2 hittas inte i
+2. Skriv *Vilken uppsägningstid gäller för ett kontrakt?* Agenten frågar i chatten vilket område
+   som menas. Klicka på ett, eller skriv ett eget svar i chattfältet.
+3. Skriv *Vilket vite gäller vid försenad leverans?* Kontrollen underkänner första utkastet, och
+   tidslinjen visar varför. Svaret har två reservationer, och källa 2 hittas inte i
    PDF:en. Källa 3 öppnas på sidan 4, där citatet står, fast avsnittet börjar på sidan 3.
 4. Skriv *Står säkerhetsnivån i en bilaga?* Inget svar, men källan visar var frågan regleras. Den
    är en Word-fil, så panelen visar citatet utan PDF.
@@ -408,6 +463,7 @@ docker compose -f web/compose.mock.yaml up --build
    avtal under "Ur registret". Det första har två delområden.
 6. Skriv *Kontraktet inom IT-drift ska upphöra 2027-02-17. När måste kunden säga upp det?* Ett
    tredje steg räknar ut datumet och visar uträkningen.
+7. Byt mellan ljust och mörkt läge med knappen uppe till höger. All text ska gå att läsa i båda.
 
 Med Node 22.18 eller senare:
 

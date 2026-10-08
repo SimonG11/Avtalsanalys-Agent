@@ -1,5 +1,8 @@
 # M9 – API:t och hela systemet i Docker Compose
 
+> Filen beskriver M9 som den var när den byggdes, och några stycken har lagts till senare.
+> Läget efter körningen mot den riktiga databasen står i [steg 12](12-demo.md).
+
 **Mål:** göra agenten (M7) nåbar för webbappen (M10) och starta hela systemet med ett kommando på
 en Mac med Apple silicon, där demot körs. API:t kör agenten över AG-UI, protokollet som
 CopilotKit talar, och ger PDF:en som ett citat pekar på. Besluten och varför står i
@@ -51,7 +54,7 @@ flowchart LR
 En körning i API:t:
 
 1. Webbappen skickar AG-UI:s `RunAgentInput`: tråd-id, körnings-id och hela meddelandehistoriken,
-   och vid ett svar på `ask_user` även `resume` med svaret.
+   och vid ett svar på `ask_user` även `resume` med svaret, ett per fråga när flera väntar.
 2. `AgentRuns.open()` öppnar en session till avtal-mcp och bygger grafen med den gemensamma
    modellen och checkpointern.
 3. `AvtalAguiAgent.run()` strömmar händelserna: stegen, verktygsanropen och deras svar,
@@ -115,6 +118,7 @@ fungerar men tar några sekunder extra. `CHECKPOINTER=postgres` sparar samtalen 
 | `POST /agui` | En körning av agenten. Kroppen är AG-UI:s `RunAgentInput`, svaret server-sent events |
 | `GET /agui/health` | `{"status": "ok", "agent": {"name": "avtalsagent"}}`, som adapterns egen |
 | `GET /api/documents/{sha256}/pdf` | PDF:en, inline; 404 om dokumentet inte visas eller är en Word-fil; 422 för en felaktig hash; 503 om databasen inte svarar |
+| `/api/uploads` | Användarens egna filer; se [Egna filer](#egna-filer-2026-10-07) |
 | `GET /health` | `{"status": "ok"}` utan databas och avtal-mcp, för containerns hälsokontroll |
 | `GET /docs` | FastAPI:s beskrivning av routerna |
 
@@ -133,20 +137,46 @@ adresserna inne i compose skiljer sig från dem på din dator. Allt annat i `.en
 
 ### 1. `api/agui.py` – agenten över AG-UI
 
-`AvtalAguiAgent` är `ag-ui-langgraph`s `LangGraphAgent` med fem ändringar: en ögonblicksbild av
+`AvtalAguiAgent` är `ag-ui-langgraph`s `LangGraphAgent` med sex ändringar (en sjunde, att
+klientens tillstånd tas bort, står i [steg 08](08-validering.md)): en ögonblicksbild av
 tillståndet är bara `{"answer": ...}` (annars skickas alla meddelanden och det okontrollerade
 utkastet igen vid varje steg), `RUN_ERROR` har en fast svensk text (undantagets text kan innehålla
 en adress eller SQL), `ask_user` skickas bara som AG-UI:s utfall på `RUN_FINISHED` (ingen äldre
-`CUSTOM on_interrupt`), inga `RAW`-kopior, och grafens egen gräns för antalet steg (`create_agent`s
+`CUSTOM on_interrupt`), svaren på flera `ask_user`-frågor som väntar samtidigt går vidare per id
+(se nedan), inga `RAW`-kopior, och grafens egen gräns för antalet steg (`create_agent`s
 9 999) i varje körning. Adaptern fyller annars i LangChains standardgräns, 25 steg, och med
 middleware är ett modellanrop ungefär fyra steg: en fråga som behövde fler än ungefär sex
 modellanrop stoppades i webbappen (`GraphRecursionError`) men inte på kommandoraden. Det som
-begränsar en körning är `ModelCallLimitMiddleware`. `AgentRuns` håller det som alla körningar delar
-(modellen och checkpointern) och öppnar en ny MCP-session per körning. Routen är adapterns
+begränsar en körning är `ModelCallLimitMiddleware`: i ett test genom `POST /agui` slutar en modell
+som aldrig lämnar svar efter `AGENT_MODEL_CALL_LIMIT` modellanrop (16 som standard), med
+`RUN_FINISHED` och svaret `no_answer`. `AgentRuns` håller det som alla körningar delar (modellen
+och checkpointern) och öppnar en ny MCP-session per körning. Routen är adapterns
 `add_langgraph_fastapi_endpoint`, utskriven. Går sessionen inte att öppna blir körningen
 `RUN_STARTED` och `RUN_ERROR`. Bryts den mitt i körningen (avtal-mcp startas om, ett 5xx-svar)
 avbryter MCP-klienten körningen, och adaptern skickar då ingenting; routen avslutar strömmen med
 `RUN_ERROR` själv. Webbappen visar alltså ett fel i stället för en ström som bara tar slut.
+
+Modellen kan ställa två frågor i samma svar (två `ask_user`-anrop), och då väntar två avbrott
+samtidigt. Adapterns egen form för svaren godtar LangGraph bara när ett avbrott väntar: med två
+blev körningen `RUN_ERROR`, och ett nytt meddelande gav samma frågor igen, så tråden kom inte
+vidare. När fler än ett avbrott väntar skickar `AvtalAguiAgent` därför svaren per avbrotts-id, som
+terminalen gör. Svarar klienten bara på den ena frågan kommer den andra tillbaka som körningens
+enda avbrott, en avbruten fråga når modellen som "Användaren svarade inte på frågan", och ett svar
+på en fråga som inte väntar tas bort.
+
+När ett avbrott väntar läser adaptern inga id: ett ensamt svar går till frågan som väntar, och
+flera svar skickas i adapterns egen form, som `ask_user` läser som text. Skickade klienten svaret
+på den första frågan igen skulle det alltså besvara den andra, och skickade den båda svaren igen
+skulle den andra frågan få adapterns ordbok som svar. Med ett avbrott som väntar gäller därför:
+
+- flera svar: bara svaret med avbrottets id går vidare, ensamt och på adapterns sätt; finns inget
+  sådant svar återupptas ingenting;
+- ett svar med ett annat id i LangGraphs form (32 hexadecimala tecken), till exempel svaret på den
+  första frågan igen: det tas bort, och ingenting återupptas;
+- ett svar med avbrottets id, eller med ett id som inte har LangGraphs form: adapterns sätt, som
+  för en vanlig fråga.
+
+När ingenting återupptas slutar körningen med samma fråga igen, utan `RUN_ERROR`.
 
 ### 2. `api/documents.py` – PDF-routen
 
@@ -205,7 +235,7 @@ gång fäller jobbet i stället för att låta det vänta i timmar.
 
 | Fil | Antal | Vad den visar |
 |---|---|---|
-| `tests/unit/api/test_api_agui.py` | 17 | Hela appen genom httpx: en fråga strömmar stegen och slutar med det kontrollerade svaret, med `null` i fälten som saknas; en fråga med nio modellanrop (fler än 25 steg) går till svar; med spårning blir den en spårning i trådens session och går fortfarande till svar; varje ögonblicksbild är bara `answer`, först `null`; inga `RAW`-händelser; `ask_user` slutar med utfallet och utan `CUSTOM`; svaret återupptar körningen till ett kontrollerat svar, och historiken från klienten ger varje verktygsanrop exakt ett svar; en ny fråga medan `ask_user` väntar skickar samma fråga igen utan att köra grafen; ett fel ger den fasta texten utan lösenordet och loggas; efter ett verktygsanrop som misslyckades besvaras nästa fråga i tråden; en session som bryts mitt i körningen avslutar strömmen med `RUN_ERROR`; varje körning har en egen session som stängs; en session som inte går att öppna fäller bara sin körning; en felaktig kropp ger 422; hälsokontrollerna; en klient kan inte skriva `answer` eller kontrollens tillstånd |
+| `tests/unit/api/test_api_agui.py` | 27 | Hela appen genom httpx: en fråga strömmar stegen och slutar med det kontrollerade svaret, med `null` i fälten som saknas; en fråga med nio modellanrop (fler än 25 steg) går till svar; en modell som aldrig lämnar svar stoppas efter `AGENT_MODEL_CALL_LIMIT` modellanrop med `RUN_FINISHED` och `no_answer`; med spårning blir den en spårning i trådens session och går fortfarande till svar; varje ögonblicksbild är bara `answer`, först `null`; inga `RAW`-händelser; `ask_user` slutar med utfallet och utan `CUSTOM`; svaret återupptar körningen till ett kontrollerat svar, och historiken från klienten ger varje verktygsanrop exakt ett svar; två `ask_user`-frågor samtidigt: båda svaren på en gång går till ett kontrollerat svar, ett svar i taget ger den andra frågan tillbaka som körningens avbrott, en avbruten fråga når modellen som "svarade inte", och ett svar på en fråga som inte väntar tas bort; när den ena av två frågor är besvarad ger det första svaret igen (ensamt eller med ett svar på ingen fråga) den andra frågan tillbaka utan `RUN_ERROR`, och båda svaren igen ger den andra frågan sitt eget svar; ett ensamt svar med ett id utan LangGraphs form går till frågan som väntar; en ny fråga medan `ask_user` väntar skickar samma fråga igen utan att köra grafen; ett fel ger den fasta texten utan lösenordet och loggas; efter ett verktygsanrop som misslyckades besvaras nästa fråga i tråden; en session som bryts mitt i körningen avslutar strömmen med `RUN_ERROR`; varje körning har en egen session som stängs; en session som inte går att öppna fäller bara sin körning; en felaktig kropp ger 422; hälsokontrollerna; en klient kan inte skriva `answer` eller kontrollens tillstånd |
 | `tests/unit/api/test_api_documents.py` | 9 | PDF:en inline med rätt typ; 404 för ett dokument som inte visas, för en Word-fil och för en fil som saknas på disken (loggad); 503 med fast text när databasen inte svarar; en felaktig hash stoppas innan något slås upp |
 | `tests/unit/api/test_api_app.py` | 10 | Livscykeln frågar avtal-mcp, öppnar checkpointern och PDF-routens motor och stänger dem i omvänd ordning; utan nyckel öppnas inget; en avtal-mcp som inte svarar stoppar starten; en del som inte går att öppna stänger dem som redan är öppna; en checkpointer som inte går att öppna stoppar starten; routerna finns före starten; motorn är läsande och stängs; `main` med adress och loggning; loggen visar aldrig nyckeln eller lösenordet, inte heller i en traceback |
 | `tests/unit/test_config.py` | 5 nya | `API_HOST` och `API_PORT`, porten inom gränserna, `redact` för nyckeln och lösenordet i adress, kodat och inom citattecken |
@@ -214,7 +244,87 @@ gång fäller jobbet i stället för att låta det vänta i timmar.
 | `tests/unit/agent/test_checkpointer.py` | 1 ändrat | Postgres-grenen med en ersättare för poolen: adressen, poolens inställningar, en `setup()` och att poolen stängs |
 | `tests/integration/test_api_document_lookup.py` | 5 | Uppslaget mot Postgres på M5:s testkorpus: en indexerad fil hittas med sin sökväg, också med ett avsnitt i karantän; en okänd hash och en fil i karantän hittas inte; en Word-fil kommer tillbaka som Word |
 
-43 nya enhetstester och 5 integrationstester. Inget test anropar språkmodellen.
+57 nya enhetstester och 5 integrationstester. Inget test anropar språkmodellen.
+
+## Egna filer (2026-10-07)
+
+Simon vill kunna ladda upp egna filer i chatten och låta agenten jämföra dem med ramavtalen
+(webbapp-kontrakt.md, punkterna 33-38). Här står API:ts del: det tar emot, läser och sparar
+filerna. Agentens verktyg för att läsa dem (`list_uploads`, `read_upload`) och citaten ur dem står
+i [steg 07](07-agent.md#egna-filer-2026-10-07), hela designen i
+[ADR 0026](../adr/0026-egna-filer.md), och webbappen bygger knappen.
+
+| Route | Vad |
+|---|---|
+| `POST /api/uploads` | Formulär (multipart) med `file` och `thread_id`. 201 med `{upload_id, filename, kind, pages, sections, characters, size, warnings, created_at}`; 200 med samma svar om tråden redan har filen. 409 när tråden har fem filer, 413 för stor fil (bytes, sidor, tecken, stycken, minne eller uppackad Word-fil), 415 fel filtyp, 422 ingen text, trasig fil eller mer än 60 sekunder att läsa, 503 när databasen inte svarar, 507 när alla filer tillsammans tar `UPLOAD_MAX_TOTAL_BYTES` |
+| `GET /api/uploads?thread_id=…` | `{"uploads": [...]}`, trådens filer, äldst först |
+| `DELETE /api/uploads/{upload_id}?thread_id=…` | 204, eller 404 om tråden inte har filen |
+| `GET /api/uploads/{upload_id}/file?thread_id=…` | Filen som den laddades upp: PDF och text `inline`, Word som bilaga |
+
+En fil hör till sin tråd. Varje route tar trådens id, och en fil i en annan tråd ger 404, som en
+fil som inte finns. avtal-mcp ser aldrig filerna: API:t sparar dem och agenten läser dem genom
+samma lager (`uploads/store.py`).
+
+**Läsningen** (`uploads/`). Filtypen avgörs av innehållet och namnets ändelse måste stämma med det:
+`%PDF-` för PDF, ett zip-arkiv med `word/document.xml` för .docx, och .txt eller .md utan
+NUL-tecken för text (en textfil i UTF-16 får felet för text som inte är UTF-8). En Word-fils arkiv
+kontrolleras innan det öppnas: högst 100 MB uppackat, 5 000 delar och 16 MB per XML-del, bara
+okomprimerade och deflate-packade delar, och varje del packas upp en megabyte i taget och får inte
+bli större än arkivet säger, så en zip-bomb stoppas också när arkivet ljuger om storlekarna. En PDF
+läses med pypdfium2:s textlager, sida för sida, utan Docling och PyTorch (300 sidor och 9 MB tar
+ett par sekunder), och läsningen slutar när texten passerar teckengränsen; en PDF utan text
+(inskannad) får 422, och sidor utan text nämns i `warnings`. Ett avstavningsstreck i slutet av en
+rad, som pdfium ger som U+FFFE, blir "-" igen, så att ett citat av de tryckta orden stämmer. Word
+läses med python-docx (rubrikformat, listor, tabeller; högst 50 000 stycken och tabeller) och
+text som UTF-8, där Markdowns `#`-rubriker räknas. Texten delas sedan i avsnitt med inläsningens
+egna regler (`ingestion/step3_chunk.split_sections`): vid numrerade rubriker som "6.2 Ansvar", och
+annars vid rubriker utan nummer, "§ 3" och "Bilaga 2". Ett avsnitt längre än 12 000 tecken delas
+i delar ("(del 2 av 3)"), som var och en har sidan den börjar på.
+
+Läsningen körs i en egen barnprocess (`uploads/parse_process.py`), högst två åt gången, med 60
+sekunders gräns och 1 GB minne. En del arbete går inte att begränsa innan det görs: pdfium bygger
+en sidas text hel, och en PDF på 40 kB kan ha en sida med tio miljoner tecken, som tar gigabyte.
+När pdfium inte får minne avbryter det hela processen. I barnprocessen dödas läsningen när tiden
+går ut, minnet är begränsat och en process som dör tar inget annat med sig: filen får 422, och
+API:ts andra samtal märker inget. Barnprocessen skriver ingen core-fil när den avbryts, och kärnan
+stoppar den efter 65 sekunders CPU-tid om API:t självt har dött utan att döda den. När API:t
+stoppas dödas de läsningar som pågår, så att `docker compose stop` inte väntar på dem. På Linux
+startas barnprocesserna av multiprocessings forkserver (millisekunder). På macOS, där kommandoraden
+kan köras utanför containern, startas de med spawn, plattformens standard (några tiondels
+sekunder), och där gäller inte minnesgränsen.
+
+**Lagringen.** Med `UPLOAD_STORE=postgres` (compose) ligger filerna i tabellerna `upload` (en rad
+per fil, med filens bytes) och `upload_section`, som API:t skapar själv när det startar, som
+LangGraphs checkpointtabeller. Demot behöver alltså bara `docker compose up --build`, inte
+inläsningen igen. `memory` (standard) håller filerna i processen. Filer äldre än sju dagar läses
+aldrig och tas bort när API:t startar, en gång i timmen och vid varje uppladdning. Tråd-id:t väljer
+klienten själv, så gränsen per konversation begränsar inte lagret: alla filer tillsammans får ta
+högst `UPLOAD_MAX_TOTAL_BYTES`.
+
+Det agenten har läst ur en fil (verktygssvaren och citaten) sparas i samtalets checkpoints, och i
+Langfuse när spårningen är på, och tas inte bort när filen tas bort eller blir sju dagar gammal.
+
+| Variabel | Standard | Vad |
+|---|---|---|
+| `UPLOAD_STORE` | `memory` | `memory` eller `postgres`; compose sätter `postgres` för API:t |
+| `UPLOAD_MAX_BYTES` | 10485760 | Högsta storlek på en fil (10 MB) |
+| `UPLOAD_MAX_PAGES` | 300 | Högsta antal sidor i en PDF |
+| `UPLOAD_MAX_CHARACTERS` | 1500000 | Högsta antal tecken text i en fil |
+| `UPLOAD_MAX_PER_THREAD` | 5 | Filer per konversation |
+| `UPLOAD_MAX_TOTAL_BYTES` | 2147483648 | Bytes alla konversationers filer får ta tillsammans (2 GB) |
+| `UPLOAD_RETENTION_DAYS` | 7 | Dagar en fil läses och sparas i upload-tabellerna |
+
+Tester: `tests/unit/uploads/` (filtyper, zip-bomberna, namnen, läsningen av PDF, Word och text,
+gränserna, barnprocessen, avsnitten och lagret i minnet; PDF:erna byggs med reportlab och
+Word-filerna med python-docx i testerna), `tests/unit/api/test_api_uploads.py` (routerna genom
+hela appen, varje fel, en läsning vars process dör, trådarna hålls isär) och
+`tests/integration/test_upload_store_postgres.py` (lagret mot Postgres, också fyra uppladdningar
+samtidigt mot en gräns på två, och gränsen för alla filer). CI:s compose-jobb laddar upp, läser och
+tar bort en textfil genom API:t.
+
+Begränsningar: inskannade sidor läses inte (ingen OCR), en Word-fil har inga sidor, Words
+automatiska numrering finns inte i texten (avsnitten får då rubrikerna utan nummer), och en "Bilaga"
+på PDF:ens sista sida blir en del av avsnittet före, som i inläsningen.
 
 ## Kända begränsningar
 
@@ -253,7 +363,7 @@ Titta på att stegen kommer som `TOOL_CALL_START` medan agenten arbetar, att var
 - en fråga som passar flera delområden, till exempel uppsägningstiden i IT-drift utan Mindre eller
   Större: körningen slutar med `"outcome": {"type": "interrupt", ...}`. Skicka sedan historiken
   från den sista `MESSAGES_SNAPSHOT` med `"resume": [{"interruptId": "<id>", "status":
-  "resolved", "payload": "<ett av alternativen>"}]`;
+  "resolved", "payload": "<ett av alternativen>"}]`, ett element per avbrott om utfallet har flera;
 - `docker compose stop mcp`, en fråga (ska ge `RUN_ERROR` direkt), `docker compose start mcp` och
   samma fråga igen (ska fungera);
 - `docker compose logs api` efter felet: detaljerna står där, utan nyckel eller lösenord.

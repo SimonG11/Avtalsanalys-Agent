@@ -16,15 +16,20 @@ Why:
     other suppliers' cards), so a list and a search with the same filters
     cover the same files. Without an index there is nothing to list, and an
     empty list would read as "the agreement has no documents", so the tool
-    says the index is missing, as the search does.
+    says the index is missing, as the search does. For the same reason an
+    area or agreement that the register has but whose documents are not
+    loaded (outside the pilot) is an error that tells the model to answer
+    from the register, as in the search.
 
 How:
     The filters are put in the register's spelling, with a number without a
     supplier's sequence as the procurement's filter
-    (`visibility.document_filters`), and become the search's own WHERE
-    conditions on `document_scope` (`hybrid_search.scope_conditions`). A
-    file is listed only when the visibility shows it: indexed (it has a
-    scope) and not held back whole.
+    (`visibility.document_filters`, which the search uses too; it raises a
+    `NotFoundError` naming the loaded areas when the area, agreement or
+    procurement matches no shown file), and become the search's
+    own WHERE conditions on `document_scope`
+    (`hybrid_search.scope_conditions`). A file is listed only when the
+    visibility shows it: indexed (it has a scope) and not held back whole.
     A file held back whole is not counted either: one held back when the
     index was built has no scope that says which filters it would match.
     The files are sorted in Python by `DOCUMENT_GROUPS`, title and sha256;
@@ -103,7 +108,7 @@ def list_documents(
             "användaren i stället för att svara att avtalet saknar dokument."
         )
     visibility = load_visibility(session)
-    filters = document_filters(session, framework_area, agreement_number, document_type)
+    filters = document_filters(session, visibility, framework_area, agreement_number, document_type)
     scope, metadata = models.DocumentScope, models.DocumentMetadata
     rows = session.execute(
         select(
