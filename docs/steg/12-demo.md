@@ -152,8 +152,9 @@ Andra iakttagelser från webbappen, som också lämnats vidare:
   rättar det: panelen öppnar sidan 26, markerar början och säger att bara en del av
   citatet finns på sidan.
 - CopilotKit visar en engelsk rad, "Thought for a few seconds", mellan stegen. PR #23 bytte
-  den mot "Tänkte efter".
-- Webbappen visar inte när kontrollen skickar tillbaka ett utkast; terminalen gör det.
+  den mot "Tänkte efter". Webbappens nya gränssnitt har ingen sådan rad.
+- Webbappen visar inte när kontrollen skickar tillbaka ett utkast; terminalen gör det. Det nya
+  gränssnittet visar utkastet och skälet i tidslinjen.
 
 ## Kommandon
 

@@ -7,7 +7,7 @@
  * file is its code form, checked at runtime. A malformed answer is shown as an error instead of
  * crashing.
  *
- * How: AnswerCard reads the run's state through `parseAnswer`, and ClarifyDialog reads the
+ * How: AnswerCard reads the run's state through `parseAnswer`, and AskUser reads the
  * interrupt through `parseAskUser`. Both are pure functions with tests next to them.
  */
 import { z } from "zod";

@@ -1,16 +1,16 @@
 "use client";
 /**
- * What: the agent's answer as a card in the chat: a status badge, the text with clickable
- * source numbers, the reservations, the agreements the register facts come from, and the list
- * of sources with their quotes.
+ * What: the agent's answer under its timeline: a status badge, the text with clickable source
+ * numbers, the reservations, the agreements the register facts come from, and the sources with
+ * their quotes.
  *
  * Why: the answer is more than text. Each claim points to a quote in an agreement or a row in
  * the register, and the status says whether the validation passed ("Verifierat"), passed with
  * a reservation, or found no answer. The reader has to see that at a glance, see what could
  * not be checked, and be able to check every source.
  *
- * How: Answers.tsx decides where a card goes and which answer it shows; this component only
- * draws it. Clicking a source opens it in the source panel through OpenSourceContext.
+ * How: Answers.tsx decides which answer a question shows; this component only draws it.
+ * Clicking a source opens it in the source panel through OpenSourceContext.
  */
 import { splitAnswerText } from "@/lib/answerText";
 import { sourceLabel } from "@/lib/citation";
@@ -18,8 +18,16 @@ import { STATUS_LABELS, statusHelp } from "@/lib/answerStatus";
 import type { Answer, Citation, RegisterFact } from "@/lib/contract";
 import { describeAgreement, groupRegisterFacts } from "@/lib/registerFacts";
 
+import { Icon } from "./icons";
+import type { IconName } from "./icons";
 import { useOpenSource } from "./SourceContext";
 import styles from "./AnswerCard.module.css";
+
+const STATUS_ICONS: Record<Answer["status"], IconName> = {
+  verified: "shield",
+  with_reservation: "alert",
+  no_answer: "search",
+};
 
 /** Up to this many agreements from the register are listed open; more are folded away. */
 const OPEN_AGREEMENTS = 3;
@@ -33,6 +41,7 @@ export function AnswerCard({ answer }: { answer: Answer }) {
     <article className={styles.card} data-testid="answer-card" data-status={answer.status}>
       <header className={styles.header}>
         <span className={`${styles.badge} ${styles[answer.status]}`}>
+          <Icon name={STATUS_ICONS[answer.status]} size={14} />
           {STATUS_LABELS[answer.status]}
         </span>
         <span className={styles.help}>{statusHelp(answer)}</span>
@@ -63,6 +72,11 @@ export function AnswerCard({ answer }: { answer: Answer }) {
 
       {answer.register_facts.length > 0 && <RegisterFacts facts={answer.register_facts} />}
 
+      {answer.citations.length > 0 && (
+        <h3 className={styles.sourcesTitle}>
+          {answer.citations.length === 1 ? "Källa" : `Källor (${answer.citations.length})`}
+        </h3>
+      )}
       {answer.citations.length > 0 && (
         <ol className={styles.sources}>
           {answer.citations.map((citation) => (
