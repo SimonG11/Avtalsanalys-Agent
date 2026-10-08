@@ -105,8 +105,6 @@ INTERRUPTED = 130  # the shell's code for a command ended by Ctrl-C (128 + SIGIN
 # How long an argument or an error may be in a step line before it is cut.
 _VALUE_CHARS = 80
 _ERROR_CHARS = 200
-# FastMCP writes this in English before every tool error's own (Swedish) text.
-_MCP_ERROR_PREFIX = "Error executing tool "
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 
@@ -354,7 +352,7 @@ def message_lines(message: BaseMessage) -> list[str]:
             return ["  ✗ Svaret hade fel form och går tillbaka till agenten."]
         return []
     if message.status == "error":
-        return [f"  ✗ {message.name}: {_error_text(message.text, message.name)}"]
+        return [f"  ✗ {message.name}: {_error_text(message.text)}"]
     return []
 
 
@@ -396,11 +394,14 @@ def _value(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _error_text(text: str, tool: str | None) -> str:
-    """A tool's error as the user reads it: without FastMCP's English prefix, one line, cut."""
-    prefix = f"{_MCP_ERROR_PREFIX}{tool}: "
-    text = " ".join(text.removeprefix(prefix).split())
-    return text if len(text) <= _ERROR_CHARS else f"{text[:_ERROR_CHARS].rstrip()}…"
+def _error_text(text: str) -> str:
+    """A tool's error as the user reads it: its first line, cut; the lines after are the model's.
+
+    avtal-mcp's errors say on the first line what went wrong and put a long
+    list or advice to the model after it, as the web app expects.
+    """
+    first = " ".join(next(iter(text.strip().splitlines()), "").split())
+    return first if len(first) <= _ERROR_CHARS else f"{first[:_ERROR_CHARS].rstrip()}…"
 
 
 def question_lines(question: str, options: Sequence[str]) -> list[str]:

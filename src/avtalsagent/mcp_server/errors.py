@@ -12,9 +12,13 @@ Why:
     The MCP SDK turns a `ToolError` into an error result the model reads, and
     the run goes on: the model can correct its call. Its message is the only
     help the model gets, so it says in Swedish what went wrong and what to do
-    next ("Kontrollera numret med get_outline"). Any other exception is
-    replaced by a fixed message in `server.py`, so SQL and connection details
-    never reach the model.
+    next ("Kontrollera numret med get_outline"). The user sees it too: the
+    web app and the command line show its first line in the agent's step.
+    So the first line says, in a sentence or two, what went wrong, and a
+    long list or long advice for the model goes on the lines after it
+    (`visibility.register_area`, `visibility.require_loaded`). Any other
+    exception is replaced by a fixed message in `server.py`, so SQL and
+    connection details never reach the model.
 
 How:
     Subclasses of FastMCP's `ToolError`, so `server.py` lets them through.

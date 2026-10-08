@@ -1111,8 +1111,11 @@ def _md_answers(results: Sequence[QuestionResult]) -> list[str]:
         for citation in answer.citations:
             heading = " ".join(filter(None, (citation.section_number, citation.section_title)))
             mark = "✓" if citation.verified else "✗"
+            # The agreement page tells apart two agreements' files of one title (IT-drift
+            # Mindre's and Större's Allmänna villkor), as on the command line.
+            page = f" ({md(citation.page_title)})" if citation.page_title else ""
             lines.append(
-                f"- [{citation.id}] {md(citation.file_title or citation.sha256[:12])}, "
+                f"- [{citation.id}] {md(citation.file_title or citation.sha256[:12])}{page}, "
                 f"{md(heading)} {mark}"
             )
         if answer.citations:

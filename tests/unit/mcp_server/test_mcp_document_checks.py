@@ -201,6 +201,43 @@ def filters_of(index: Index, **filters: Any) -> SearchFilters:
 
 
 @TOOLS
+def test_an_unknown_area_guesses_the_one_meant_and_lists_them_all_on_the_next_line(
+    tool: Any,
+) -> None:
+    with pytest.raises(NotFoundError) as error:
+        tool(cast(Session, Index()), framework_area="Bemanning")
+
+    first, *rest = str(error.value).splitlines()
+    # The first line is what the step shows the user; the list is for the model.
+    assert first == (
+        "Ramavtalsområdet 'Bemanning' finns inte i registret. Menade du Bemanningstjänster?"
+    )
+    assert rest == [
+        "Områden i registret: Bemanningstjänster, IT-drift, IT-konsulttjänster Resurskonsulter, "
+        "Möbler och inredning, Programvaror och tjänster."
+    ]
+
+
+@TOOLS
+@pytest.mark.parametrize(
+    ("area", "guess"),
+    [
+        ("bemanningstjanster", " Menade du Bemanningstjänster?"),  # alike in spelling
+        ("IT-drift Större", " Menade du IT-drift?"),  # a sub-area's name holds the area's
+        ("programvara", " Menade du Programvaror och tjänster?"),  # a word alike
+        ("it", " Menade du IT-drift eller IT-konsulttjänster Resurskonsulter?"),
+        ("Avfall", ""),
+    ],
+)
+def test_an_unknown_areas_guess(tool: Any, area: str, guess: str) -> None:
+    with pytest.raises(NotFoundError) as error:
+        tool(cast(Session, Index()), framework_area=area)
+
+    first = str(error.value).splitlines()[0]
+    assert first == f"Ramavtalsområdet '{area}' finns inte i registret.{guess}"
+
+
+@TOOLS
 def test_an_area_outside_the_pilot_says_which_areas_are_loaded(tool: Any) -> None:
     index = Index()
 
@@ -209,7 +246,7 @@ def test_an_area_outside_the_pilot_says_which_areas_are_loaded(tool: Any) -> Non
 
     assert str(error.value) == (
         "Ramavtalsområdet Möbler och inredning finns i registret, men områdets dokument är inte "
-        "inlästa. Områden med inlästa dokument: Bemanningstjänster, IT-drift, "
+        "inlästa.\nOmråden med inlästa dokument: Bemanningstjänster, IT-drift, "
         "IT-konsulttjänster Resurskonsulter, Programvaror och tjänster. Svara med det registret "
         "säger (search_register) och säg till användaren att områdets dokument inte är inlästa, "
         "i stället för att svara att det inte framgår eller citera andra avtals dokument."
@@ -223,13 +260,13 @@ def test_an_area_outside_the_pilot_says_which_areas_are_loaded(tool: Any) -> Non
     [
         (
             {"agreement_number": FURNITURE},
-            f"Avtalet {FURNITURE} finns i registret, men avtalets dokument är inte inlästa. "
+            f"Avtalet {FURNITURE} finns i registret, men avtalets dokument är inte inlästa.\n"
             "Områden med inlästa dokument: Bemanningstjänster, IT-drift, ",
         ),
         (
             {"agreement_number": FURNITURE_PROCUREMENT},
             f"Upphandlingen {FURNITURE_PROCUREMENT} finns i registret, men upphandlingens "
-            "dokument är inte inlästa.",
+            "dokument är inte inlästa.\n",
         ),
         # The area has documents, the agreement has none: the error is about the agreement.
         (
@@ -239,7 +276,7 @@ def test_an_area_outside_the_pilot_says_which_areas_are_loaded(tool: Any) -> Non
         (
             {"framework_area": FURNITURE_AREA, "agreement_number": FURNITURE},
             f"Både ramavtalsområdet {FURNITURE_AREA} och avtalet {FURNITURE} finns i registret, "
-            "men deras dokument är inte inlästa.",
+            "men deras dokument är inte inlästa.\n",
         ),
         # A document type does not turn it into an empty answer.
         (
@@ -275,7 +312,7 @@ def test_an_area_outside_the_pilot_with_a_loaded_agreement_says_to_search_withou
     # The agreement's documents are loaded, in another area: the register is not the answer.
     assert str(error.value) == (
         f"Ramavtalsområdet {FURNITURE_AREA} finns i registret, men områdets dokument är inte "
-        f"inlästa. Avtalet {ADVANIA} har inlästa dokument, men inte i det området. Sök igen "
+        f"inlästa.\nAvtalet {ADVANIA} har inlästa dokument, men inte i det området. Sök igen "
         f"utan framework_area, eller med området som search_register anger för avtalet {ADVANIA}."
     )
 
@@ -321,7 +358,7 @@ def test_a_file_held_back_whole_does_not_count_as_loaded() -> None:
 
     assert str(area.value).startswith(
         "Ramavtalsområdet Bemanningstjänster finns i registret, men områdets dokument är inte "
-        "inlästa. Områden med inlästa dokument: IT-drift, IT-konsulttjänster Resurskonsulter, "
+        "inlästa.\nOmråden med inlästa dokument: IT-drift, IT-konsulttjänster Resurskonsulter, "
         "Programvaror och tjänster. "
     )
 

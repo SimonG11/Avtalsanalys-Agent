@@ -385,7 +385,7 @@ def test_the_search_keeps_to_its_filters(
         ),
         (
             {"framework_area": "Möbler"},
-            "'Möbler' finns inte i registret. Områden: Bemanningstjänster, IT-drift.",
+            "'Möbler' finns inte i registret.\nOmråden i registret: Bemanningstjänster, IT-drift.",
         ),
     ],
     ids=["agreement", "area"],
@@ -732,30 +732,30 @@ def test_between_process_and_index_the_tools_show_nothing(
         (
             {"framework_area": "möbler och inredning"},
             "Ramavtalsområdet Möbler och inredning finns i registret, men områdets dokument är "
-            "inte inlästa. Områden med inlästa dokument: Bemanningstjänster, IT-drift. "
+            "inte inlästa.\nOmråden med inlästa dokument: Bemanningstjänster, IT-drift. "
             + NOT_LOADED_ADVICE.format(whose="områdets"),
         ),
         (
             {"agreement_number": "23.3.10777-24-002"},  # written another way
-            f"Avtalet {FURNITURE} finns i registret, men avtalets dokument är inte inlästa. "
+            f"Avtalet {FURNITURE} finns i registret, men avtalets dokument är inte inlästa.\n"
             "Områden med inlästa dokument: Bemanningstjänster, IT-drift. "
             + NOT_LOADED_ADVICE.format(whose="avtalets"),
         ),
         (
             {"agreement_number": FURNITURE_PROCUREMENT},
             f"Upphandlingen {FURNITURE_PROCUREMENT} finns i registret, men upphandlingens "
-            "dokument är inte inlästa. Områden med inlästa dokument: Bemanningstjänster, "
+            "dokument är inte inlästa.\nOmråden med inlästa dokument: Bemanningstjänster, "
             "IT-drift. " + NOT_LOADED_ADVICE.format(whose="upphandlingens"),
         ),
         # IT-drift has documents and the agreement has none: the error is about the agreement.
         (
             {"framework_area": "IT-drift", "agreement_number": FURNITURE},
-            f"Avtalet {FURNITURE} finns i registret, men avtalets dokument är inte inlästa. ",
+            f"Avtalet {FURNITURE} finns i registret, men avtalets dokument är inte inlästa.\n",
         ),
         # With a document type it is still not an empty answer.
         (
             {"agreement_number": FURNITURE, "document_type": DocumentType.GENERAL_TERMS},
-            f"Avtalet {FURNITURE} finns i registret, men avtalets dokument är inte inlästa. ",
+            f"Avtalet {FURNITURE} finns i registret, men avtalets dokument är inte inlästa.\n",
         ),
     ],
     ids=["area", "agreement", "procurement", "loaded area and agreement", "agreement and type"],
@@ -826,7 +826,7 @@ def test_an_area_whose_files_are_all_held_back_counts_as_not_loaded(
             NotFoundError,
             match=re.escape(
                 "Ramavtalsområdet Bemanningstjänster finns i registret, men områdets dokument är "
-                "inte inlästa. Områden med inlästa dokument: IT-drift. "
+                "inte inlästa.\nOmråden med inlästa dokument: IT-drift. "
             ),
         ):
             list_documents(session, framework_area="Bemanningstjänster")
