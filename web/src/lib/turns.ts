@@ -16,7 +16,10 @@
  * of the run, so a draft without one that is followed by more work was sent back. A draft the
  * format check refused ("Error: Failed to parse") is left out, as before. So is an ask_user call
  * the backend refused before asking (point 32: no options, or too many): its tool message has
- * `error` set, and before that message comes, the agent going on with other work shows it.
+ * `error` set, and before that message comes, the agent going on with other work shows it. Any
+ * other call whose tool message has `error` is a failed step: the backend refused it (point 39,
+ * a call without `syfte`) or the tool answered with an error. It stays in the timeline, but not
+ * as a step that was done.
  */
 import { parsePartialJson } from "./partialJson.ts";
 import { ANSWER_TOOL, TOOL_LABELS } from "./tools.ts";
@@ -35,8 +38,18 @@ export interface ConversationMessage {
 export type TimelineItem =
   /** A summary of the model's reasoning, or text it wrote while working. May be empty. */
   | { kind: "thought"; id: string; text: string }
-  /** A tool call; `result` is the tool's answer once it has come. */
-  | { kind: "tool"; id: string; name: string; args: unknown; result: string | undefined }
+  /**
+   * A tool call; `result` is the tool's answer once it has come. `failed` is set when the call
+   * was refused or failed (its tool message has `error`); `result` is then the error.
+   */
+  | {
+      kind: "tool";
+      id: string;
+      name: string;
+      args: unknown;
+      result: string | undefined;
+      failed: boolean;
+    }
   /**
    * A draft of the answer handed in with FinalAnswer: "pending" until the check answers it,
    * "submitted" when the check took it, "rejected" when it sent it back (`reason` is the check's
@@ -91,7 +104,14 @@ export function buildTurns(messages: readonly ConversationMessage[]): Turn[] {
           continue;
         } else {
           const args = parsePartialJson(call.function.arguments);
-          turn.items.push({ kind: "tool", id: call.id, name: call.function.name, args, result });
+          turn.items.push({
+            kind: "tool",
+            id: call.id,
+            name: call.function.name,
+            args,
+            result,
+            failed: failed.has(call.id),
+          });
         }
       }
     }

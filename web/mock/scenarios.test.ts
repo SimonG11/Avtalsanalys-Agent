@@ -249,6 +249,51 @@ describe("planRun", () => {
     assert.ok(refusal?.role === "tool" && refusal.error);
   });
 
+  it("gives every call to avtal-mcp a syfte first, and refuses the register call without one", () => {
+    const own = new Set(["ask_user", "FinalAnswer", "list_uploads", "read_upload"]);
+    const all = [
+      ...questions,
+      "Vilken uppsägningstid gäller för ett kontrakt?",
+      "Kontraktet inom IT-drift ska upphöra 2027-02-17. När måste kunden säga upp det?",
+      "Vilken säkerhetsnivå gäller? Står det i en bilaga?",
+      "Vilka avtalsnummer finns för IT-drift?",
+    ];
+    for (const question of all) {
+      const list = events(input(question));
+      const snapshot = list.findLast((event) => event.type === EventType.MESSAGES_SNAPSHOT);
+      const messages = (snapshot?.messages ?? []) as RunAgentInput["messages"];
+      const refused = new Set(
+        messages.flatMap((m) => (m.role === "tool" && m.error ? [m.toolCallId] : [])),
+      );
+      for (const message of messages) {
+        if (message.role !== "assistant") continue;
+        for (const call of message.toolCalls ?? []) {
+          if (own.has(call.function.name) || refused.has(call.id)) continue;
+          const keys = Object.keys(JSON.parse(call.function.arguments));
+          assert.equal(keys[0], "syfte", `${question}: ${call.function.name}`);
+        }
+      }
+    }
+
+    // The refused call streams as a step without a result, and the model calls again.
+    const list = events(input("Vilka avtalsnummer finns för IT-drift?"));
+    const starts = list.filter(
+      (event) =>
+        event.type === EventType.TOOL_CALL_START && event.toolCallName === "search_register",
+    );
+    assert.equal(starts.length, 2);
+    const results = list.filter((event) => event.type === EventType.TOOL_CALL_RESULT);
+    assert.deepEqual(
+      starts.map((start) => results.some((result) => result.toolCallId === start.toolCallId)),
+      [false, true],
+    );
+    const snapshot = list.findLast((event) => event.type === EventType.MESSAGES_SNAPSHOT);
+    const refusal = (snapshot?.messages as RunAgentInput["messages"]).find(
+      (m) => m.role === "tool" && m.toolCallId === starts[0].toolCallId,
+    );
+    assert.match(refusal?.role === "tool" ? (refusal.error ?? "") : "", /^Anropet nekades/);
+  });
+
   it("continues with the answer from either resume channel", () => {
     const question = "Vilken uppsägningstid gäller för ett kontrakt?";
     const viaResume = input(question, {

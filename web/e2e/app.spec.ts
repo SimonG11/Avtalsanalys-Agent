@@ -54,6 +54,11 @@ test("answers with verified sources and opens the cited page with the quote mark
   await expect(steps).toHaveCount(2);
   await expect(steps.nth(0)).toContainText("Sökte i dokumenten");
   await expect(steps.nth(0)).toContainText("uppsägningstid kontrakt");
+  // The agent's syfte is the step's thought, under its label, not one of its arguments.
+  await expect(steps.nth(0).getByTestId("step-purpose")).toHaveText(
+    "Hitta reglerna om uppsägning av kontrakt inom IT-drift.",
+  );
+  await expect(steps.nth(0)).not.toContainText("syfte");
   await expect(steps.nth(1)).toContainText("Läste avsnitt");
   await expect(steps.nth(1)).toHaveAttribute("data-status", "complete");
 
@@ -259,6 +264,21 @@ test("answers from the register with one line per agreement", async ({ page }) =
   await expect(card).toHaveAttribute("data-status", "verified");
   await expect(card).toContainText("Uppgifterna stämmer med registret.");
   await expect(card.getByTestId("source-1")).toHaveCount(0);
+
+  // The backend refused the first call, which had no syfte; it is shown, but not as done.
+  await openTimeline(page);
+  const steps = page.getByTestId("agent-step");
+  await expect(steps).toHaveCount(2);
+  await expect(steps.nth(0)).toHaveAttribute("data-status", "failed");
+  await expect(steps.nth(0)).toContainText("Söker i registret");
+  await expect(steps.nth(0).getByTestId("step-outcome")).toContainText(
+    "Anropet nekades: syfte saknas.",
+  );
+  await expect(steps.nth(0).getByTestId("step-purpose")).toHaveCount(0);
+  await expect(steps.nth(1)).toHaveAttribute("data-status", "complete");
+  await expect(steps.nth(1).getByTestId("step-purpose")).toHaveText(
+    "Ta fram avtalen inom IT-drift ur registret.",
+  );
 
   // Three rows, two agreements: the register writes the first one's number two ways.
   const register = card.getByTestId("register-facts");
