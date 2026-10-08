@@ -4,7 +4,8 @@ What:
     `python -m avtalsagent.agent "fråga"` asks one question and prints the
     answer; without a question it reads one question after another, in one
     conversation, until Ctrl-D. While the agent works, each tool call is
-    printed with its arguments; a question from the agent (`ask_user`) is
+    printed with its arguments, and under it the agent's reason for it
+    (`syfte`, ADR 0025); a question from the agent (`ask_user`) is
     asked in the terminal, its options numbered. The answer is printed with
     its status (Kontrollerat, Med reservation, Inget svar), what could not
     be checked, its sources, each marked ✓ or ✗ by the citation check, and
@@ -75,6 +76,7 @@ from avtalsagent.agent.graph import ANSWER_SUBMITTED, AvtalAgent, build_agent
 from avtalsagent.agent.mcp_tools import open_mcp_tools
 from avtalsagent.agent.middleware import FINAL_ANSWER_TOOL, NO_DRAFT_TEXT
 from avtalsagent.agent.model import MissingApiKeyError, make_agent_model
+from avtalsagent.agent.purpose import PURPOSE
 from avtalsagent.agent.reviewer import make_reviewer
 from avtalsagent.agent.schemas import Answer, Citation, RegisterFact
 from avtalsagent.config import Settings, get_settings
@@ -334,7 +336,12 @@ def message_lines(message: BaseMessage) -> list[str]:
     """What the user sees of one message while the agent works."""
     if isinstance(message, AIMessage):
         # ask_user is not a step: its question is asked when the run stops for it.
-        return [_step(call) for call in message.tool_calls if call["name"] != ask_user.name]
+        return [
+            line
+            for call in message.tool_calls
+            if call["name"] != ask_user.name
+            for line in _step(call)
+        ]
     if not isinstance(message, ToolMessage):
         return []
     if message.name == FINAL_ANSWER_TOOL:
@@ -351,20 +358,33 @@ def message_lines(message: BaseMessage) -> list[str]:
     return []
 
 
-def _step(call: ToolCall) -> str:
+def _step(call: ToolCall) -> list[str]:
     if call["name"] == FINAL_ANSWER_TOOL:
-        return "→ Svaret lämnas för kontroll."
-    return call_line(call["name"], call["args"])
+        return ["→ Svaret lämnas för kontroll."]
+    return [call_line(call["name"], call["args"]), *purpose_lines(call["args"])]
 
 
 def call_line(name: str, args: Mapping[str, Any]) -> str:
     """A tool call, compact: `→ read_section(sha256="28ca7018a608…", section_position=41)`.
 
     Arguments the model left empty (None) are not shown; the model often
-    sends every optional argument.
+    sends every optional argument. Nor is the agent's `syfte`, which gets a
+    line of its own (`purpose_lines`).
     """
-    listed = ", ".join(f"{key}={_value(value)}" for key, value in args.items() if value is not None)
+    listed = ", ".join(
+        f"{key}={_value(value)}"
+        for key, value in args.items()
+        if value is not None and key != PURPOSE
+    )
     return f"→ {name}({listed})"
+
+
+def purpose_lines(args: Mapping[str, Any]) -> list[str]:
+    """The agent's reason for a call (`syfte`), whole and on one line under it; none without."""
+    purpose = args.get(PURPOSE)
+    if not isinstance(purpose, str) or not purpose.strip():
+        return []
+    return [f"  Syfte: {' '.join(purpose.split())}"]
 
 
 def _value(value: Any) -> str:

@@ -401,6 +401,26 @@ Kommandoraden visar inga sammanfattningar. En `ask_user`-fråga utan alternativ 
 schemat, användarens svar når inte modellen, och modellen läser att options saknas och frågar
 igen med alternativ.
 
+Samma kväll, sedan mätningen visat att sammanfattningarna nästan aldrig kommer (1 av 47 anrop med
+`low`) och då på engelska, fick varje steg agentens eget syfte
+([ADR 0025](../adr/0025-tankar-och-farre-motfragor.md), beslut 7). `build_agent` erbjuder modellen
+avtal-mcp:s verktyg med ett obligatoriskt argument till, `syfte`: en kort svensk mening, högst 200
+tecken, om vad agenten vill ta reda på med anropet och varför (`purpose.py`). Argumentet tas bort
+innan anropet går till avtal-mcp, och ett anrop utan det nekas som ett verktygsfel som modellen
+rättar. Det är agentens motivering, inte dess dolda resonemang, och det kontrolleras inte; svaret
+kontrolleras som förut. Kommandoraden skriver syftet under anropet:
+
+```text
+→ read_section(sha256="0a5491b1398e…", section_number="6.21.8")
+  Syfte: Läsa villkoret för er uppsägning utan skäl.
+```
+
+I provet mot ersättaren hade alla 15 anrop till avtal-mcp i demots fråga 1, q14 och q10 ett
+rimligt svenskt syfte, utan någon rad i prompten. I mätningen samma kväll hade alla 192 steg mot
+avtal-mcp i de 30 testfrågorna och alla 47 i demokörningarna ett syfte, och inget nekades. Svaren
+höll (29 av 30 rätt), men agenten gjorde färre anrop samtidigt och tog 44 s i median per fråga mot
+38 s utan syfte (ADR 0025).
+
 ## Egna filer (2026-10-07)
 
 Simon vill kunna ladda upp egna filer i chatten och låta agenten jämföra dem med ramavtalen

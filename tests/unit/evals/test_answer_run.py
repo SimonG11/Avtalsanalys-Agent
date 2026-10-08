@@ -24,6 +24,7 @@ from avtalsagent.agent.checkpointer import serializer
 from avtalsagent.agent.graph import ANSWER_SUBMITTED, AvtalAgent, build_agent
 from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.agent.middleware import NO_DRAFT_TEXT
+from avtalsagent.agent.purpose import PURPOSE
 from avtalsagent.agent.schemas import Answer
 from avtalsagent.agent.sections import CitedSection
 from avtalsagent.config import Settings
@@ -47,6 +48,7 @@ from evals.answer_run import (
 )
 from evals.answer_steps import Problem, Rejection, Step
 from tests.unit.agent.scripted_model import (
+    PURPOSE_TEXT,
     DictAmendments,
     DictReader,
     ListRegister,
@@ -57,6 +59,7 @@ from tests.unit.agent.scripted_model import (
 )
 
 SHA = "a1" * 32
+SYFTE = {PURPOSE: PURPOSE_TEXT}  # the stated reason `tool_call` gives each avtal-mcp call
 SECTION = CitedSection(
     sha256=SHA,
     section_position=41,
@@ -247,7 +250,7 @@ async def test_a_question_gives_the_answer_its_draft_its_tools_and_its_tokens() 
     assert run.tools == ("search_documents",)
     assert (run.tool_errors, run.check_retries, run.refused_drafts, run.asked) == (0, 0, 0, ())
     assert run.steps == (
-        Step("search_documents", {"query": "uppsägning"}),
+        Step("search_documents", {**SYFTE, "query": "uppsägning"}),
         Step(
             "FinalAnswer",
             {"answered": True, "text": "Tre månader [1].", "citations": [GOOD]},
@@ -386,8 +389,8 @@ async def test_a_read_of_a_section_the_last_one_referred_to_is_marked() -> None:
     run = await ask(build(model))
 
     assert [(step.name, step.args, step.target_from) for step in run.steps] == [
-        ("read_section", {"sha256": SHA, "section_number": "6.21.9"}, None),
-        ("read_section", {"sha256": SHA, "section_position": 37}, "reference"),
+        ("read_section", {**SYFTE, "sha256": SHA, "section_number": "6.21.9"}, None),
+        ("read_section", {**SYFTE, "sha256": SHA, "section_position": 37}, "reference"),
         ("FinalAnswer", {"answered": True, "text": "Tre månader [1].", "citations": [GOOD]}, None),
     ]
     assert run.model_calls == 3
@@ -406,7 +409,7 @@ async def test_a_tools_error_is_counted() -> None:
 
     assert run.tools == ("no_such_tool",)
     assert run.tool_errors == 1
-    assert run.steps[0] == Step("no_such_tool", {}, error=True)
+    assert run.steps[0] == Step("no_such_tool", SYFTE, error=True)
 
 
 @pytest.mark.anyio
@@ -465,7 +468,7 @@ def test_a_malformed_argument_does_not_lose_the_answer() -> None:
     run = read_run(values, [], 1.0, {}, None)
 
     assert run.answer == answer
-    assert run.steps[0] == Step("read_section", {"sha256": SHA, "section_position": "²"})
+    assert run.steps[0] == Step("read_section", {**SYFTE, "sha256": SHA, "section_position": "²"})
     assert (run.model_calls, run.path_saved) == (2, True)
     assert read_run({}, [], 1.0, {}, "fel").path_saved is False  # the state was empty
 

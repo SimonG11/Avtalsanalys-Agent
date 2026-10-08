@@ -24,11 +24,13 @@ from pydantic import SecretStr
 
 from avtalsagent.agent.model import make_agent_model
 from avtalsagent.config import Settings
+from tests.unit.agent.scripted_model import PURPOSE_TEXT
 from tests.unit.api.test_api_agui import (
     GOOD,
     OPTIONS,
     QUESTION,
     BreakingSessions,
+    Sessions,
     app_on,
     client_of,
     of_type,
@@ -39,6 +41,7 @@ from tests.unit.api.test_api_agui import (
 DUMMY_KEY = "sk-test-not-a-real-key"
 THINKING = ["**Söker i avtalen**\n\nJag söker efter ", "uppsägningstiden i Allmänna villkor."]
 CHECKING = "**Kontrollerar källan**\n\nAvsnittet anger tre månader."
+SEARCH = {"syfte": PURPOSE_TEXT, "query": "uppsägningstid"}
 ANSWER = {"answered": True, "text": "Uppsägningstiden är tre månader [1].", "citations": [GOOD]}
 
 
@@ -54,6 +57,7 @@ class Reply:
     summary: list[list[str]]  # the summary's parts, each as the deltas it streams in
     call: str
     arguments: dict[str, Any]
+    argument_deltas: int = 1  # how many deltas the call's arguments stream in
 
 
 @dataclass
@@ -105,7 +109,10 @@ def stream_events(
     added = function_call | {"arguments": "", "status": "in_progress"}
     yield {"type": "response.output_item.added", "output_index": 1, "item": added}
     place = {"item_id": function_call["id"], "output_index": 1}
-    yield {"type": "response.function_call_arguments.delta", **place, "delta": arguments}
+    size = -(-len(arguments) // reply.argument_deltas)
+    for start in range(0, len(arguments), size):
+        delta = arguments[start : start + size]
+        yield {"type": "response.function_call_arguments.delta", **place, "delta": delta}
     yield {"type": "response.function_call_arguments.done", **place, "arguments": arguments}
     yield {"type": "response.output_item.done", "output_index": 1, "item": function_call}
     done = response(response_id, "completed", [reasoning, function_call])
@@ -134,7 +141,7 @@ def response(response_id: str, status: str, output: list[dict[str, Any]]) -> dic
 
 
 def app_on_fake_openai(
-    replies: list[Reply], sessions: BreakingSessions | None = None
+    replies: list[Reply], sessions: Sessions | BreakingSessions | None = None
 ) -> tuple[FastAPI, FakeOpenAI]:
     """The app with the agent's model as `make_agent_model` builds it, on the fake OpenAI."""
     fake = FakeOpenAI(replies)
@@ -164,7 +171,7 @@ def summary_text(events: list[dict[str, Any]], message_id: str) -> str:
 async def test_each_calls_summary_streams_as_reasoning_before_its_tool_calls() -> None:
     app, fake = app_on_fake_openai(
         [
-            Reply([THINKING], "search_documents", {"query": "uppsägningstid"}),
+            Reply([THINKING], "search_documents", SEARCH),
             Reply([[CHECKING[:20], CHECKING[20:]], ["Svaret är klart."]], "FinalAnswer", ANSWER),
         ]
     )
@@ -234,7 +241,7 @@ async def test_each_calls_summary_streams_as_reasoning_before_its_tool_calls() -
 async def test_the_messages_snapshot_holds_each_reasoning_item_before_its_message() -> None:
     app, _ = app_on_fake_openai(
         [
-            Reply([THINKING], "search_documents", {"query": "uppsägningstid"}),
+            Reply([THINKING], "search_documents", SEARCH),
             Reply([[CHECKING], ["Svaret är klart."]], "FinalAnswer", ANSWER),
         ]
     )
@@ -319,7 +326,7 @@ async def test_after_a_failed_run_the_summary_the_client_kept_goes_back_once() -
     # checkpoint's. Its reasoning message sent back must not reach OpenAI a second time.
     app, fake = app_on_fake_openai(
         [
-            Reply([THINKING], "search_documents", {"query": "uppsägningstid"}),
+            Reply([THINKING], "search_documents", SEARCH),
             Reply([[CHECKING]], "FinalAnswer", ANSWER),
         ],
         sessions=BreakingSessions(breaks={2}),
