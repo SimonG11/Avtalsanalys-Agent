@@ -494,9 +494,9 @@ def test_the_asks_summary_counts_the_asks_and_is_none_without_ask_questions() ->
         score(asking("a01", True), asked_run("Vilket?"), None, None, ask_judgement=SEPARATES),
         score(asking("a02", True), asked_run("Vilket?"), None, None, ask_judgement=MIXES),
         score(asking("a03", True), asked_run("Vilket?"), None, None),
-        score(asking("a04", True), run(answer()), None, None),
+        score(asking("a04", True), asked_run(), None, None),
         score(asking("a05", False), asked_run("Båda?"), None, None),
-        score(asking("a06", False), run(answer()), None, None),
+        score(asking("a06", False), asked_run(), None, None),
         score(asking("q01", None), asked_run("Vilket?"), None, None),
     ]
 
@@ -511,8 +511,56 @@ def test_the_asks_summary_counts_the_asks_and_is_none_without_ask_questions() ->
     assert summarize_asks(results[-1:]) is None
 
 
+def test_a_run_that_never_reached_the_graph_and_did_not_ask_is_in_neither_count() -> None:
+    # As the agent's a04 on 2026-10-08: a transport error before the graph, and no ask.
+    broken = run(None, error="avtal-mcp: ReadError")
+    results = [
+        score(asking("a01", True), asked_run("Vilket?"), None, None, ask_judgement=SEPARATES),
+        score(asking("a02", True), broken, None, None),
+        score(asking("a05", False), asked_run("Båda?"), None, None),
+        score(asking("a06", False), asked_run(), None, None),
+        score(asking("a07", False), broken, None, None),
+    ]
+
+    assert [result.could_ask for result in results] == [True, False, True, True, False]
+    assert summarize_asks(results) == AskSummary(
+        should_ask=1,
+        asked=1,
+        separating=1,
+        unjudged=0,
+        should_not_ask=2,
+        asked_unnecessarily=1,
+    )
+    # With only such runs there is nothing to count.
+    assert summarize_asks([results[1], results[4]]) is None
+
+
+def test_a_run_that_asked_before_it_failed_is_counted() -> None:
+    # Its path was not saved, but it did ask: the ask is there to judge.
+    cut = replace(
+        run(None, error="avtal-mcp: ReadError"), asked=("Vilket?",), asked_options=(OPTIONS,)
+    )
+    results = [
+        score(asking("a01", True), cut, None, None),
+        score(asking("a02", False), cut, None, None),
+    ]
+
+    assert [(result.could_ask, result.asked_right) for result in results] == [
+        (True, None),
+        (True, False),
+    ]
+    assert summarize_asks(results) == AskSummary(
+        should_ask=1,
+        asked=1,
+        separating=0,
+        unjudged=1,
+        should_not_ask=1,
+        asked_unnecessarily=1,
+    )
+
+
 def test_a_run_that_never_asks_asks_in_none_of_the_questions_that_should_ask() -> None:
-    results = [score(asking(f"a0{n}", True), run(answer()), None, None) for n in range(1, 5)]
+    results = [score(asking(f"a0{n}", True), asked_run(), None, None) for n in range(1, 5)]
 
     asks = summarize_asks(results)
 

@@ -17,7 +17,9 @@ What:
     agent should ask the user (`should_ask`), a result also has the ask
     judge's verdict (`ask_judge`), whether the agent asked as it should
     (`asked_right`) and whether it asked without need (`unnecessary_ask`);
-    `summarize_asks` gives their `AskSummary`.
+    `summarize_asks` gives their `AskSummary`, of the results or of any rows
+    with the same values (`AskOutcome`: the comparison of runs reads them
+    from the JSON reports).
 
 Why:
     The report's numbers come from plain values, so they can be tested
@@ -41,14 +43,18 @@ How:
     its question separates the expected options; one the ask judge did not
     judge (no judge, or no verdict) is neither right nor wrong (None). For a
     question that should not ask, not asking is right. A run that never
-    asks (the fixed workflow) scores 0 of the questions that should ask.
+    reached the graph and did not ask could not ask, or not ask
+    (`could_ask` is false): it is neither right nor wrong, and it is in
+    neither count of the `AskSummary`, so an error is not counted as "did
+    not ask". A run that never asks (the fixed workflow) scores 0 of the
+    questions that should ask.
 """
 
 import math
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Protocol
 
 from avtalsagent.agent.middleware import NO_DRAFT_TEXT
 from avtalsagent.agent.schemas import Answer, AnswerStatus, FinalAnswer
@@ -117,15 +123,18 @@ class QuestionResult:
         None when the gold does not say, for an ask the ask judge did not judge, and
         for a run that never reached the graph (it could not ask).
         """
-        if self.should_ask is None:
-            return None
-        if not self.run.path_saved and not self.asked:
+        if self.should_ask is None or not self.could_ask:
             return None
         if not self.should_ask:
             return not self.asked
         if not self.asked:
             return False
         return self.ask_judgement.separates if self.ask_judgement is not None else None
+
+    @property
+    def could_ask(self) -> bool:
+        """Whether the agent had the chance to ask: the run reached the graph, or it asked."""
+        return self.run.path_saved or self.asked
 
     @property
     def unnecessary_ask(self) -> bool | None:
@@ -353,7 +362,10 @@ def summarize(results: Sequence[QuestionResult]) -> Summary:
 
 @dataclass(frozen=True)
 class AskSummary:
-    """Whether the agent asked the user where the gold says it should, and where not."""
+    """Whether the agent asked the user where the gold says it should, and where not.
+
+    Only questions where it could ask are counted (`QuestionResult.could_ask`).
+    """
 
     should_ask: int  # questions where it should ask
     asked: int  # of those, where it asked
@@ -363,10 +375,31 @@ class AskSummary:
     asked_unnecessarily: int  # of those, where it asked
 
 
-def summarize_asks(results: Sequence[QuestionResult]) -> AskSummary | None:
-    """The `AskSummary` of `results`; None when no question says whether to ask."""
-    should = [r for r in results if r.should_ask is True]
-    should_not = [r for r in results if r.should_ask is False]
+class AskOutcome(Protocol):
+    """What the asks are counted from: a `QuestionResult`, or a question of a JSON report."""
+
+    @property
+    def should_ask(self) -> bool | None: ...
+
+    @property
+    def asked(self) -> bool: ...
+
+    @property
+    def asked_right(self) -> bool | None: ...
+
+    @property
+    def could_ask(self) -> bool: ...
+
+
+def summarize_asks(results: Sequence[AskOutcome]) -> AskSummary | None:
+    """The `AskSummary` of `results`; None when no question that could ask says whether to.
+
+    A question whose run never reached the graph and did not ask is left out of both
+    counts, as `asked_right` leaves it unscored.
+    """
+    counted = [r for r in results if r.could_ask]
+    should = [r for r in counted if r.should_ask is True]
+    should_not = [r for r in counted if r.should_ask is False]
     if not should and not should_not:
         return None
     asked = [r for r in should if r.asked]

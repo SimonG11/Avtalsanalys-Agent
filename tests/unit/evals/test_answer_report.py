@@ -756,6 +756,44 @@ def test_the_asks_section_shows_each_question_that_says_whether_to_ask() -> None
         "korta och svaret ska ta upp vart och ett, är det rätt att inte fråga, och en motfråga "
         "räknas som onödig."
     ) in markdown
+    # As judge_answer judges: the reply when the agent asked; the cases and the gold's case
+    # (the judge's rule 7) when it should have asked and did not.
+    assert (
+        "Svaret bedöms mot facit som förut. När agenten frågade och mätningen svarade med "
+        "förtydligandet, läser domaren det med frågan. När agenten inte frågade i en fråga där "
+        "den skulle fråga, får domaren i stället veta vilka fall frågan passar och vilket fall "
+        "facit bygger på (domarens regel 7). Ett svar som ger facits svar för det fallet och "
+        "säger att det gäller det fallet har då kärnan, och svar för de andra fallen är inget "
+        "fel. Att agenten inte frågade räknas alltså bara bland motfrågorna. Annars bedöms "
+        "svaret mot frågan som den ställdes."
+    ) in markdown
+
+
+def test_a_question_whose_run_never_reached_the_graph_is_not_counted() -> None:
+    plain = ask_report()
+    broken = run(None, error="avtal-mcp: ReadError")
+    lost = (
+        score(asking("a03", True), broken, None, None),
+        score(asking("a04", False), broken, None, None),
+    )
+    lossy = replace(plain, results=plain.results + lost)
+
+    markdown = render_markdown(lossy)
+    data = json.loads(report_json(lossy))
+
+    # The same counts as without the two: an error is neither an ask nor a silence.
+    assert data["asks"] == json.loads(report_json(plain))["asks"]
+    assert "frågade när den borde i 1 av 2 frågor" in markdown
+    assert "frågade i onödan i 1 av 2 frågor" in markdown
+    assert "| a03 | ja | nej | – | räknas inte | Ej bedömd |" in markdown
+    assert "| a04 | nej | nej | – | räknas inte | Ej bedömd |" in markdown
+    assert "och räknas inte när körningen aldrig nådde agenten." in markdown
+    assert (
+        "En fråga där körningen aldrig nådde agenten, och där den alltså inte kunde fråga, "
+        "räknas inte, varken bland frågorna där den skulle fråga eller bland dem där den inte "
+        "skulle."
+    ) in markdown
+    assert [item["asked_right"] for item in data["questions"][-2:]] == [None, None]
 
 
 def test_a_report_without_ask_questions_has_no_asks_section() -> None:
@@ -796,11 +834,10 @@ def test_the_json_and_the_printout_carry_the_asks() -> None:
 
 def test_a_workflow_run_is_named_lists_its_steps_and_asks_in_none() -> None:
     info = replace(INFO, mode="workflow")
+    answered = Answer(text="Minst 10 miljoner kronor.", status="verified", citations=[])
     never = replace(
         ask_report(info),
-        results=tuple(
-            score(asking(f"a0{n}", True), run(None, error="x"), None, None) for n in (1, 2, 3)
-        ),
+        results=tuple(score(asking(f"a0{n}", True), run(answered), None, None) for n in (1, 2, 3)),
     )
 
     markdown = render_markdown(never)

@@ -55,7 +55,8 @@ svar på frågan, och inget av agentens alternativ blandar ihop två väntade al
 har olika svar. Andra ord, en annan ordning, fler eller finare alternativ och ett \
 alternativ för "annat" går bra. Är de väntade alternativen fler än fem räcker det att \
 motfrågan frågar efter det som avgör svaret och låter användaren ange sitt fall, till exempel \
-med ett alternativ för "annat", eftersom agenten kan ge högst fem alternativ.
+med ett alternativ för "annat", eftersom agenten kan ge högst fem alternativ. Även då får \
+inget av agentens alternativ slå ihop väntade alternativ som har olika svar.
 2. separates = false när motfrågan saknar ett väntat alternativ som användaren kan behöva, \
 slår ihop väntade alternativ, frågar om något annat än det som skiljer alternativen åt, \
 eller inte ger användaren något att välja mellan och inte heller frågar efter det som \

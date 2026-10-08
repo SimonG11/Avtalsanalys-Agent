@@ -4,6 +4,7 @@ The reports are made by `answer_report.report_json` from made-up results, as
 a run writes them, so the comparison reads the real format without a model.
 """
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from avtalsagent.agent.schemas import Answer
 from evals.answer_report import AnswerReport, RunInfo, report_json
 from evals.answer_run import QuestionRun, TokenUse
 from evals.answer_scores import QuestionResult, score
+from evals.ask_judge import AskJudgement
 from evals.compare_answer_runs import (
     CompareError,
     check_comparable,
@@ -329,6 +331,68 @@ def test_the_asks_numbers_are_compared_when_a_report_has_them(tmp_path: Path) ->
         agents
     )
     assert "Baslinjen" not in agents  # two runs of the agent
+
+
+def test_the_asks_are_counted_from_the_rows_without_a_run_that_never_reached_the_graph(
+    tmp_path: Path,
+) -> None:
+    options = ("Större", "Mindre")
+    reached = result("a00", "oklar", "correct", 30.0).run  # its model calls were saved
+    asked = replace(reached, asked=("Större eller Mindre?",), asked_options=(options,))
+    broken = failed("a00", "oklar").run  # never reached the graph
+    separates = AskJudgement(separates=True, reason="Båda går att välja.")
+
+    def asking(id: str, should_ask: bool, run: QuestionRun) -> QuestionResult:
+        question = replace(
+            gold(id, "oklar"), should_ask=should_ask, options=options, clarification="Större."
+        )
+        ask = separates if should_ask and run.asked else None
+        return score(question, run, None, None, ask_judgement=ask)
+
+    agent = (
+        asking("a08", True, asked),
+        asking("a09", True, broken),
+        asking("a01", False, asked),
+        asking("a02", False, reached),
+        asking("a04", False, broken),
+    )
+    workflow = tuple(asking(r.id, bool(r.should_ask), reached) for r in agent)
+    base = AnswerReport(
+        created_at=datetime(2026, 10, 8, tzinfo=UTC),
+        gold_path="evals/datasets/ambiguous_sv.jsonl",
+        gold_sha256="9c1d" + "0" * 60,
+        gold_questions=5,
+        info=INFO,
+        seconds=60.0,
+        results=agent,
+    )
+    path = write(tmp_path, "a", base)
+    # A report written before the rule counted the errors as silences: its own asks are not read.
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["asks"] |= {"should_ask": 2, "should_not_ask": 3}
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    a = load_run(path)
+    b = load_run(
+        write(tmp_path, "b", replace(base, info=replace(INFO, mode="workflow"), results=workflow))
+    )
+
+    markdown = render_comparison(a, b)
+
+    assert a.asks == {
+        "should_ask": 1,
+        "asked": 1,
+        "separating": 1,
+        "unjudged": 0,
+        "should_not_ask": 2,
+        "asked_unnecessarily": 1,
+    }
+    assert b.asks is not None and (b.asks["should_ask"], b.asks["should_not_ask"]) == (2, 3)
+    assert "| Frågade när den borde | 1 av 1 (1 skiljer) | 0 av 2 (0 skiljer) |" in markdown
+    assert "| Frågade i onödan | 1 av 2 | 0 av 3 |" in markdown
+    assert (
+        "En fråga där körningen aldrig nådde agenten räknas inte, så A och B kan ha olika många "
+        "frågor. Baslinjen kan inte fråga."
+    ) in markdown
 
 
 def test_a_report_made_before_the_mode_was_recorded_is_the_agents(tmp_path: Path) -> None:

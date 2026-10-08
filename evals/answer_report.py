@@ -43,7 +43,9 @@ How:
     check passed. What a run did not save (one that never reached the
     graph: its path, model calls and rejections) is named as not saved
     ("inte sparat"), null in the JSON, and left out of the path's numbers,
-    never counted as zero. A baseline never asks, so it asked when it
+    never counted as zero; such a run could not ask either, so it is in
+    neither count of the questions to the user, and its row in Motfrågor
+    says so (NOT_COUNTED). A baseline never asks, so it asked when it
     should in 0 of the questions that should ask.
 """
 
@@ -105,6 +107,8 @@ RULE_NAMES: dict[CheckRule, str] = {
     "unknown": "okänd regel",
 }
 NOT_SAVED = "inte sparat"
+# A question to the user that is in neither count: the run never reached the graph.
+NOT_COUNTED = "räknas inte"
 # Where the commit measured came from: git, or the variable set where git cannot tell.
 CommitSource = Literal["git", "environment"]
 COMMIT_VARIABLE = "AVTALSAGENT_COMMIT"
@@ -591,9 +595,16 @@ def _md_method(report: AnswerReport) -> list[str]:
             "domare (samma modell och nivå som för svaren) finner att den låter användaren "
             "välja mellan de väntade alternativen. För en fråga där svaret är detsamma i alla "
             "alternativ, eller där fallen är få och korta och svaret ska ta upp vart och ett, "
-            "är det rätt att inte fråga, och en motfråga räknas som onödig. Svaret bedöms mot "
-            "facit som förut, med förtydligandet när agenten frågade, och mot frågan som den "
-            "ställdes när agenten inte frågade."
+            "är det rätt att inte fråga, och en motfråga räknas som onödig. En fråga där "
+            "körningen aldrig nådde agenten, och där den alltså inte kunde fråga, räknas inte, "
+            "varken bland frågorna där den skulle fråga eller bland dem där den inte skulle. "
+            "Svaret bedöms mot facit som förut. När agenten frågade och mätningen svarade med "
+            "förtydligandet, läser domaren det med frågan. När agenten inte frågade i en fråga "
+            "där den skulle fråga, får domaren i stället veta vilka fall frågan passar och "
+            "vilket fall facit bygger på (domarens regel 7). Ett svar som ger facits svar för "
+            "det fallet och säger att det gäller det fallet har då kärnan, och svar för de "
+            "andra fallen är inget fel. Att agenten inte frågade räknas alltså bara bland "
+            "motfrågorna. Annars bedöms svaret mot frågan som den ställdes."
         )
     return [*lines, ""]
 
@@ -732,6 +743,8 @@ def _md_asks(report: AnswerReport) -> list[str]:
         outcome = {True: "rätt", False: "fel", None: UNJUDGED_NAME.lower()}[r.asked_right]
         if r.unnecessary_ask:
             outcome = "onödig"
+        elif not r.could_ask:
+            outcome = NOT_COUNTED
         lines.append(
             md_row(
                 [
@@ -748,8 +761,9 @@ def _md_asks(report: AnswerReport) -> list[str]:
         "",
         "Skiljer: om motfrågan låter användaren välja mellan de väntade alternativen, enligt "
         "domaren; bara för en fråga där agenten skulle fråga och frågade. Motfrågan: rätt när "
-        "agenten frågade med en motfråga som skiljer, eller inte frågade när den inte skulle. "
-        "Svaret: domarens bedömning av svaret.",
+        "agenten frågade med en motfråga som skiljer, eller inte frågade när den inte skulle, "
+        f"och {NOT_COUNTED} när körningen aldrig nådde agenten. Svaret: domarens bedömning av "
+        "svaret.",
         "",
     ]
     for r in asked_results:
