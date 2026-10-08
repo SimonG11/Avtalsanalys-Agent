@@ -1,7 +1,8 @@
 /**
- * What: a stand-in for the backend API, with the two endpoints the web app uses:
+ * What: a stand-in for the backend API, with the endpoints the web app uses:
  *   POST /agui                         the agent over AG-UI (server-sent events)
  *   GET  /api/documents/{sha256}/pdf   the PDF a citation points to
+ *   /api/uploads …                     the person's own files (mock/uploads.ts)
  *
  * Why: the web app is built before the real API (M9). The mock lets it run, and be tested in
  * CI, without a database, an OpenAI key or documents from avropa.se.
@@ -18,6 +19,7 @@ import { EventEncoder } from "@ag-ui/encoder";
 
 import { buildFixturePdf } from "./fixture-pdf.ts";
 import { planRun } from "./scenarios.ts";
+import { handleUploads, uploadsOf } from "./uploads.ts";
 
 const port = Number(process.env.MOCK_PORT ?? 8000);
 /** MOCK_FAST=1 removes the pauses, for tests, except those a test needs to see (minPauseMs). */
@@ -42,7 +44,8 @@ async function runAgent(request: IncomingMessage, response: ServerResponse): Pro
     "Content-Type": encoder.getContentType(),
     "Cache-Control": "no-cache",
   });
-  for (const { event, pauseMs, minPauseMs } of planRun(input, { documentSha256: pdf.sha256 })) {
+  const context = { documentSha256: pdf.sha256, uploads: uploadsOf(input.threadId) };
+  for (const { event, pauseMs, minPauseMs } of planRun(input, context)) {
     await sleep(Math.max(pauseMs * pauseFactor, minPauseMs ?? 0));
     response.write(encoder.encode(event));
   }
@@ -66,6 +69,7 @@ const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://localhost");
   const pdfPath = url.pathname.match(/^\/api\/documents\/([0-9a-f]{64})\/pdf$/);
 
+  if (handleUploads(request, response, url)) return;
   if (request.method === "POST" && url.pathname === "/agui") {
     runAgent(request, response).catch((error: unknown) => {
       console.error(error);

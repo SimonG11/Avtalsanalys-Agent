@@ -11,22 +11,33 @@ What:
     refused with a message that says why, that
     the tools show nothing between `process` and `index`, that the server's
     engine refuses writes, and one call of each tool through the MCP SDK's
-    in-memory client.
+    in-memory client. With the register loaded again with an area the
+    corpus has no files for, as the real register has all 51 areas and
+    documents are loaded for four, it checks that `search_documents` and
+    `list_documents` refuse that area, its agreement and its procurement
+    with a message naming the loaded areas, also next to a loaded area,
+    with a document type, and when every file of an area is held back,
+    but not without an index, and that the corpus's own areas and
+    agreements answer as before.
 
 Why:
     The tools are where the quarantine meets the agent: a section step 5
     holds back must not reach it by its hash, by its number, through an
     outline or by following a reference. Which sections a number, a filter
-    or a reference finds is SQL that unit tests cannot cover.
+    or a reference finds is SQL that unit tests cannot cover, and so is
+    which filters some shown file matches.
 
 How:
     Uses the `engine` fixture from conftest.py and the corpus, `build_index`
     and `TopicEmbedder` of `test_index_store.py`. The tools read through a
     read-only engine, as the server does (`create_db_engine(read_only=True)`),
     and one test shows that this engine refuses a write. Changes to the data
-    (an emptied index, a new finding) go through the writable `engine` first.
+    (an emptied index, a new finding, the register loaded again) go through
+    the writable `engine` first. The invented register row has a procurement
+    of its own, so no file's scope changes and the index is not built again.
 """
 
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -59,9 +70,11 @@ from avtalsagent.mcp_server.references import SectionReference, TargetRef
 from avtalsagent.mcp_server.results import SectionRef
 from avtalsagent.mcp_server.server import build_server
 from avtalsagent.mcp_server.tools.get_outline import Outline, OutlineSection, get_outline
+from avtalsagent.mcp_server.tools.list_documents import list_documents
 from avtalsagent.mcp_server.tools.read_section import Section, read_section
 from avtalsagent.mcp_server.tools.resolve_reference import resolve_reference
 from avtalsagent.mcp_server.tools.search_documents import SectionCopy, search_documents
+from avtalsagent.register.load import load_register
 from tests.integration.test_index_store import (
     ADVANIA_CARD,
     CORPUS,
@@ -71,6 +84,8 @@ from tests.integration.test_index_store import (
     PENALTY,
     PRICE_ADJUSTMENT,
     PROCUREMENT,
+    REGISTER,
+    REGISTER_VERSION,
     SECURITY_END,
     TEMPLATE,
     TERMS,
@@ -78,6 +93,7 @@ from tests.integration.test_index_store import (
     TopicEmbedder,
     build_index,
     metadata,
+    register_row,
     store_corpus,
 )
 
@@ -85,6 +101,20 @@ IT_DRIFT_TITLE = "IT-drift Mindre, upp till 200 anställda"
 BEMANNING_TITLE = "Bemanningstjänster - IT-tjänster upp till 1000 timmar"
 UNKNOWN_FILE = "0" * 64
 OTHER_PAGE = "https://www.avropa.se/ramavtal/ramavtalsomraden/it-drift/it-drift-storre/"
+A_HUB = "23.3-14537-2023-001"  # Bemanningstjänster; no card of its own in the corpus
+
+# Invented: an agreement in an area the corpus has no files for, with a procurement of its own.
+FURNITURE_AREA = "Möbler och inredning"
+FURNITURE_PROCUREMENT = "23.3-10777-2024"
+FURNITURE = "23.3-10777-2024-002"
+FURNITURE_ROW = register_row(
+    310, FURNITURE, "Exempelmöbler AB", "556677-8899", FURNITURE_AREA, "Kontorsmöbler"
+)
+NOT_LOADED_ADVICE = (
+    "Svara med det registret säger (search_register) och säg till användaren att {whose} "
+    "dokument inte är inlästa, i stället för att svara att det inte framgår eller citera andra "
+    "avtals dokument."
+)
 
 
 def mention(
@@ -245,6 +275,14 @@ def sessions(read_only: Engine) -> sessionmaker[Session]:
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+@pytest.fixture
+def whole_register(indexed: Engine) -> Engine:
+    """The register loaded again with an area the corpus has no files for, as the real one."""
+    with session_factory(indexed).begin() as session:
+        load_register(session, REGISTER_VERSION, [*REGISTER, FURNITURE_ROW])
+    return indexed
 
 
 def stored_text(engine: Engine, sha256: str, position: int) -> str:
@@ -683,6 +721,145 @@ def test_between_process_and_index_the_tools_show_nothing(
             get_outline(session, TERMS)
         with pytest.raises(NotFoundError, match="är inte indexerat"):
             resolve_reference(session, ADVANIA_CARD, section_number="1.10.4")
+
+
+# --- a filter outside the pilot -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("filters", "message"),
+    [
+        (
+            {"framework_area": "möbler och inredning"},
+            "Ramavtalsområdet Möbler och inredning finns i registret, men områdets dokument är "
+            "inte inlästa. Områden med inlästa dokument: Bemanningstjänster, IT-drift. "
+            + NOT_LOADED_ADVICE.format(whose="områdets"),
+        ),
+        (
+            {"agreement_number": "23.3.10777-24-002"},  # written another way
+            f"Avtalet {FURNITURE} finns i registret, men avtalets dokument är inte inlästa. "
+            "Områden med inlästa dokument: Bemanningstjänster, IT-drift. "
+            + NOT_LOADED_ADVICE.format(whose="avtalets"),
+        ),
+        (
+            {"agreement_number": FURNITURE_PROCUREMENT},
+            f"Upphandlingen {FURNITURE_PROCUREMENT} finns i registret, men upphandlingens "
+            "dokument är inte inlästa. Områden med inlästa dokument: Bemanningstjänster, "
+            "IT-drift. " + NOT_LOADED_ADVICE.format(whose="upphandlingens"),
+        ),
+        # IT-drift has documents and the agreement has none: the error is about the agreement.
+        (
+            {"framework_area": "IT-drift", "agreement_number": FURNITURE},
+            f"Avtalet {FURNITURE} finns i registret, men avtalets dokument är inte inlästa. ",
+        ),
+        # With a document type it is still not an empty answer.
+        (
+            {"agreement_number": FURNITURE, "document_type": DocumentType.GENERAL_TERMS},
+            f"Avtalet {FURNITURE} finns i registret, men avtalets dokument är inte inlästa. ",
+        ),
+    ],
+    ids=["area", "agreement", "procurement", "loaded area and agreement", "agreement and type"],
+)
+def test_a_filter_outside_the_pilot_says_that_its_documents_are_not_loaded(
+    whole_register: Engine,
+    sessions: sessionmaker[Session],
+    filters: dict[str, Any],
+    message: str,
+) -> None:
+    with sessions() as session:
+        with pytest.raises(NotFoundError, match=f"^{re.escape(message)}"):
+            search_documents(session, TopicEmbedder(), "Hur stort är vitet?", **filters)
+        with pytest.raises(NotFoundError, match=f"^{re.escape(message)}"):
+            list_documents(session, **filters)
+
+
+@pytest.mark.parametrize(
+    ("filters", "files"),
+    [
+        ({"framework_area": "IT-drift"}, [TERMS, ADVANIA_CARD, NETBIN_CARD, PROCUREMENT, TEMPLATE]),
+        # A Hub has no card of its own: its procurement's shared files are its documents.
+        ({"agreement_number": A_HUB}, [MAIN, TEMPLATE]),
+        # A type the agreement has no documents of is an empty answer, not an error.
+        ({"agreement_number": A_HUB, "document_type": DocumentType.GENERAL_TERMS}, []),
+    ],
+    ids=["pilot area", "pilot agreement with shared files only", "type without documents"],
+)
+def test_a_filter_inside_the_pilot_answers_as_before(
+    whole_register: Engine,
+    sessions: sessionmaker[Session],
+    filters: dict[str, Any],
+    files: list[str],
+) -> None:
+    with sessions() as session:
+        result = search_documents(
+            session, TopicEmbedder(), "Vad gäller vid prisjustering?", **filters
+        )
+        listed = list_documents(session, **filters)
+
+    assert [document.sha256 for document in listed.documents] == files
+    assert {hit.sha256 for hit in result.hits} <= set(files)
+    assert bool(result.hits) == bool(files)
+
+
+def test_an_area_whose_files_are_all_held_back_counts_as_not_loaded(
+    indexed: Engine, sessions: sessionmaker[Session]
+) -> None:
+    # As the tools show it: after the index was built, Bemanningstjänster's two files are held
+    # back whole, so A Hub's shared files are too.
+    with session_factory(indexed).begin() as session:
+        save_findings(
+            session,
+            [
+                Finding(
+                    check="still_published",
+                    severity=Severity.QUARANTINE,
+                    subject=sha256,
+                    message="Ingen avtalssida på avropa.se länkar längre till filen.",
+                    sha256=sha256,
+                )
+                for sha256 in (MAIN, TEMPLATE)
+            ],
+        )
+
+    with sessions() as session:
+        with pytest.raises(
+            NotFoundError,
+            match=re.escape(
+                "Ramavtalsområdet Bemanningstjänster finns i registret, men områdets dokument är "
+                "inte inlästa. Områden med inlästa dokument: IT-drift. "
+            ),
+        ):
+            list_documents(session, framework_area="Bemanningstjänster")
+        with pytest.raises(NotFoundError, match=f"^Avtalet {A_HUB} finns i registret, men"):
+            search_documents(
+                session, TopicEmbedder(), "Vad gäller vid prisjustering?", agreement_number=A_HUB
+            )
+        it_drift = list_documents(session, framework_area="IT-drift")
+
+    assert it_drift.total == 4  # its other files are still listed
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"framework_area": FURNITURE_AREA},
+        {"agreement_number": FURNITURE},
+        {"framework_area": "IT-drift"},
+    ],
+    ids=["area outside", "agreement outside", "pilot area"],
+)
+def test_without_an_index_no_filter_is_called_not_loaded(
+    whole_register: Engine, sessions: sessionmaker[Session], filters: dict[str, Any]
+) -> None:
+    # As after `process`: no file is shown, so both tools say that the index is missing.
+    with session_factory(whole_register).begin() as session:
+        clear_index(session)
+
+    with sessions() as session:
+        with pytest.raises(UnavailableError, match="Sökindexet är inte byggt"):
+            search_documents(session, TopicEmbedder(), "Hur stort är vitet?", **filters)
+        with pytest.raises(UnavailableError, match="Sökindexet är inte byggt"):
+            list_documents(session, **filters)
 
 
 # --- the server's engine --------------------------------------------------------------------------

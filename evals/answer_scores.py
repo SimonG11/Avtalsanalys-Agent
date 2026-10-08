@@ -7,7 +7,19 @@ What:
     (`sources_found`), how many of the gold's agreements its register facts
     cover (`register_score`), and the verdict. `rule_judgement` judges an
     answer that needs no judge (`no_draft`). `summarize` gives the `Summary` of any group
-    of results, and `by_category` the groups by category.
+    of results, and `by_category` the groups by category. `summarize_paths`
+    gives the `PathSummary` of how the agent went about them: the calls per
+    tool, its model calls, the sections it read from a reference (and of
+    those, the ones no earlier search had returned), and the check's
+    rejections by rule. `verdict_score` scores a verdict (correct 1,
+    partly correct 0.5, incorrect 0), as the runs are compared
+    (`compare_answer_runs`). For a gold question that says whether the
+    agent should ask the user (`should_ask`), a result also has the ask
+    judge's verdict (`ask_judge`), whether the agent asked as it should
+    (`asked_right`) and whether it asked without need (`unnecessary_ask`);
+    `summarize_asks` gives their `AskSummary`, of the results or of any rows
+    with the same values (`AskOutcome`: the comparison of runs reads them
+    from the JSON reports).
 
 Why:
     The report's numbers come from plain values, so they can be tested
@@ -23,19 +35,34 @@ How:
     when either position is unknown. Only citations whose quote the check
     verified count. Agreements are compared by `agreement_key`, as the
     register's are. A run that ended without a draft (NO_DRAFT_TEXT) is
-    incorrect by rule. Percentiles are nearest-rank.
+    incorrect by rule. Percentiles are nearest-rank. The path's numbers
+    count the questions whose path was saved (`QuestionRun.path_saved`):
+    every question but one that never reached the graph, which is counted
+    as not saved instead of as no calls. An ask is right for a question
+    that should ask only when the agent asked and the ask judge found that
+    its question separates the expected options; one the ask judge did not
+    judge (no judge, or no verdict) is neither right nor wrong (None). For a
+    question that should not ask, not asking is right. A run that saved
+    nothing (no state of the graph, and no question to the user) does not
+    show whether the agent asked (`could_ask` is false): it is neither right
+    nor wrong, nor an unnecessary ask, and it is in neither count of the
+    `AskSummary`, so an error is not counted as "did not ask". A run that
+    never asks (the fixed workflow) scores 0 of the questions that should
+    ask.
 """
 
 import math
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Protocol
 
 from avtalsagent.agent.middleware import NO_DRAFT_TEXT
 from avtalsagent.agent.schemas import Answer, AnswerStatus, FinalAnswer
 from avtalsagent.domain.identifiers import agreement_key
 from evals.answer_run import QuestionRun, TokenUse, cost_range, total_use
+from evals.answer_steps import CHECK_RULES, READ_SECTION, CheckRule, Step, rule_counts
+from evals.ask_judge import AskJudgement
 from evals.gold import Alternative, DocumentSource, GoldQuestion, RegisterSource
 from evals.judge import Judgement, Verdict
 
@@ -45,6 +72,8 @@ NO_DRAFT_REASON = "Agenten kom inte fram till ett svar inom gränsen för modell
 VERDICTS: tuple[Verdict, ...] = ("correct", "partly_correct", "incorrect")
 STATUSES: tuple[AnswerStatus, ...] = ("verified", "with_reservation", "no_answer")
 JudgedBy = Literal["judge", "rule"]
+# The right-score of a verdict: what the runs' comparison averages.
+VERDICT_SCORES: Mapping[Verdict, float] = {"correct": 1.0, "partly_correct": 0.5, "incorrect": 0.0}
 
 # --- Scoring (pure) ---------------------------------------------------------------------------
 
@@ -78,7 +107,45 @@ class QuestionResult:
     register_extra: int  # agreements the answer declares that the gold does not name
     judgement: Judgement | None
     judged_by: JudgedBy | None
-    judge_usage: Mapping[str, TokenUse] = field(default_factory=dict)
+    judge_usage: Mapping[str, TokenUse] = field(default_factory=dict)  # both judges' calls
+    should_ask: bool | None = None  # the gold's; None when it does not say
+    expected_options: tuple[str, ...] = ()  # the gold's options for the agent's question
+    ask_judgement: AskJudgement | None = None  # None unless it should ask, asked and was judged
+
+    @property
+    def asked(self) -> bool:
+        """Whether the agent asked the user at least once."""
+        return bool(self.run.asked)
+
+    @property
+    def asked_right(self) -> bool | None:
+        """Asked when it should, with a question that separates; did not when it should not.
+
+        None when the gold does not say, for an ask the ask judge did not judge, and
+        for a run that saved nothing (`could_ask`).
+        """
+        if self.should_ask is None or not self.could_ask:
+            return None
+        if not self.should_ask:
+            return not self.asked
+        if not self.asked:
+            return False
+        return self.ask_judgement.separates if self.ask_judgement is not None else None
+
+    @property
+    def could_ask(self) -> bool:
+        """Whether the run shows if the agent asked: its graph's state was saved, or it asked.
+
+        False for a run that saved nothing, as when the session to avtal-mcp never opened.
+        """
+        return self.run.path_saved or self.asked
+
+    @property
+    def unnecessary_ask(self) -> bool | None:
+        """Asked although the gold says it should not; None as for `asked_right`."""
+        if self.should_ask is None or not self.could_ask:
+            return None
+        return self.asked and not self.should_ask
 
     @property
     def status(self) -> AnswerStatus | None:
@@ -181,8 +248,9 @@ def score(
     judgement: Judgement | None,
     judged_by: JudgedBy | None,
     judge_usage: Mapping[str, TokenUse] | None = None,
+    ask_judgement: AskJudgement | None = None,
 ) -> QuestionResult:
-    """The question's result: the run, its sources and register rows scored, and the verdict."""
+    """The question's result: the run, its sources and register rows scored, and the verdicts."""
     places = cited_places(run.answer, run.draft)
     required, found, extra = register_score(question, run.answer)
     return QuestionResult(
@@ -202,7 +270,15 @@ def score(
         judgement=judgement,
         judged_by=judged_by if judgement is not None else None,
         judge_usage=dict(judge_usage or {}),
+        should_ask=question.should_ask,
+        expected_options=question.options,
+        ask_judgement=ask_judgement if question.should_ask and run.asked else None,
     )
+
+
+def verdict_score(verdict: Verdict | None) -> float | None:
+    """Correct 1, partly correct 0.5, incorrect 0; None for an answer not judged."""
+    return VERDICT_SCORES[verdict] if verdict is not None else None
 
 
 # --- Summaries (pure) -------------------------------------------------------------------------
@@ -288,6 +364,146 @@ def summarize(results: Sequence[QuestionResult]) -> Summary:
         cost=cost_range(usage),
         usage=usage,
     )
+
+
+@dataclass(frozen=True)
+class AskSummary:
+    """Whether the agent asked the user where the gold says it should, and where not.
+
+    Only questions whose run shows whether it asked are counted (`QuestionResult.could_ask`).
+    """
+
+    should_ask: int  # questions where it should ask
+    asked: int  # of those, where it asked
+    separating: int  # of those, where the ask judge found its question separates the options
+    unjudged: int  # of those, where the ask judge gave no verdict
+    should_not_ask: int  # questions where it should answer without asking
+    asked_unnecessarily: int  # of those, where it asked
+
+
+class AskOutcome(Protocol):
+    """What the asks are counted from: a `QuestionResult`, or a question of a JSON report."""
+
+    @property
+    def should_ask(self) -> bool | None: ...
+
+    @property
+    def asked(self) -> bool: ...
+
+    @property
+    def asked_right(self) -> bool | None: ...
+
+    @property
+    def could_ask(self) -> bool: ...
+
+
+def summarize_asks(results: Sequence[AskOutcome]) -> AskSummary | None:
+    """The `AskSummary` of `results`; None when no question that could ask says whether to.
+
+    A question whose run saved nothing is left out of both counts, as `asked_right` leaves
+    it unscored.
+    """
+    counted = [r for r in results if r.could_ask]
+    should = [r for r in counted if r.should_ask is True]
+    should_not = [r for r in counted if r.should_ask is False]
+    if not should and not should_not:
+        return None
+    asked = [r for r in should if r.asked]
+    return AskSummary(
+        should_ask=len(should),
+        asked=len(asked),
+        separating=sum(1 for r in asked if r.asked_right),
+        unjudged=sum(1 for r in asked if r.asked_right is None),
+        should_not_ask=len(should_not),
+        asked_unnecessarily=sum(1 for r in should_not if r.asked),
+    )
+
+
+@dataclass(frozen=True)
+class ToolCount:
+    calls: int
+    questions: int  # that called the tool at least once
+
+
+@dataclass(frozen=True)
+class RuleCount:
+    drafts: int  # drafts the rule sent back; a draft can be sent back by several rules
+    questions: int
+    problems: int  # lines of the feedback
+
+
+@dataclass(frozen=True)
+class PathSummary:
+    """How the agent went about a group of questions (see the module's How)."""
+
+    tools: Mapping[str, ToolCount]  # avtal-mcp's tools, most calls first
+    questions_saved: int  # whose path was saved: the questions the counts below are of
+    not_saved: int  # questions that never reached the graph
+    model_calls: tuple[int, ...]  # per question whose path was saved
+    reads: int  # read_section calls
+    reads_from_references: int  # to a section an earlier result's references named
+    reads_from_references_only: int  # of those, to a section no earlier search had returned
+    reads_from_amendments: int  # to an amending section an earlier find_amendments named
+    questions_from_references: int  # with at least one read from a reference
+    questions_from_references_only: int  # with at least one such read no search had returned
+    rejections: Mapping[CheckRule, RuleCount]  # by rule, in CHECK_RULES' order
+
+
+def summarize_paths(results: Sequence[QuestionResult]) -> PathSummary:
+    """The `PathSummary` of `results`."""
+    calls: dict[str, int] = {}
+    questions: dict[str, int] = {}
+    for r in results:
+        for tool in r.run.tools:
+            calls[tool] = calls.get(tool, 0) + 1
+        for tool in set(r.run.tools):
+            questions[tool] = questions.get(tool, 0) + 1
+    saved = [r.run for r in results if r.run.path_saved]
+    reads = [step for run in saved for step in run.steps if step.name == READ_SECTION]
+    by_rule = [rule_counts(run.rejections) for run in saved]
+    problems: dict[CheckRule, int] = {}
+    for run in saved:
+        for rejection in run.rejections:
+            for problem in rejection.problems:
+                problems[problem.rule] = problems.get(problem.rule, 0) + 1
+    return PathSummary(
+        tools={
+            tool: ToolCount(calls[tool], questions[tool])
+            for tool in sorted(calls, key=lambda tool: (-calls[tool], tool))
+        },
+        questions_saved=len(saved),
+        not_saved=len(results) - len(saved),
+        model_calls=tuple(run.model_calls for run in saved if run.model_calls is not None),
+        reads=len(reads),
+        reads_from_references=sum(1 for step in reads if _from_reference(step)),
+        reads_from_references_only=sum(1 for step in reads if _from_reference_only(step)),
+        reads_from_amendments=sum(1 for step in reads if step.target_from == "amendment"),
+        questions_from_references=sum(
+            1 for run in saved if any(_from_reference(step) for step in run.steps)
+        ),
+        questions_from_references_only=sum(
+            1 for run in saved if any(_from_reference_only(step) for step in run.steps)
+        ),
+        rejections={
+            rule: RuleCount(
+                drafts=sum(counts.get(rule, 0) for counts in by_rule),
+                questions=sum(1 for counts in by_rule if rule in counts),
+                problems=problems.get(rule, 0),
+            )
+            for rule in CHECK_RULES
+            if any(rule in counts for counts in by_rule)
+        },
+    )
+
+
+def _from_reference(step: Step) -> bool:
+    """A read of a section an earlier result's references named."""
+    return step.name == READ_SECTION and step.target_from == "reference"
+
+
+def _from_reference_only(step: Step) -> bool:
+    """A read of a section a reference named and no earlier search had returned."""
+    return _from_reference(step) and not step.found_by_search
 
 
 def by_category(results: Sequence[QuestionResult]) -> dict[str, list[QuestionResult]]:

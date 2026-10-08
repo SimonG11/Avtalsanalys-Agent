@@ -1,5 +1,8 @@
 # M9 – API:t och hela systemet i Docker Compose
 
+> Filen beskriver M9 som den var när den byggdes, och några stycken har lagts till senare.
+> Läget efter körningen mot den riktiga databasen står i [steg 12](12-demo.md).
+
 **Mål:** göra agenten (M7) nåbar för webbappen (M10) och starta hela systemet med ett kommando på
 en Mac med Apple silicon, där demot körs. API:t kör agenten över AG-UI, protokollet som
 CopilotKit talar, och ger PDF:en som ett citat pekar på. Besluten och varför står i
@@ -115,6 +118,7 @@ fungerar men tar några sekunder extra. `CHECKPOINTER=postgres` sparar samtalen 
 | `POST /agui` | En körning av agenten. Kroppen är AG-UI:s `RunAgentInput`, svaret server-sent events |
 | `GET /agui/health` | `{"status": "ok", "agent": {"name": "avtalsagent"}}`, som adapterns egen |
 | `GET /api/documents/{sha256}/pdf` | PDF:en, inline; 404 om dokumentet inte visas eller är en Word-fil; 422 för en felaktig hash; 503 om databasen inte svarar |
+| `/api/uploads` | Användarens egna filer; se [Egna filer](#egna-filer-2026-10-07) |
 | `GET /health` | `{"status": "ok"}` utan databas och avtal-mcp, för containerns hälsokontroll |
 | `GET /docs` | FastAPI:s beskrivning av routerna |
 
@@ -267,6 +271,86 @@ vill ta reda på och varför, som argumentet `syfte` (ADR 0025, beslut 7). API:t
 det: argumentet strömmas först i `TOOL_CALL_ARGS`, i delar som de andra argumenten, och finns
 kvar i verktygsanropen i `MESSAGES_SNAPSHOT`. avtal-mcp får det aldrig.
 `tests/unit/api/test_api_purpose.py` visar det.
+
+## Egna filer (2026-10-07)
+
+Simon vill kunna ladda upp egna filer i chatten och låta agenten jämföra dem med ramavtalen
+(webbapp-kontrakt.md, punkterna 33-38). Här står API:ts del: det tar emot, läser och sparar
+filerna. Agentens verktyg för att läsa dem (`list_uploads`, `read_upload`) och citaten ur dem står
+i [steg 07](07-agent.md#egna-filer-2026-10-07), hela designen i
+[ADR 0026](../adr/0026-egna-filer.md), och webbappen bygger knappen.
+
+| Route | Vad |
+|---|---|
+| `POST /api/uploads` | Formulär (multipart) med `file` och `thread_id`. 201 med `{upload_id, filename, kind, pages, sections, characters, size, warnings, created_at}`; 200 med samma svar om tråden redan har filen. 409 när tråden har fem filer, 413 för stor fil (bytes, sidor, tecken, stycken, minne eller uppackad Word-fil), 415 fel filtyp, 422 ingen text, trasig fil eller mer än 60 sekunder att läsa, 503 när databasen inte svarar, 507 när alla filer tillsammans tar `UPLOAD_MAX_TOTAL_BYTES` |
+| `GET /api/uploads?thread_id=…` | `{"uploads": [...]}`, trådens filer, äldst först |
+| `DELETE /api/uploads/{upload_id}?thread_id=…` | 204, eller 404 om tråden inte har filen |
+| `GET /api/uploads/{upload_id}/file?thread_id=…` | Filen som den laddades upp: PDF och text `inline`, Word som bilaga |
+
+En fil hör till sin tråd. Varje route tar trådens id, och en fil i en annan tråd ger 404, som en
+fil som inte finns. avtal-mcp ser aldrig filerna: API:t sparar dem och agenten läser dem genom
+samma lager (`uploads/store.py`).
+
+**Läsningen** (`uploads/`). Filtypen avgörs av innehållet och namnets ändelse måste stämma med det:
+`%PDF-` för PDF, ett zip-arkiv med `word/document.xml` för .docx, och .txt eller .md utan
+NUL-tecken för text (en textfil i UTF-16 får felet för text som inte är UTF-8). En Word-fils arkiv
+kontrolleras innan det öppnas: högst 100 MB uppackat, 5 000 delar och 16 MB per XML-del, bara
+okomprimerade och deflate-packade delar, och varje del packas upp en megabyte i taget och får inte
+bli större än arkivet säger, så en zip-bomb stoppas också när arkivet ljuger om storlekarna. En PDF
+läses med pypdfium2:s textlager, sida för sida, utan Docling och PyTorch (300 sidor och 9 MB tar
+ett par sekunder), och läsningen slutar när texten passerar teckengränsen; en PDF utan text
+(inskannad) får 422, och sidor utan text nämns i `warnings`. Ett avstavningsstreck i slutet av en
+rad, som pdfium ger som U+FFFE, blir "-" igen, så att ett citat av de tryckta orden stämmer. Word
+läses med python-docx (rubrikformat, listor, tabeller; högst 50 000 stycken och tabeller) och
+text som UTF-8, där Markdowns `#`-rubriker räknas. Texten delas sedan i avsnitt med inläsningens
+egna regler (`ingestion/step3_chunk.split_sections`): vid numrerade rubriker som "6.2 Ansvar", och
+annars vid rubriker utan nummer, "§ 3" och "Bilaga 2". Ett avsnitt längre än 12 000 tecken delas
+i delar ("(del 2 av 3)"), som var och en har sidan den börjar på.
+
+Läsningen körs i en egen barnprocess (`uploads/parse_process.py`), högst två åt gången, med 60
+sekunders gräns och 1 GB minne. En del arbete går inte att begränsa innan det görs: pdfium bygger
+en sidas text hel, och en PDF på 40 kB kan ha en sida med tio miljoner tecken, som tar gigabyte.
+När pdfium inte får minne avbryter det hela processen. I barnprocessen dödas läsningen när tiden
+går ut, minnet är begränsat och en process som dör tar inget annat med sig: filen får 422, och
+API:ts andra samtal märker inget. Barnprocessen skriver ingen core-fil när den avbryts, och kärnan
+stoppar den efter 65 sekunders CPU-tid om API:t självt har dött utan att döda den. När API:t
+stoppas dödas de läsningar som pågår, så att `docker compose stop` inte väntar på dem. På Linux
+startas barnprocesserna av multiprocessings forkserver (millisekunder). På macOS, där kommandoraden
+kan köras utanför containern, startas de med spawn, plattformens standard (några tiondels
+sekunder), och där gäller inte minnesgränsen.
+
+**Lagringen.** Med `UPLOAD_STORE=postgres` (compose) ligger filerna i tabellerna `upload` (en rad
+per fil, med filens bytes) och `upload_section`, som API:t skapar själv när det startar, som
+LangGraphs checkpointtabeller. Demot behöver alltså bara `docker compose up --build`, inte
+inläsningen igen. `memory` (standard) håller filerna i processen. Filer äldre än sju dagar läses
+aldrig och tas bort när API:t startar, en gång i timmen och vid varje uppladdning. Tråd-id:t väljer
+klienten själv, så gränsen per konversation begränsar inte lagret: alla filer tillsammans får ta
+högst `UPLOAD_MAX_TOTAL_BYTES`.
+
+Det agenten har läst ur en fil (verktygssvaren och citaten) sparas i samtalets checkpoints, och i
+Langfuse när spårningen är på, och tas inte bort när filen tas bort eller blir sju dagar gammal.
+
+| Variabel | Standard | Vad |
+|---|---|---|
+| `UPLOAD_STORE` | `memory` | `memory` eller `postgres`; compose sätter `postgres` för API:t |
+| `UPLOAD_MAX_BYTES` | 10485760 | Högsta storlek på en fil (10 MB) |
+| `UPLOAD_MAX_PAGES` | 300 | Högsta antal sidor i en PDF |
+| `UPLOAD_MAX_CHARACTERS` | 1500000 | Högsta antal tecken text i en fil |
+| `UPLOAD_MAX_PER_THREAD` | 5 | Filer per konversation |
+| `UPLOAD_MAX_TOTAL_BYTES` | 2147483648 | Bytes alla konversationers filer får ta tillsammans (2 GB) |
+| `UPLOAD_RETENTION_DAYS` | 7 | Dagar en fil läses och sparas i upload-tabellerna |
+
+Tester: `tests/unit/uploads/` (filtyper, zip-bomberna, namnen, läsningen av PDF, Word och text,
+gränserna, barnprocessen, avsnitten och lagret i minnet; PDF:erna byggs med reportlab och
+Word-filerna med python-docx i testerna), `tests/unit/api/test_api_uploads.py` (routerna genom
+hela appen, varje fel, en läsning vars process dör, trådarna hålls isär) och
+`tests/integration/test_upload_store_postgres.py` (lagret mot Postgres, också fyra uppladdningar
+samtidigt mot en gräns på två, och gränsen för alla filer). CI:s compose-jobb laddar upp, läser och
+tar bort en textfil genom API:t.
+
+Begränsningar: inskannade sidor läses inte (ingen OCR), en Word-fil har inga sidor, Words
+automatiska numrering finns inte i texten (avsnitten får då rubrikerna utan nummer), och en "Bilaga"
+på PDF:ens sista sida blir en del av avsnittet före, som i inläsningen.
 
 ## Kända begränsningar
 

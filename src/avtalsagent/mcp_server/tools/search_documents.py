@@ -13,18 +13,24 @@ Why:
     filters against the register, so a misspelt area or agreement is an
     error the model can correct instead of an empty result it would take as
     "the agreements say nothing", and keeps the result inside what the tools
-    may show. The copies let the agent cite the document of the agreement
-    asked about when the same general terms are printed in several.
+    may show. An area or agreement that the register has but whose
+    documents are not loaded (outside the pilot) is an error too, which
+    tells the model to answer from the register. The copies let the agent
+    cite the document of the agreement asked about when the same general
+    terms are printed in several.
 
 How:
     The filters are put in the register's spelling and a number without a
     supplier's sequence becomes the procurement's filter
-    (`visibility.document_filters`). The number of candidates per branch and
-    the fusion's k come from the settings. Hits and copies are checked
-    against the visibility, though the index already leaves out what the
-    quarantine holds. Without an embedding model (no OPENAI_API_KEY), with an
-    index that is missing or built with another model, or when the model
-    cannot be reached, the tool raises an `UnavailableError` in Swedish.
+    (`visibility.document_filters`, which `list_documents` uses too). There,
+    before the question is embedded, an area, agreement or procurement that
+    no shown file matches becomes a `NotFoundError` that names the loaded
+    areas. The number of candidates per branch and the fusion's k come from
+    the settings. Hits and copies are checked against the visibility,
+    though the index already leaves out what the quarantine holds. Without
+    an embedding model (no OPENAI_API_KEY), with an index that is missing or
+    built with another model, or when the model cannot be reached, the tool
+    raises an `UnavailableError` in Swedish.
 """
 
 import logging
@@ -100,7 +106,7 @@ def search_documents(
             "(OPENAI_API_KEY). Hitta avsnitt med list_documents och get_outline i stället."
         )
     visibility = load_visibility(session)
-    filters = document_filters(session, framework_area, agreement_number, document_type)
+    filters = document_filters(session, visibility, framework_area, agreement_number, document_type)
     settings = get_settings()
     try:
         hits = search(

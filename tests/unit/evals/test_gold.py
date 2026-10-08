@@ -1,7 +1,7 @@
 """Tests for evals.gold: the gold file's form, and the sections its sources resolve to.
 
 The section texts are made up in the style of the agreements' clauses. The
-gold file of the repository is parsed too, so a line that breaks its form
+gold files of the repository are parsed too, so a line that breaks their form
 fails here rather than in a measurement.
 """
 
@@ -35,6 +35,7 @@ from evals.gold import (
 )
 
 GOLD_FILE = Path(__file__).parents[3] / "evals" / "datasets" / "gold_sv.jsonl"
+AMBIGUOUS_FILE = Path(__file__).parents[3] / "evals" / "datasets" / "ambiguous_sv.jsonl"
 
 TERMS = "a" * 64  # general terms
 COPY = "b" * 64  # a procurement document that prints the general terms again
@@ -285,6 +286,82 @@ def test_the_gold_file_of_the_repository_parses() -> None:
         SkipReason.REGISTER_ONLY: 4,
         SkipReason.NO_ANSWER: 4,
     }
+
+
+# --- Whether the agent should ask the user ---------------------------------------------------
+
+OPTIONS = ["IT-drift Större", "IT-drift Mindre"]
+
+
+def test_the_ambiguous_questions_of_the_repository_parse() -> None:
+    gold = load_gold(AMBIGUOUS_FILE)
+
+    # Two where the agent should ask; three it should answer for each case and three controls.
+    assert Counter(item.should_ask for item in gold.questions) == {True: 2, False: 6}
+    assert all(len(item.options) >= 2 for item in gold.questions if item.should_ask)
+    assert all(item.clarification for item in gold.questions)
+    assert all(skip_reason(item) is None for item in gold.questions)  # each cites a document
+
+
+def test_a_question_without_the_ask_fields_reads_as_before() -> None:
+    result = parsed()
+
+    assert (result.should_ask, result.options, result.clarification) == (None, (), None)
+    assert all(item.should_ask is None for item in load_gold(GOLD_FILE).questions)
+
+
+def test_a_question_that_should_ask_has_its_options_and_clarification() -> None:
+    result = parsed(should_ask=True, options=OPTIONS, clarification="Vi har IT-drift Mindre.")
+
+    assert result.should_ask is True
+    assert result.options == ("IT-drift Större", "IT-drift Mindre")
+    assert result.clarification == "Vi har IT-drift Mindre."
+
+
+def test_a_question_that_should_not_ask_may_name_the_options_or_none() -> None:
+    named = parsed(should_ask=False, options=OPTIONS, clarification="Svara för båda.")
+    bare = parsed(should_ask=False)
+
+    assert (named.should_ask, named.options, named.clarification) == (
+        False,
+        tuple(OPTIONS),
+        "Svara för båda.",
+    )
+    assert (bare.should_ask, bare.options, bare.clarification) == (False, (), None)
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"should_ask": "ja"}, "should_ask must be true or false"),
+        ({"should_ask": True, "clarification": "Mindre."}, "at least two options"),
+        (
+            {"should_ask": True, "options": ["Större"], "clarification": "Mindre."},
+            "at least two options",
+        ),
+        ({"should_ask": True, "options": OPTIONS}, "should_ask needs a clarification"),
+        (
+            {"should_ask": True, "options": OPTIONS, "clarification": "  "},
+            "clarification is blank",
+        ),
+        ({"should_ask": True, "options": "Större", "clarification": "x"}, "options must be a list"),
+        (
+            {"should_ask": True, "options": ["Större", 2], "clarification": "x"},
+            "options must be a list of strings",
+        ),
+        (
+            {"should_ask": True, "options": ["Större", " "], "clarification": "x"},
+            "an option is blank",
+        ),
+        ({"options": OPTIONS}, "options and clarification need should_ask"),
+        ({"clarification": "Mindre."}, "options and clarification need should_ask"),
+    ],
+)
+def test_ask_fields_of_the_wrong_form_are_a_gold_error(
+    changes: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(GoldError, match=message):
+        parse_gold(gold_text(question(**changes)))
 
 
 # --- Which questions are measured, and how ----------------------------------------------------

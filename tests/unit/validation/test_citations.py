@@ -209,6 +209,8 @@ def test_a_section_the_reader_did_not_find_fails(
         "page": None,
         "quote": QUOTE,
         "verified": False,
+        "source": "framework",
+        "upload_id": None,
     }
 
 
@@ -226,6 +228,8 @@ def test_the_citation_is_copied_from_the_section_not_the_draft() -> None:
         "page": 14,
         "quote": QUOTE,  # without the marks around it, as the words to find on the page
         "verified": True,
+        "source": "framework",
+        "upload_id": None,
     }
 
 

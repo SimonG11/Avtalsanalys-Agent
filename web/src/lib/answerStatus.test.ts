@@ -6,6 +6,7 @@ import type { Answer } from "./contract.ts";
 
 const CITATION = {
   id: 1,
+  source: "framework" as const,
   sha256: "a".repeat(64),
   file_title: "Allmänna villkor",
   page_title: null,
@@ -48,6 +49,15 @@ describe("statusHelp", () => {
     assert.match(
       statusHelp(answer({ citations: [CITATION], register_facts: [FACT] })),
       /^Citaten står i avtalstexten och uppgifterna stämmer med registret\./,
+    );
+  });
+
+  it("says when a quote is from the person's own file", () => {
+    const own = { ...CITATION, id: 2, source: "upload" as const, upload_id: "upl_1" };
+    assert.match(statusHelp(answer({ citations: [own] })), /^Citaten står i din fil\./);
+    assert.match(
+      statusHelp(answer({ citations: [CITATION, own] })),
+      /^Citaten står i avtalstexten och i din fil\./,
     );
   });
 

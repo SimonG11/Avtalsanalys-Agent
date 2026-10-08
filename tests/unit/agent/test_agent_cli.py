@@ -14,9 +14,10 @@ import io
 import socket
 import sys
 import urllib.parse
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -126,11 +127,19 @@ class Runs:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str | None, bool, cli.Terminal]] = []
+        self.files: list[Sequence[Path]] = []
 
     async def __call__(
-        self, settings: Settings, question: str | None, terminal: cli.Terminal, *, as_json: bool
+        self,
+        settings: Settings,
+        question: str | None,
+        terminal: cli.Terminal,
+        *,
+        as_json: bool,
+        files: Sequence[Path] = (),
     ) -> None:
         self.calls.append((question, as_json, terminal))
+        self.files.append(files)
 
 
 @pytest.fixture(autouse=True)

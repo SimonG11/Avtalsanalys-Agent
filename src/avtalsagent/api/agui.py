@@ -80,8 +80,9 @@ Why:
 
 How:
     `AgentRuns.open()` opens a session (`open_mcp_tools`), builds the graph
-    on its tools with the shared model, reviewer and checkpointer
-    (`build_agent`),
+    on its tools with the shared model, reviewer, checkpointer and store of
+    the user's files (`build_agent`; the graph reads the files of the run's
+    thread, which ag-ui-langgraph puts in the config as `thread_id`),
     yields the AG-UI agent and closes the session when the run's stream
     ends. Each request gets its own agent object: the library keeps a
     run's progress on the instance. The body is AG-UI's `RunAgentInput`
@@ -125,6 +126,7 @@ from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.config import Settings
 from avtalsagent.observability.tracing import OFF as TRACING_OFF
 from avtalsagent.observability.tracing import Tracing
+from avtalsagent.uploads.store import UploadStore
 from avtalsagent.validation.review import AnswerReviewer
 
 _log = logging.getLogger(__name__)
@@ -260,6 +262,7 @@ class AgentRuns:
         checkpointer: BaseCheckpointSaver[str],
         open_tools: OpenTools,
         tracing: Tracing = TRACING_OFF,
+        uploads: UploadStore | None = None,
     ) -> None:
         self._settings = settings
         self._model = model
@@ -267,6 +270,7 @@ class AgentRuns:
         self._checkpointer = checkpointer
         self._open_tools = open_tools
         self._tracing = tracing
+        self._uploads = uploads
 
     @asynccontextmanager
     async def open(self, thread_id: str | None = None) -> AsyncIterator[AvtalAguiAgent]:
@@ -276,7 +280,12 @@ class AgentRuns:
         """
         async with self._open_tools(self._settings) as mcp:
             graph = build_agent(
-                self._model, mcp, self._reviewer, self._checkpointer, self._settings
+                self._model,
+                mcp,
+                self._reviewer,
+                self._checkpointer,
+                self._settings,
+                uploads=self._uploads,
             )
             trace = self._tracing.run_config(name="fråga", session_id=thread_id, tags=["api"])
             yield make_agui_agent(graph, trace)

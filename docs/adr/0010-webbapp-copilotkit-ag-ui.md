@@ -44,14 +44,15 @@ Det som avgör valet:
 ## Konsekvenser
 
 - Webbappen kan visas och testas utan backend, OpenAI-nyckel eller databas.
-- Frågedialogen fungerar med båda formerna av interrupt som `ag-ui-langgraph` kan skicka, så
+- Agentens fråga fungerar med båda formerna av interrupt som `ag-ui-langgraph` kan skicka, så
   backend kan välja.
 - Kontraktet beskrivs i `docs/steg/10-webbapp.md` och finns som kod i `web/src/lib/contract.ts`,
   som kontrolleras när appen kör. Ett fel i backend syns som ett tydligt fel i stället för en tom
   sida.
-- CopilotKit är ett ramverk till att förstå. Det används bara genom fyra hooks, providern och
-  chattkomponenten, så det mesta av gränssnittet är egna komponenter som går att läsa utan att
-  känna CopilotKit.
+- CopilotKit är ett ramverk till att förstå. Det används bara genom providern och några hooks,
+  så gränssnittet är egna komponenter som går att läsa utan att känna CopilotKit. Sedan
+  2026-10-07 ritar webbappen också chatten själv, eftersom CopilotKits chatt inte gick att läsa i
+  mörkt läge (se `docs/steg/10-webbapp.md`, Medvetna val).
 - CopilotKit och AG-UI ändras ofta. Versionerna är låsta exakt, och en uppgradering kräver att
   webbläsartesterna går igenom.
 - Word-filer (31 av pilotens 207 filer) har ingen PDF. För dem visar källpanelen citatet utan

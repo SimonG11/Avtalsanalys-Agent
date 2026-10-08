@@ -13,6 +13,10 @@ What:
     verified, with reservation, or no answer.
     `prompts.py` holds the system prompt, `checkpointer.py` where a
     conversation's checkpoints are kept, and `__main__.py` the command line.
+    The user's own files, uploaded in the conversation, are read with
+    `list_uploads` and `read_upload` and named in the prompt
+    (`upload_prompt.py`); a citation of one is checked against the stored
+    text (`upload_readers.py`, ADR 0026).
 
 Why:
     The steps around the agent's loop (reset, check, answer) are middleware

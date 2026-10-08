@@ -32,7 +32,7 @@
 import { EventType } from "@ag-ui/core";
 import type { BaseEvent, Message, RunAgentInput } from "@ag-ui/core";
 
-import { DOCUMENT_TITLE, PAGE_TITLE } from "./fixture-pdf.ts";
+import { DOCUMENT_TITLE, OWN_CONTRACT_PAGES, PAGE_TITLE } from "./fixture-pdf.ts";
 
 /** An event and how long the mock waits before sending it, so the steps appear live. */
 export interface TimedEvent {
@@ -48,6 +48,18 @@ const REVIEW_MIN_MS = 800;
 
 export interface MockContext {
   documentSha256: string;
+  /** The files uploaded to the run's thread (mock/uploads.ts), oldest first. */
+  uploads?: readonly UploadedFile[];
+}
+
+/** What the scenarios need to know about an uploaded file. */
+export interface UploadedFile {
+  upload_id: string;
+  filename: string;
+  kind: "pdf" | "docx" | "text";
+  pages: number | null;
+  sections: number;
+  sha256: string;
 }
 
 /** Which interrupt events a run sends: both (the default), the older event only, or the outcome only. */
@@ -131,10 +143,12 @@ class RunBuilder {
   }
 
   /**
-   * The model reasons before it acts. The backend asks for no summary of the reasoning, so the
-   * reasoning message is empty: CopilotKit shows only that the model thinks.
+   * The model reasons before it acts. With a text, the summary of its reasoning streams in
+   * pieces (webbapp-kontrakt.md, point 29); without one, the reasoning message is empty, as
+   * before the backend asked OpenAI for summaries. Like the real stream, the messages snapshot
+   * at the end has no reasoning messages; the client keeps the streamed ones.
    */
-  reason(): void {
+  reason(text = ""): void {
     const messageId = this.nextId("reasoning");
     this.push({ type: EventType.REASONING_START, messageId } as BaseEvent);
     this.push({
@@ -142,6 +156,9 @@ class RunBuilder {
       messageId,
       role: "reasoning",
     } as BaseEvent);
+    for (const delta of text.match(/\S+\s*/g) ?? []) {
+      this.push({ type: EventType.REASONING_MESSAGE_CONTENT, messageId, delta } as BaseEvent, 40);
+    }
     this.push({ type: EventType.REASONING_MESSAGE_END, messageId } as BaseEvent, 600, 300);
     this.push({ type: EventType.REASONING_END, messageId } as BaseEvent);
   }
@@ -183,6 +200,33 @@ class RunBuilder {
       toolCalls: [{ id: toolCallId, type: "function", function: { name, arguments: argsJson } }],
     });
     return toolCallId;
+  }
+
+  /**
+   * A call from an earlier run streamed again under the same id, as ag-ui-langgraph does for the
+   * ask_user call when a run resumes, before that call's result.
+   */
+  repeatCall(toolCallId: string): void {
+    for (const message of this.input.messages) {
+      const call =
+        message.role === "assistant"
+          ? message.toolCalls?.find((c) => c.id === toolCallId)
+          : undefined;
+      if (!call) continue;
+      this.push({
+        type: EventType.TOOL_CALL_START,
+        toolCallId,
+        toolCallName: call.function.name,
+        parentMessageId: message.id,
+      } as BaseEvent);
+      this.push({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId,
+        delta: call.function.arguments,
+      } as BaseEvent);
+      this.push({ type: EventType.TOOL_CALL_END, toolCallId } as BaseEvent);
+      return;
+    }
   }
 
   /** The tool's answer to a call, which may have been made in an earlier run. */
@@ -250,6 +294,23 @@ class RunBuilder {
     this.callTool("ask_user", value);
   }
 
+  /**
+   * An ask_user call the backend refuses before asking, here for want of options
+   * (webbapp-kontrakt.md, point 32): no result event and no interrupt, and in the messages
+   * snapshot a tool message with `error` set. The model then asks again.
+   */
+  refusedAskUser(question: string): void {
+    const toolCallId = this.callTool("ask_user", { question });
+    const error = "ask_user behöver 2-5 korta svarsalternativ.";
+    this.newMessages.push({
+      id: this.nextId("tool"),
+      role: "tool",
+      toolCallId,
+      content: error,
+      error,
+    });
+  }
+
   interrupt(value: { question: string; options: string[] }, shape: InterruptShape): void {
     const interruptId = this.nextId("interrupt");
     if (shape !== "outcome") {
@@ -309,6 +370,7 @@ function citation(
   },
 ) {
   return {
+    source: "framework",
     sha256: context.documentSha256,
     file_title: DOCUMENT_TITLE,
     page_title: PAGE_TITLE,
@@ -395,7 +457,11 @@ function answerNoticePeriod(
 ): void {
   let answer = noticePeriodAnswer(context, area);
   run.step("research_agent", () => {
-    run.reason();
+    run.reason(
+      "**Letar efter reglerna om uppsägning**\n\n" +
+        `Frågan gäller hur ett kontrakt inom ${area} sägs upp. Jag söker i de allmänna ` +
+        "villkoren efter avsnitten om uppsägning.",
+    );
     run.toolCall(
       "search_documents",
       { query: "uppsägningstid kontrakt", framework_area: area },
@@ -404,12 +470,21 @@ function answerNoticePeriod(
         ["6.21.10", "Uppsägning vid väsentligt avtalsbrott", 2],
       ]),
     );
+    run.reason(
+      "**Läser avsnittet om uppsägning**\n\n" +
+        "Sökningen pekar på 6.21.9. Jag läser hela avsnittet, så att jag kan citera det ordagrant.",
+    );
     run.toolCall(
       "read_section",
       { sha256: context.documentSha256, section_number: "6.21.9" },
       { section_number: "6.21.9", page: 2, text: "Kunden har rätt att säga upp Kontraktet ..." },
     );
     if (endDate) {
+      run.reason(
+        "**Räknar ut sista dagen för uppsägning**\n\n" +
+          `Kontraktet ska upphöra ${endDate} och uppsägningstiden är tre månader, så jag ` +
+          "räknar tre månader bakåt.",
+      );
       const args = { start: endDate, amount: 3, unit: "months", direction: "before" };
       const calculation = monthsBefore(endDate, 3);
       run.toolCall("calculate_date", args, calculation);
@@ -424,6 +499,101 @@ function answerNoticePeriod(
     }
   });
   run.handIn(answer);
+}
+
+/** The lines of the own contract that the upload scenario quotes (fixture-pdf.ts). */
+const OWN_CONTRACT_QUOTE = OWN_CONTRACT_PAGES[0].slice(7, 9).join(" ");
+
+/**
+ * The person has uploaded a contract and asks how it compares with the agreement: the agent
+ * finds the file, reads what it says about termination, reads the agreement's rule and answers
+ * with a source in each. A quote from a PDF names its page; a Word or text file has none.
+ */
+function answerFromUpload(run: RunBuilder, context: MockContext, file: UploadedFile): void {
+  run.step("research_agent", () => {
+    run.reason(
+      "**Läser din fil**\n\n" +
+        `Du har bifogat ${file.filename}. Jag tar reda på vad filen säger om uppsägning och ` +
+        "jämför sedan med ramavtalets allmänna villkor.",
+    );
+    run.toolCall(
+      "list_uploads",
+      {},
+      {
+        uploads: (context.uploads ?? []).map(({ upload_id, filename, kind, pages, sections }) => ({
+          upload_id,
+          filename,
+          kind,
+          pages,
+          sections,
+        })),
+      },
+    );
+    run.toolCall(
+      "read_upload",
+      { upload_id: file.upload_id, query: "uppsägning" },
+      {
+        upload_id: file.upload_id,
+        sections: [
+          {
+            section_position: 2,
+            title: "5 Uppsägning",
+            page: file.kind === "pdf" ? 1 : null,
+            text: OWN_CONTRACT_QUOTE,
+          },
+        ],
+      },
+    );
+    run.reason(
+      "**Jämför med ramavtalet**\n\n" +
+        "Filen ger en månads uppsägningstid. Jag letar upp vad ramavtalets allmänna villkor " +
+        "säger om uppsägning.",
+    );
+    run.toolCall(
+      "search_documents",
+      { query: "uppsägningstid kontrakt" },
+      searchHits(context, [["6.21.9", "Uppsägning", 2]]),
+    );
+    run.toolCall(
+      "read_section",
+      { sha256: context.documentSha256, section_number: "6.21.9" },
+      { section_number: "6.21.9", page: 2, text: "Kunden har rätt att säga upp Kontraktet ..." },
+    );
+  });
+  run.handIn(
+    answerOf({
+      text:
+        "Uppsägningstiden skiljer sig. Enligt din fil får kunden säga upp kontraktet med en " +
+        "månads uppsägningstid, och uppsägningen får vara muntlig [1]. Ramavtalets allmänna " +
+        "villkor ger tre månaders uppsägningstid och kräver att uppsägningen är skriftlig [2].",
+      status: "verified",
+      citations: [
+        {
+          id: 1,
+          source: "upload",
+          upload_id: file.upload_id,
+          sha256: file.sha256,
+          file_title: file.filename,
+          page_title: null,
+          section_number: "5",
+          section_title: "Uppsägning",
+          page: file.kind === "pdf" ? 1 : null,
+          quote: OWN_CONTRACT_QUOTE,
+          verified: true,
+        },
+        citation(context, {
+          id: 2,
+          section_number: "6.21.9",
+          section_title: "Uppsägning",
+          page: 2,
+          quote:
+            "Kunden har rätt att säga upp Kontraktet med tre (3) månaders uppsägningstid. " +
+            "Uppsägningen ska vara skriftlig",
+          verified: true,
+        }),
+      ],
+    }),
+  );
 }
 
 /** No answer, but a source that says where the question is regulated: a Word file. */
@@ -523,15 +693,23 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
   if (resumed !== null) {
     // The person answered which area the question is about: ask_user returns the answer.
     const pending = pendingAskUser(input.messages);
-    if (pending) run.step("research_agent", () => run.toolResult(pending, resumed));
+    if (pending) {
+      run.step("research_agent", () => {
+        run.repeatCall(pending);
+        run.toolResult(pending, resumed);
+      });
+    }
     answerNoticePeriod(run, context, resumed || AREAS[0]);
   } else {
     // A new question: the previous answer no longer applies.
     run.state({ answer: null });
     const area = AREAS.find((name) => lower.includes(name.split(" ")[0].toLowerCase()));
     const aboutTermination = /uppsäg|säg(a|er) [^.?!]*upp\b/.test(lower);
+    const ownFile = context.uploads?.at(-1);
 
-    if (aboutTermination && area) {
+    if (ownFile && /jämför|fil|bifoga/.test(lower)) {
+      answerFromUpload(run, context, ownFile);
+    } else if (aboutTermination && area) {
       answerNoticePeriod(run, context, area, /\d{4}-\d{2}-\d{2}/.exec(question)?.[0]);
     } else if (aboutTermination) {
       run.step("research_agent", () => {
@@ -542,6 +720,7 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
             hits: AREAS.map((area) => ({ section_title: "Uppsägning", framework_areas: [area] })),
           },
         );
+        run.refusedAskUser(ASK_AREA.question);
         run.askUser(ASK_AREA);
       });
       run.messagesSnapshot();
@@ -558,6 +737,7 @@ export function planRun(input: RunAgentInput, context: MockContext): TimedEvent[
       answerFromRegister(run);
     } else if (lower.includes("vite")) {
       run.step("research_agent", () => {
+        run.reason();
         run.toolCall(
           "search_documents",
           { query: "vite försenad leverans" },

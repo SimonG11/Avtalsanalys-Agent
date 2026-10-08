@@ -8,9 +8,14 @@ What:
     `run_retrieval_eval` measures vector search, BM25 and the hybrid on the
     built index, or on one built in memory (`--offline`), and writes a report.
     `run_answer_eval` asks the agent every question through avtal-mcp
-    (`answer_run`), has `judge` compare each answer with the gold answer,
-    scores sources, register rows, time and cost (`answer_scores`) and writes
-    a report (`answer_report`).
+    (`answer_run`, with its path read by `answer_steps`), has `judge`
+    compare each answer with the gold answer, scores sources, register rows,
+    time and cost (`answer_scores`) and writes a report (`answer_report`,
+    with numbers written by `report_text`). `--mode workflow` asks the
+    baseline instead, a fixed workflow with the agent's model and check
+    (`workflow_baseline`, ADR 0024); `ask_judge` judges the agent's
+    questions to the user; and `compare_answer_runs` compares two answer
+    reports question by question, with paired bootstrap intervals.
 
 Why:
     Comparing chunk sizes, embedding models or analysers means rebuilding the

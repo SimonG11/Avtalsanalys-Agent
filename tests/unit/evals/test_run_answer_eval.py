@@ -6,9 +6,13 @@ without a model, a key or a server. One question through the real graph is
 tested in test_answer_run.py.
 """
 
+import hashlib
 import logging
+import shutil
+import subprocess
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -18,11 +22,17 @@ import httpx2
 import openai
 import pytest
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import SecretStr
 
+import avtalsagent
 from avtalsagent.agent.__main__ import CommandError
+from avtalsagent.agent.checkpointer import serializer
 from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.agent.middleware import NO_DRAFT_TEXT
+from avtalsagent.agent.prompts import SYSTEM_PROMPT
+from avtalsagent.agent.reviewer import REVIEWER_PROMPT
 from avtalsagent.agent.schemas import Answer
 from avtalsagent.config import Settings
 from avtalsagent.observability.tracing import Tracing
@@ -30,17 +40,31 @@ from evals import run_answer_eval as runner
 from evals.answer_report import AnswerReport, RunInfo
 from evals.answer_run import QuestionRun, TokenUse
 from evals.answer_scores import score
+from evals.ask_judge import ASK_JUDGE_PROMPT, AskJudgement, ModelAskJudge
 from evals.gold import GoldError, GoldFile, GoldQuestion, GoldScope, RegisterSource
-from evals.judge import Judgement, ModelJudge
+from evals.judge import JUDGE_PROMPT, Judgement, ModelJudge
 from evals.run_answer_eval import (
     Judge,
     ask_question,
     build_parser,
     check_mcp,
+    code_commit,
     evaluate,
     judge_answer,
+    judge_ask,
+    measured_commit,
+    run_info,
     run_settings,
     select_questions,
+)
+from evals.workflow_baseline import PLAN_PROMPT, baseline_prompts, workflow_template
+from tests.unit.agent.scripted_model import (
+    DictAmendments,
+    DictReader,
+    ListRegister,
+    ScriptedModel,
+    ScriptedReviewer,
+    tool_call,
 )
 
 SECRET = "sk-test-not-a-real-key"
@@ -94,11 +118,19 @@ class FakeJudge(Judge):
 
     def __init__(self) -> None:
         self.read: list[str] = []
+        self.clarifications: list[str | None] = []
+        self.cases: list[tuple[str, ...]] = []
 
     async def judge(
-        self, question: GoldQuestion, answer: Answer
+        self,
+        question: GoldQuestion,
+        answer: Answer,
+        clarification: str | None = None,
+        cases: Sequence[str] = (),
     ) -> tuple[Judgement | None, Mapping[str, TokenUse]]:
         self.read.append(question.id)
+        self.clarifications.append(clarification)
+        self.cases.append(tuple(cases))
         return CORRECT, {"judge-model": TokenUse(calls=1)}
 
 
@@ -136,6 +168,115 @@ def test_the_measurement_keeps_its_checkpoints_in_memory() -> None:
     assert run_settings(settings, None).checkpointer == "memory"
     assert run_settings(settings, None).agent_reasoning_effort == "low"
     assert run_settings(settings, "high").agent_reasoning_effort == "high"
+
+
+def git(where: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-C", str(where), "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+        + ["-c", "commit.gpgsign=false", *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return done.stdout.strip()
+
+
+def outside_any_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A folder git finds no repository from, wherever tmp_path is and whatever GIT_DIR was."""
+    for variable in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))  # git stops below tmp_path
+    folder = tmp_path / "outside"
+    folder.mkdir()
+    return folder
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+def test_the_commit_is_the_short_sha_and_whether_the_tree_has_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tmp_path = outside_any_repository(tmp_path, monkeypatch)
+    git(tmp_path, "init", "--quiet")
+    (tmp_path / "agent.py").write_text("PROMPT = 'ett'\n")
+    git(tmp_path, "add", "agent.py")
+    git(tmp_path, "commit", "--quiet", "-m", "first")
+    sha = git(tmp_path, "rev-parse", "--short", "HEAD")
+
+    assert code_commit(tmp_path) == (sha, False)
+    (tmp_path / "agent.py").write_text("PROMPT = 'två'\n")
+    assert code_commit(tmp_path) == (sha, True)
+    git(tmp_path, "commit", "--quiet", "-am", "second")
+    (tmp_path / "new.py").write_text("")  # neither tracked nor ignored
+    assert code_commit(tmp_path)[1] is True
+
+
+def test_without_git_or_a_repository_the_commit_is_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_git(*args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError("git")
+
+    outside = outside_any_repository(tmp_path, monkeypatch)
+    monkeypatch.delenv("AVTALSAGENT_COMMIT", raising=False)
+    if shutil.which("git") is not None:  # a folder in no repository
+        assert code_commit(outside) == (None, False)
+        assert measured_commit(outside) == (None, False, None)
+    monkeypatch.setattr(subprocess, "run", no_git)
+    assert code_commit(outside) == (None, False)
+    assert measured_commit(outside) == (None, False, None)
+
+
+def test_where_git_cannot_tell_the_commit_is_taken_from_the_variable(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    told: tuple[str | None, bool] = (None, False)
+    monkeypatch.setattr(runner, "code_commit", lambda where: told)
+    monkeypatch.setenv("AVTALSAGENT_COMMIT", " 4ea5dd2\n")
+
+    assert measured_commit(Path("src")) == ("4ea5dd2", False, "environment")
+    told = ("abc1234", True)  # git can tell: it wins over the variable
+    assert measured_commit(Path("src")) == ("abc1234", True, "git")
+    told = (None, False)
+    monkeypatch.setenv("AVTALSAGENT_COMMIT", "`main`")  # no sha: left out, with a warning
+    with caplog.at_level(logging.WARNING, logger="evals.answers"):
+        assert measured_commit(Path("src")) == (None, False, None)
+    assert "AVTALSAGENT_COMMIT is not a commit sha" in caplog.text
+    monkeypatch.setenv("AVTALSAGENT_COMMIT", "  ")
+    assert measured_commit(Path("src")) == (None, False, None)
+
+
+def test_the_run_info_names_the_commit_and_the_prompts_hashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    where: list[Path] = []
+
+    def commit(path: Path) -> tuple[str | None, bool]:
+        where.append(path)
+        return "abc1234", True
+
+    monkeypatch.setattr(runner, "code_commit", commit)
+    args = build_parser().parse_args([])
+
+    info = run_info(Settings(_env_file=None), args, None)
+
+    assert (info.commit, info.commit_source, info.uncommitted) == ("abc1234", "git", True)
+    assert where == [Path(avtalsagent.__file__).parent]  # the code that is measured
+    assert info.system_prompt_sha256 == hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
+    assert info.reviewer_prompt_sha256 == hashlib.sha256(REVIEWER_PROMPT.encode()).hexdigest()
+    assert info.system_prompt_sha256 != info.reviewer_prompt_sha256
+    assert info.judge_prompt_sha256 is None  # no judge
+    judged = run_info(Settings(_env_file=None), args, "gpt-6-astra")
+    prompts = f"{JUDGE_PROMPT}\n\n{ASK_JUDGE_PROMPT}"
+    assert judged.judge_prompt_sha256 == hashlib.sha256(prompts.encode()).hexdigest()
+    # In compose's eval container git cannot tell, and the variable names the commit.
+    monkeypatch.setattr(runner, "code_commit", lambda path: (None, False))
+    monkeypatch.setenv("AVTALSAGENT_COMMIT", "4ea5dd2")
+    given = run_info(Settings(_env_file=None), args, None)
+    assert (given.commit, given.commit_source, given.uncommitted) == (
+        "4ea5dd2",
+        "environment",
+        False,
+    )
 
 
 def test_the_options_have_their_defaults() -> None:
@@ -237,6 +378,66 @@ async def test_a_refused_key_is_not_recorded_as_the_questions_error(
         await ask_question(settings, None, None, None, gold("q01"), 10)  # type: ignore[arg-type]
 
 
+@pytest.mark.anyio
+async def test_a_session_that_fails_after_an_ask_keeps_what_the_thread_saved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # As the agent's a04 on 2026-10-08 may have failed: a request of the MCP client fails in
+    # the session's task group, which cancels run_question; the thread has the ask all the same.
+    called = anyio.Event()
+
+    @tool
+    async def search_documents(query: str) -> str:
+        """Sök i dokumenten."""
+        called.set()
+        await anyio.sleep(60)  # the session fails while the call waits
+        raise AssertionError("not reached")
+
+    @asynccontextmanager
+    async def failing(settings: Settings) -> AsyncIterator[McpTools]:
+        async with anyio.create_task_group() as group:
+
+            async def request() -> None:
+                await called.wait()
+                raise httpx2.ReadError("")
+
+            group.start_soon(request)
+            try:
+                yield McpTools(
+                    tools=[search_documents],
+                    reader=DictReader([]),
+                    register=ListRegister(),
+                    amendments=DictAmendments(),
+                )
+            finally:
+                group.cancel_scope.cancel()
+
+    monkeypatch.setattr(runner, "open_mcp_tools", failing)
+    model = ScriptedModel(
+        script=[
+            tool_call("ask_user", {"question": "Vilket  delområde?", "options": ["1", "3"]}, "c1"),
+            tool_call("search_documents", {"query": "vite"}, "c2"),
+        ]
+    )
+    settings = Settings(_env_file=None, openai_api_key=SecretStr(SECRET))
+    checkpointer = InMemorySaver(serde=serializer())
+
+    with anyio.fail_after(10):
+        result = await ask_question(
+            settings, model, ScriptedReviewer(), checkpointer, asking("a04", False), 30
+        )
+
+    assert result.error == "avtal-mcp: ReadError: "
+    assert result.answer is None
+    assert (result.asked, result.asked_options) == (("Vilket delområde?",), (("1", "3"),))
+    assert result.model_calls == 2 and result.path_saved
+    assert [step.name for step in result.steps] == ["ask_user", "search_documents"]
+    assert sum(use.calls for use in result.usage.values()) == 2  # counted until the failure
+    # So the question is counted: the agent asked where it should not.
+    scored = score(asking("a04", False), result, None, None)
+    assert (scored.could_ask, scored.unnecessary_ask) == (True, True)
+
+
 # --- the run ----------------------------------------------------------------------------------
 
 
@@ -256,6 +457,7 @@ async def test_the_questions_run_at_once_and_the_results_keep_the_golds_order(
         question: GoldQuestion,
         t: float,
         trace: Any = None,
+        mode: str = "agent",
     ) -> QuestionRun:
         nonlocal running, most
         traces.append(trace)
@@ -322,6 +524,7 @@ async def test_with_tracing_each_question_is_a_trace_named_by_its_id_in_the_runs
         question: GoldQuestion,
         t: float,
         trace: Any = None,
+        mode: str = "agent",
     ) -> QuestionRun:
         traces[question.id] = trace["metadata"]
         return ANSWERED
@@ -491,17 +694,27 @@ def test_the_judges_model_needs_the_judge() -> None:
 
 def test_the_judge_is_made_on_the_judge_model(monkeypatch: pytest.MonkeyPatch) -> None:
     made: list[tuple[str, str]] = []
+    clients: list[tuple[str, object]] = []
 
     def make(settings: Settings, model: str, effort: str) -> Any:
         made.append((model, effort))
         return object()
+
+    def answer_judge(model: object) -> ModelJudge:
+        clients.append(("answer", model))
+        return ModelJudge.__new__(ModelJudge)
+
+    def ask_judge(model: object) -> ModelAskJudge:
+        clients.append(("ask", model))
+        return ModelAskJudge.__new__(ModelAskJudge)
 
     async def fake_evaluate(settings: Settings, gold: GoldFile, questions: Any, **kw: Any) -> Any:
         assert isinstance(kw["judge"], Judge)
         raise CommandError("stopp")
 
     monkeypatch.setattr(runner, "make_judge_model", make)
-    monkeypatch.setattr(runner, "ModelJudge", lambda model: ModelJudge.__new__(ModelJudge))
+    monkeypatch.setattr(runner, "ModelJudge", answer_judge)
+    monkeypatch.setattr(runner, "ModelAskJudge", ask_judge)
     monkeypatch.setattr(runner, "evaluate", fake_evaluate)
     monkeypatch.setattr(
         runner, "get_settings", lambda: Settings(_env_file=None, reviewer_model="the-reviewer")
@@ -513,3 +726,170 @@ def test_the_judge_is_made_on_the_judge_model(monkeypatch: pytest.MonkeyPatch) -
         runner.main(["--only", "q01", "--judge-model", "other", "--judge-effort", "high"])
 
     assert made == [("the-reviewer", "medium"), ("other", "high")]
+    # The ask judge is the answer judge's model at its effort: one client for both.
+    assert [role for role, _ in clients] == ["answer", "ask", "answer", "ask"]
+    assert clients[0][1] is clients[1][1] and clients[2][1] is clients[3][1]
+
+
+# --- the baseline and the questions to the user -----------------------------------------------
+
+
+def asking(id: str, should_ask: bool) -> GoldQuestion:
+    return replace(
+        gold(id),
+        should_ask=should_ask,
+        options=("Delområde 1", "Delområde 2"),
+        clarification="Delområde 2.",
+    )
+
+
+SEPARATES = AskJudgement(separates=True, reason="Båda delområdena går att välja.")
+
+
+class AskingJudge(FakeJudge):
+    """A FakeJudge that also judges the agent's questions to the user."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.asks: list[str] = []
+
+    async def judge_ask(
+        self, question: GoldQuestion, run: QuestionRun
+    ) -> tuple[AskJudgement | None, Mapping[str, TokenUse]]:
+        self.asks.append(question.id)
+        return SEPARATES, {"judge-model": TokenUse(calls=1)}
+
+
+def asked(*questions: str) -> QuestionRun:
+    return replace(ANSWERED, asked=questions, asked_options=tuple(("A", "B") for _ in questions))
+
+
+@pytest.mark.anyio
+async def test_the_judge_reads_the_clarification_as_the_reply_or_as_the_case_the_gold_assumes() -> (
+    None
+):
+    judge = AskingJudge()
+
+    await judge_answer(judge, asking("a01", True), ANSWERED)  # should ask, did not
+    await judge_answer(judge, asking("a01", True), asked("Vilket delområde?"))
+    await judge_answer(judge, asking("a02", False), ANSWERED)  # a control question
+    await judge_answer(judge, gold("q01"), asked("Vilket avtal?"))  # no clarification in the gold
+
+    assert judge.clarifications == ["Delområde 2.", "Delområde 2.", None, None]
+    assert judge.cases == [("Delområde 1", "Delområde 2"), (), (), ()]
+
+
+@pytest.mark.anyio
+async def test_only_a_question_that_should_ask_and_did_gets_the_ask_judge() -> None:
+    judge = AskingJudge()
+
+    assert await judge_ask(judge, asking("a01", True), ANSWERED) == (None, {})
+    assert await judge_ask(judge, asking("a05", False), asked("Större eller Mindre?")) == (None, {})
+    assert await judge_ask(judge, gold("q01"), asked("Vilket avtal?")) == (None, {})
+    assert await judge_ask(None, asking("a01", True), asked("Vilket?")) == (None, {})
+    verdict, usage = await judge_ask(judge, asking("a01", True), asked("Vilket delområde?"))
+
+    assert (verdict, usage) == (SEPARATES, {"judge-model": TokenUse(calls=1)})
+    assert judge.asks == ["a01"]
+
+
+@pytest.mark.anyio
+async def test_both_judges_tokens_and_the_ask_judgement_reach_the_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    modes: list[str] = []
+
+    async def ask(*args: Any, mode: str = "agent", **kwargs: Any) -> QuestionRun:
+        modes.append(mode)
+        return asked("Vilket delområde?")
+
+    async def reachable(settings: Settings) -> None:
+        return None
+
+    monkeypatch.setattr(runner, "make_agent_model", lambda settings: object())
+    monkeypatch.setattr(runner, "make_reviewer", lambda settings: object())
+    monkeypatch.setattr(runner, "check_mcp", reachable)
+    monkeypatch.setattr(runner, "ask_question", ask)
+    questions = (asking("a01", True),)
+
+    report = await evaluate(
+        Settings(_env_file=None),
+        replace(GOLD, questions=questions),
+        questions,
+        concurrency=1,
+        timeout=10,
+        judge=AskingJudge(),
+        info=info(mode="workflow"),
+    )
+
+    (result,) = report.results
+    assert modes == ["workflow"]
+    assert result.ask_judgement == SEPARATES and result.asked_right is True
+    assert result.judge_usage == {"judge-model": TokenUse(calls=2)}
+
+
+@pytest.mark.anyio
+async def test_the_workflow_mode_builds_the_baseline_and_replies_with_the_clarification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built: list[str] = []
+    replies: list[str | None] = []
+
+    @asynccontextmanager
+    async def tools(settings: Settings) -> AsyncIterator[Any]:
+        yield object()
+
+    def builder(name: str) -> Any:
+        def build(*args: Any, **kwargs: Any) -> str:
+            built.append(name)
+            return name
+
+        return build
+
+    async def fake_run(graph: Any, question: str, **kwargs: Any) -> QuestionRun:
+        replies.append(kwargs["clarification"])
+        return ANSWERED
+
+    monkeypatch.setattr(runner, "open_mcp_tools", tools)
+    monkeypatch.setattr(runner, "build_agent", builder("agent"))
+    monkeypatch.setattr(runner, "build_workflow", builder("workflow"))
+    monkeypatch.setattr(runner, "run_question", fake_run)
+    settings = Settings(_env_file=None)
+
+    await ask_question(settings, None, None, None, asking("a01", True), 10, mode="workflow")  # type: ignore[arg-type]
+    await ask_question(settings, None, None, None, gold("q01"), 10)  # type: ignore[arg-type]
+
+    assert built == ["workflow", "agent"]
+    assert replies == ["Delområde 2.", None]
+
+
+def test_the_mode_is_agent_by_default_and_names_the_prompt_measured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "code_commit", lambda path: ("abc1234", False))
+    assert build_parser().parse_args([]).mode == "agent"
+    args = build_parser().parse_args(["--mode", "workflow"])
+
+    info = run_info(Settings(_env_file=None), args, None)
+
+    assert info.mode == "workflow"
+    assert info.system_prompt_sha256 == hashlib.sha256(baseline_prompts().encode()).hexdigest()
+    assert workflow_template() in baseline_prompts() and PLAN_PROMPT in baseline_prompts()
+    assert info.system_prompt_sha256 != hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
+
+
+def test_a_workflow_run_is_named_so_in_its_reports(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def fake_evaluate(settings: Settings, gold: GoldFile, questions: Any, **kw: Any) -> Any:
+        report = fixed_report(tuple(questions), None)
+        return replace(report, info=kw["info"])
+
+    monkeypatch.setattr(runner, "evaluate", fake_evaluate)
+    monkeypatch.setattr(runner, "get_settings", lambda: Settings(_env_file=None))
+    monkeypatch.setattr(runner, "code_commit", lambda path: ("abc1234", False))
+
+    runner.main(["--mode", "workflow", "--only", "q01", "--no-judge", "--out", str(tmp_path)])
+
+    assert capsys.readouterr().out.startswith("Answer evaluation, gpt-6.1-sol (low, workflow)")
+    assert (tmp_path / "answers-gpt-6.1-sol-low-workflow.md").exists()

@@ -1,12 +1,13 @@
 # Demoskript
 
 Fem frågor som visar vad agenten gör: den frågar med alternativ när fallen är för många,
-väljer registret i stället för dokumenten, följer hänvisningar i flera steg, hittar en rättelse
-som ersätter klausulen och säger "framgår inte" i stället för att gissa. Fråga 3 och 4 visar det
-som ett fast workflow inte klarar, eftersom nästa steg beror på vad agenten just har läst. Fyra
-av frågorna kommer ur testsamlingen ([`evals/datasets/gold_sv.jsonl`](../evals/datasets/gold_sv.jsonl)),
-så de har ett facit och en mätning bakom sig. Den första är en öppnare variant av q04, gjord för
-att agenten ska behöva fråga.
+väljer registret i stället för dokumenten, tar sig i flera steg från en punkt till definitionen den
+bygger på, hittar en rättelse som ersätter klausulen och säger "framgår inte" i stället för att
+gissa. Fråga 3 och 4 visar det som ett fast workflow inte klarar, eftersom nästa steg beror på vad
+agenten just har läst. Fyra av frågorna kommer ur testsamlingen
+([`evals/datasets/gold_sv.jsonl`](../evals/datasets/gold_sv.jsonl)), så de har ett facit och en
+mätning bakom sig. Den första är en öppnare variant av q04, gjord för att agenten ska behöva
+fråga.
 
 Alla fem kördes mot den riktiga databasen 2026-10-07, både i terminalen och i webbappen, och
 reservfrågan i terminalen. Fråga 1 kördes då med den tidigare regel 4 i systemprompten.
@@ -23,10 +24,11 @@ och webbappen från PR #23. Hämta `main` före demot. Beslutet bakom urvalet st
 |---|---|---|---|---|---|
 | 1 | Uppsägningstiden i IT-drift | Agenten frågar med alternativ när fallen är för många | Verifierat | 51–54 s genom API:t mot ersättaren (37–46 s före syftet i stegen), utan din tid att svara | – |
 | 2 | q10 Nordlo Advance | Registret i stället för dokumenten | Verifierat | 12–14 s | 19 s |
-| 3 | q14 Lördagsarbete | Flera steg genom hänvisningar | Verifierat | 39–62 s | 50 s |
+| 3 | q14 Lördagsarbete | Flera steg utifrån det agenten läser | Verifierat | 39–62 s | 50 s |
 | 4 | q21 Antal anbud | En rättelse ersätter klausulen | Verifierat | 32–45 s | 36 s |
 | 5 | q27 Rangordnad etta | Agenten gissar inte | Inget svar eller Verifierat | 35–48 s | 31 s |
 | R | q24 Lägsta takpris | Jämförelse mellan leverantörer | Verifierat | – | 42 s |
+| F | Egna filer: jämför ett eget avtal | Agenten läser din fil och jämför den med ramavtalet | Verifierat mot ersättaren | – | 66 s för punkt 7 genom API:t, 4 min 19 s för hela avtalet |
 
 Tiderna för fråga 2–5 och reservfrågan kommer från körningarna mot den riktiga databasen, två i
 webbappen (q14 tre) och en i terminalen; terminalens tider räknar med att programmet startar.
@@ -50,7 +52,8 @@ Dagen före, på datorn du demonstrerar på:
    `docker compose --profile ingest run --rm ingest` (med tolkningscachen i `data/` tog det
    knappt tio minuter 2026-10-07, se [steg 12](steg/12-demo.md); cachen förklaras i
    [steg 9](steg/09-api.md)).
-3. Ställ alla fem frågorna och reservfrågan en gång i webbappen och notera tiderna.
+3. Ställ alla fem frågorna, reservfrågan och frågan om egna filer en gång i webbappen och
+   notera tiderna.
 4. Spara skärmbilder av svaren (nivå E nedan) och gärna en skärminspelning av hela demot
    (nivå C).
 
@@ -156,15 +159,16 @@ finns i registret eller i en kontrollerad källa går svaret tillbaka till agent
 **Om det går fel:** frågan är den snabbaste och mest stabila. Svarar den inte alls är det
 tjänsten, inte agenten: se felsökningen nedan.
 
-## Fråga 3: flera steg genom hänvisningar
+## Fråga 3: flera steg utifrån det agenten läser
 
 **Fråga:** `Vår inhyrda IT-tekniker, avropad genom rangordning, behöver jobba en lördag. Vad får bemanningsföretaget ta betalt för de timmarna?`
 
 **Vad som händer:** i terminalen tog agenten nio verktygsanrop: den hittade punkt 9.9.2 om
 särskild ersättning, letade efter ändringar, läste prisbilagan för rangordnade IT-tjänster, som
 hänvisar arbete utanför Arbetsdag till avsnittet Särskild ersättning, och läste definitionen av
-Arbetsdag i 9.2. I webbappen tog den sju steg och läste inte prisbilagan, och i en andra körning
-nio steg med prisbilagan. Ordningen och stegen kan variera.
+Arbetsdag i 9.2. I webbappen tog den sju steg och läste inte prisbilagan. I två senare körningar
+tog den tio och nio steg ([steg 12](steg/12-demo.md)), och i den med tio läste den prisbilagan
+mellan 9.9.2 och 9.2. Ordningen och stegen kan variera.
 
 **Visa:**
 - Stegen. Ingen enskild sökning ger svaret: det bygger på 9.9.2 och definitionen i 9.2, som står
@@ -176,8 +180,16 @@ nio steg med prisbilagan. Ordningen och stegen kan variera.
   visar PDF-sidan med citatet ur 9.9.2 markerat.
 
 **Säg:** "Det här är frågan som visar varför det är en agent. Svaret står i en punkt om särskild
-ersättning, som prisbilagan hänvisar till, och i en definition på ett annat ställe. Ingen enskild
-sökning ger båda. Agenten letar upp delarna själv, i flera steg."
+ersättning och i en definition på ett annat ställe, och ingen enskild sökning ger båda. Vilka
+avsnitt agenten läser, och när, avgör den utifrån det den just har läst, så vägen kan skilja sig
+mellan körningar: ibland läser den prisbilagan på vägen, ibland inte. Inläsningen kopplade 7 519
+av 10 080 hänvisningar till sina mål, men en definition är ingen hänvisning, så den får agenten
+leta upp själv."
+
+**Om någon pekar på systemprompten:** raden om `calculate_date` säger "Gäller det arbetsdagar, läs
+först hur avtalet definierar Arbetsdag." Säg: "Ja, prompten säger att definitionen av Arbetsdag
+ska läsas när arbetsdagar spelar roll. Var den står, och vilka andra avsnitt svaret behöver, får
+agenten ta reda på själv utifrån det den läser."
 
 **Rätt svar:** särskild ersättning efter överenskommelse: konsultens kompensation enligt
 kollektivavtalet gånger 2,0, där faktorn redan innehåller arbetsgivaravgift, OH och påslag
@@ -240,6 +252,64 @@ sortens fel testfrågorna finns för att mäta.
 Vägledning IT-drift (2.7.3). Ett takpris: leverantören får erbjuda lägre pris i avropssvaret.
 
 Använd den om en av de fem fallerar eller om det finns tid över.
+
+## Egna filer: jämför ett eget avtal
+
+Agenten läser en fil som du laddar upp och jämför den med ramavtalet
+([ADR 0026](adr/0026-egna-filer.md)). Avtalet är påhittat
+([`examples/uppladdning/`](../examples/uppladdning/README.md)): ett avrop från
+IT-konsulttjänster där fem klausuler avviker från ramavtalets allmänna villkor och fyra stämmer.
+
+**Före:** bygg PDF:en med
+`uv run python examples/uppladdning/render_pdf.py /tmp/exempelavtal-it-konsult.pdf`, eller ladda
+upp Markdown-filen som den är. Öppna en ny flik, bifoga filen med gemet i chattfältet och ställ
+frågan. Gemet kommer med webbappens ändring för uppladdning. Finns det inte, kör steget i
+terminalen (nedan).
+
+**Fråga:** `Jämför punkt 7 om skadestånd i mitt avtal med ramavtalet för IT-konsulttjänster. Vad avviker?`
+
+**Vad som händer:** agenten läser filen med `read_upload` ("Läser din fil") och ser att avtalet är
+ett avrop från ramavtal 23.3-1688-2024. Den söker i ramavtalets allmänna villkor, läser 2.19.8
+med `read_section` och kör `find_amendments` på det. Källorna ur filen märks "Din fil".
+
+**Visa:**
+- Stegen: agenten hittade själv vilket ramavtal filen hör till, ur filens egen text.
+- Att källorna kommer från två håll: "Din fil" med sidan och ramavtalets avsnitt med citatet.
+
+**Säg:** "Filen syns bara i samtalet där den laddades upp och tas bort efter sju dagar. Det agenten
+redan har läst ur den ligger kvar i samtalets historik. Filen tolkas i en egen process med gränser
+för storlek, sidor och tid. Filverktygen ligger i API:t, så avtal-mcp är oförändrat och kan
+fortfarande bara läsa ramavtalen. Kontrollen gäller citaten ur filen på samma sätt: varje citat ska
+stå ordagrant i avsnittet det anger."
+
+**Rätt svar:** ansvarstaket skiljer sig: 10 procent av kontraktets värde under hela tiden mot 50
+procent av medelvärdet per kontraktsår i 2.19.8, och det får avropet ändra. Men avtalet låter
+begränsningen gälla också vid grov oaktsamhet, och det undantaget får inte ändras.
+
+**Hela avtalet, om det finns tid:**
+`Jämför mitt avtal med ramavtalets allmänna villkor. Vad avviker?`
+
+Rätt svar är fem avvikelser: resor till stationeringsorten ersätts (2.9.1 säger nej), leverantören
+får begära prisjustering (2.9.2 säger nej), en faktureringsavgift på 45 kronor (2.11.1 säger nej),
+ett lägre vite (2.19.1.3, som avropet får ändra) och ansvarsbegränsningen vid grov oaktsamhet
+(2.19.8). [`examples/uppladdning/README.md`](../examples/uppladdning/README.md) har alla med
+avsnitten.
+
+**Status:** körd 2026-10-07 mot en ersättare för avtal-mcp, inte mot databasen och inte i
+webbappen. Punkt 7 tog 66 s genom API:t och blev Verifierat. Hela avtalet tog 4 min 19 s i
+terminalen, eftersom kontrollen underkände två utkast, och blev Verifierat med alla fem
+avvikelserna. Kör båda en gång dagen före.
+
+**I terminalen (nivå B):**
+
+```bash
+docker compose cp examples/uppladdning/exempelavtal-it-konsult.md api:/tmp/
+docker compose exec api python -m avtalsagent.agent --fil /tmp/exempelavtal-it-konsult.md \
+  "Jämför punkt 7 om skadestånd i mitt avtal med ramavtalet för IT-konsulttjänster. Vad avviker?"
+```
+
+**Om det går fel:** saknas gemet eller avvisas filen, kör steget i terminalen. Hittar agenten inte
+ramavtalet, säg i frågan att det är IT-konsulttjänster 1. Verksamhetens IT-behov.
 
 ## Frågor att undvika live
 

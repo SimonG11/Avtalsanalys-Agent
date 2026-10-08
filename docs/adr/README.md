@@ -6,7 +6,7 @@ Ett beslut ändras aldrig i efterhand. Ändras beslutet skrivs en ny ADR som ers
 | Nr | Beslut | Status |
 |---|---|---|
 | [0001](0001-workflow-for-inlasning-agent-for-fragor.md) | Workflow för inläsning, agent för frågor | Godkänt |
-| [0002](0002-langgraph-och-create-agent.md) | LangGraph som yttre graf, `create_agent` som agentnod | Godkänt |
+| [0002](0002-langgraph-och-create-agent.md) | LangGraph som yttre graf, `create_agent` som agentnod | Godkänt; den yttre grafen ersatt av 0013 |
 | [0003](0003-mcp-som-verktygslager.md) | MCP-server som agentens verktygslager | Godkänt |
 | [0004](0004-postgres-som-enda-databas.md) | PostgreSQL + pgvector som enda databas | Godkänt |
 | [0005](0005-openai-som-modellleverantor.md) | OpenAI som modellleverantör | Godkänt |
@@ -24,10 +24,13 @@ Ett beslut ändras aldrig i efterhand. Ändras beslutet skrivs en ny ADR som ers
 | [0017](0017-andringar.md) | `find_amendments` och regeln om senaste lydelsen: ändringar ur steg 4:s hänvisningar | Godkänt (PR #18) |
 | [0018](0018-andringar-efter-granskningen.md) | Ändringar efter granskningen: Kammarkollegiets meddelanden, fler ändringsord och frågans datum | Godkänt (PR #20) |
 | [0019](0019-matning-av-svaren.md) | Mätningen av agentens svar: samma körning som API:t, en domare mot facit och kostnaden som intervall | Godkänt (PR #21) |
-| [0020](0020-omrankning.md) | Omrankning: mätt med två modeller, inte inbyggd | Föreslaget |
+| [0020](0020-omrankning.md) | Omrankning: mätt med två modeller, inte inbyggd | Godkänt (PR #25) |
 | [0021](0021-sparning-med-langfuse.md) | Spårning med Langfuse: en spårning per fråga, samtalet som session, avstängd utan nycklar | Godkänt (PR #24) |
-| [0022](0022-demot.md) | Demot: fem frågor, fyra ur testsamlingen, körda mot den riktiga databasen, och README:n som ingång | Föreslaget (M12) |
+| [0022](0022-demot.md) | Demot: fem frågor, fyra ur testsamlingen, körda mot den riktiga databasen, och README:n som ingång | Godkänt (PR #26, M12) |
+| [0023](0023-langgraph-utan-yttre-graf.md) | LangGraph och `create_agent` också utan den yttre grafen | Föreslaget |
+| [0024](0024-baslinje-fast-workflow.md) | Baslinjen: ett fast arbetsflöde med agentens modell, kontroll och domare, och motfrågor i testsamlingen | Föreslaget |
 | [0025](0025-tankar-och-farre-motfragor.md) | Agentens tankar som eget syfte och OpenAI:s sammanfattningar, och färre motfrågor | Föreslaget |
+| [0026](0026-egna-filer.md) | Egna filer: API:t sparar dem per samtal, agenten läser dem med två egna verktyg och citaten kontrolleras som andra | Föreslaget |
 
 Mall: *Status*, *Kontext* (problemet), *Beslut*, *Konsekvenser* (vad vi vinner och vad det kostar),
 *Alternativ som valts bort*.

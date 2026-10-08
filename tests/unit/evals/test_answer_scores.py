@@ -5,6 +5,7 @@ them, so the scores are tested without a model or a server.
 """
 
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -21,8 +22,11 @@ from avtalsagent.agent.schemas import (
 from evals.answer_run import QuestionRun, TokenUse
 from evals.answer_scores import (
     NO_DRAFT_REASON,
+    AskSummary,
     CitedPlace,
     QuestionResult,
+    RuleCount,
+    ToolCount,
     by_category,
     cited_places,
     is_alternative,
@@ -33,7 +37,12 @@ from evals.answer_scores import (
     score,
     sources_found,
     summarize,
+    summarize_asks,
+    summarize_paths,
+    verdict_score,
 )
+from evals.answer_steps import Problem, Rejection, Step, TargetSource
+from evals.ask_judge import AskJudgement
 from evals.gold import Alternative, DocumentSource, GoldQuestion, GoldScope, RegisterSource
 from evals.judge import Judgement, Verdict
 
@@ -347,6 +356,73 @@ def test_an_empty_summary_has_zeros() -> None:
     assert percentile(summary.seconds, 0.9) == 0.0
 
 
+def read(target_from: TargetSource | None = None, found_by_search: bool = False) -> Step:
+    return Step(
+        "read_section",
+        {"sha256": TERMS, "section_position": 1},
+        target_from=target_from,
+        found_by_search=found_by_search,
+    )
+
+
+def test_the_paths_count_tools_model_calls_reads_and_rejections_by_rule() -> None:
+    cited = Rejection(
+        (Problem("citations", "a"), Problem("citations", "b"), Problem("register_facts", "c"))
+    )
+    reviewed = Rejection((Problem("review", "d"),))
+    runs = [
+        replace(
+            run(tools=("search_documents", "read_section", "read_section"), retries=2),
+            steps=(
+                Step("search_documents", {"query": "vite"}),
+                read(found_by_search=True),
+                read("reference", found_by_search=True),
+            ),
+            model_calls=6,
+            rejections=(cited, reviewed),
+        ),
+        replace(
+            run(tools=("read_section", "resolve_reference", "read_section")),
+            steps=(
+                read("amendment"),
+                Step("resolve_reference", {"sha256": TERMS, "section_position": 1}),
+                read("reference"),
+            ),
+            model_calls=16,
+        ),
+        replace(run(tools=()), model_calls=0),  # reached the graph, but no call finished
+        run(None, tools=(), error="avtal-mcp: ConnectError"),  # never reached the graph
+    ]
+
+    paths = summarize_paths([score(gold(id=f"q0{n}"), r, None, None) for n, r in enumerate(runs)])
+
+    assert paths.tools == {
+        "read_section": ToolCount(calls=4, questions=2),
+        "resolve_reference": ToolCount(calls=1, questions=1),
+        "search_documents": ToolCount(calls=1, questions=1),
+    }
+    assert list(paths.tools) == ["read_section", "resolve_reference", "search_documents"]
+    # The question that never reached the graph is not saved; the one without calls counts.
+    assert (paths.questions_saved, paths.not_saved) == (3, 1)
+    assert paths.model_calls == (6, 16, 0)
+    assert (paths.reads, paths.reads_from_references, paths.reads_from_amendments) == (4, 2, 1)
+    # Of the two reads from a reference, one went to a section a search had returned.
+    assert (paths.reads_from_references_only, paths.questions_from_references_only) == (1, 1)
+    assert paths.questions_from_references == 2
+    assert paths.rejections == {
+        "citations": RuleCount(drafts=1, questions=1, problems=2),
+        "register_facts": RuleCount(drafts=1, questions=1, problems=1),
+        "review": RuleCount(drafts=1, questions=1, problems=1),
+    }
+
+
+def test_the_paths_of_no_questions_are_empty() -> None:
+    paths = summarize_paths([])
+
+    assert (paths.tools, paths.model_calls, paths.reads, paths.rejections) == ({}, (), 0, {})
+    assert (paths.questions_saved, paths.not_saved) == (0, 0)
+
+
 def test_the_results_are_grouped_by_category_in_order() -> None:
     groups = by_category(results())
 
@@ -361,3 +437,145 @@ def test_the_percentile_is_nearest_rank() -> None:
     assert percentile(values, 0.5) == 5.0
     assert percentile([7.0], 0.9) == 7.0
     assert median([3.0, 1.0, 2.0]) == 2.0
+
+
+# --- questions to the user ---------------------------------------------------------------------
+
+SEPARATES = AskJudgement(separates=True, reason="Delområdena går att välja.")
+MIXES = AskJudgement(separates=False, reason="Delområde 1 och 3 slås ihop.")
+OPTIONS = ("Delområde 1", "Delområde 3")
+
+
+def asking(id: str, should_ask: bool | None) -> GoldQuestion:
+    question = replace(gold(id=id), should_ask=should_ask)
+    if should_ask is None:
+        return question
+    return replace(question, options=OPTIONS, clarification="Delområde 3.")
+
+
+def asked_run(*questions: str) -> QuestionRun:
+    """A run that reached the graph (its path was read), and asked `questions`."""
+    options = tuple(OPTIONS for _ in questions)
+    return replace(run(answer()), asked=questions, asked_options=options, model_calls=2)
+
+
+def test_an_ask_is_right_only_when_it_should_ask_asked_and_separates() -> None:
+    right = score(asking("a01", True), asked_run("Vilket?"), None, None, ask_judgement=SEPARATES)
+    mixed = score(asking("a02", True), asked_run("Vilket?"), None, None, ask_judgement=MIXES)
+    unjudged = score(asking("a03", True), asked_run("Vilket?"), None, None)
+    silent = score(asking("a04", True), asked_run(), None, None, ask_judgement=SEPARATES)
+
+    assert (right.asked, right.asked_right, right.unnecessary_ask) == (True, True, False)
+    assert (mixed.asked_right, unjudged.asked_right) == (False, None)
+    assert (silent.asked, silent.asked_right) == (False, False)
+    assert silent.ask_judgement is None  # a judgement of no question is not kept
+    assert right.expected_options == OPTIONS and right.should_ask is True
+
+
+def test_not_asking_is_right_where_it_should_not_and_an_ask_there_is_unnecessary() -> None:
+    quiet = score(asking("a05", False), asked_run(), None, None)
+    needless = score(asking("a06", False), asked_run("Större eller Mindre?"), None, None)
+    plain = score(asking("q01", None), asked_run("Vilket?"), None, None)
+    # A run that saved nothing does not show whether the agent asked, or did not.
+    broken = run(None, error="avtal-mcp: ConnectError")
+    lost = [
+        score(asking(id, should), broken, None, None)
+        for id, should in (("a07", True), ("a08", False))
+    ]
+
+    assert (quiet.asked_right, quiet.unnecessary_ask) == (True, False)
+    assert [(result.asked_right, result.unnecessary_ask) for result in lost] == [
+        (None, None),
+        (None, None),
+    ]
+    assert (needless.asked_right, needless.unnecessary_ask) == (False, True)
+    assert (plain.asked_right, plain.unnecessary_ask, plain.should_ask) == (None, None, None)
+
+
+def test_the_asks_summary_counts_the_asks_and_is_none_without_ask_questions() -> None:
+    results = [
+        score(asking("a01", True), asked_run("Vilket?"), None, None, ask_judgement=SEPARATES),
+        score(asking("a02", True), asked_run("Vilket?"), None, None, ask_judgement=MIXES),
+        score(asking("a03", True), asked_run("Vilket?"), None, None),
+        score(asking("a04", True), asked_run(), None, None),
+        score(asking("a05", False), asked_run("Båda?"), None, None),
+        score(asking("a06", False), asked_run(), None, None),
+        score(asking("q01", None), asked_run("Vilket?"), None, None),
+    ]
+
+    assert summarize_asks(results) == AskSummary(
+        should_ask=4,
+        asked=3,
+        separating=1,
+        unjudged=1,
+        should_not_ask=2,
+        asked_unnecessarily=1,
+    )
+    assert summarize_asks(results[-1:]) is None
+
+
+def test_a_run_that_saved_nothing_is_in_neither_count() -> None:
+    # As the agent's a04 on 2026-10-08: a transport error, and nothing of the run kept.
+    broken = run(None, error="avtal-mcp: ReadError")
+    results = [
+        score(asking("a01", True), asked_run("Vilket?"), None, None, ask_judgement=SEPARATES),
+        score(asking("a02", True), broken, None, None),
+        score(asking("a05", False), asked_run("Båda?"), None, None),
+        score(asking("a06", False), asked_run(), None, None),
+        score(asking("a07", False), broken, None, None),
+    ]
+
+    assert [result.could_ask for result in results] == [True, False, True, True, False]
+    assert summarize_asks(results) == AskSummary(
+        should_ask=1,
+        asked=1,
+        separating=1,
+        unjudged=0,
+        should_not_ask=2,
+        asked_unnecessarily=1,
+    )
+    # With only such runs there is nothing to count.
+    assert summarize_asks([results[1], results[4]]) is None
+
+
+def test_a_run_that_asked_before_its_state_was_lost_is_counted() -> None:
+    # Its state could not be read after it failed (run_question), but the asks it kept from
+    # the interrupts are there to judge.
+    cut = replace(
+        run(None, error="avtal-mcp: ReadError"), asked=("Vilket?",), asked_options=(OPTIONS,)
+    )
+    results = [
+        score(asking("a01", True), cut, None, None),
+        score(asking("a02", False), cut, None, None),
+    ]
+
+    assert [(result.could_ask, result.asked_right) for result in results] == [
+        (True, None),
+        (True, False),
+    ]
+    assert summarize_asks(results) == AskSummary(
+        should_ask=1,
+        asked=1,
+        separating=0,
+        unjudged=1,
+        should_not_ask=1,
+        asked_unnecessarily=1,
+    )
+
+
+def test_a_run_that_never_asks_asks_in_none_of_the_questions_that_should_ask() -> None:
+    results = [score(asking(f"a0{n}", True), asked_run(), None, None) for n in range(1, 5)]
+
+    asks = summarize_asks(results)
+
+    assert asks is not None and (asks.should_ask, asks.asked, asks.separating) == (4, 0, 0)
+    assert (asks.should_not_ask, asks.asked_unnecessarily) == (0, 0)
+
+
+def test_a_verdict_scores_one_a_half_or_none() -> None:
+    assert [verdict_score(v) for v in ("correct", "partly_correct", "incorrect", None)] == [
+        1.0,
+        0.5,
+        0.0,
+        None,
+    ]

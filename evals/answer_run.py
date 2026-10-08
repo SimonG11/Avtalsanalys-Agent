@@ -3,11 +3,15 @@
 What:
     `run_question(graph, question, ...)` asks the agent's graph one question
     in a thread of its own and returns a `QuestionRun`: the checked answer,
-    the draft it was checked from, the tools called, the agent's questions
-    to the user, the drafts the check sent back or the schema refused, the
-    time, the tokens of every model call by model, and the error, if any.
-    `UsageCounter` is the callback that counts the tokens, `TokenUse` one
-    model's count, and `cost` its price in dollars at PRICES.
+    the draft it was checked from, the tools called, every tool call with
+    its arguments (`answer_steps`), the agent's model calls, the agent's
+    questions to the user and the options it offered with each, the drafts
+    the check sent back (and why) or the schema refused, the time, the
+    tokens of every model call by model, and the error, if any.
+    `read_thread` reads the same from a run that was cut off from outside,
+    as its thread saved it. `UsageCounter` is the callback that counts the
+    tokens, `TokenUse` one model's count, and `cost` its price in dollars
+    at PRICES.
 
 Why:
     The measurement must see what a user gets and what it costs, from the
@@ -17,18 +21,35 @@ Why:
 
 How:
     The graph runs with `ainvoke` until it stops without an interrupt; a
-    stop at `ask_user` is resumed with ASK_USER_REPLY, since the gold
-    questions are meant to be answered as asked. `anyio.fail_after` bounds
-    the whole question. The final state is read even after an error: the
-    answer is None unless the check set one. The draft is the last
-    `FinalAnswer` call that parses (`last_draft`). The callback runs inline
-    and reads each call's model from LangChain's `ls_model_name` metadata
-    and its tokens from the message's `usage_metadata`; cached input and
-    reasoning are parts of the input and output tokens, as OpenAI reports
-    them. The price table has no price for cached input, so `cost` takes
-    the share of the input price that a cached token costs: 1 gives an
-    upper bound, 0 a lower one. An error is kept as its type and message,
-    with the key and the database password redacted.
+    stop at `ask_user` is resumed with the question's clarification when the
+    gold has one (a question that fits several agreements, where the gold
+    answer assumes the user's reply), else with ASK_USER_REPLY, since the
+    other gold questions are meant to be answered as asked. Each question
+    asked is kept with the options it offered, from the interrupt's
+    payload. `anyio.fail_after` bounds the whole question. The final state
+    is read even after an error: the answer is None unless the check set
+    one. The draft is the last
+    `FinalAnswer` call that parses (`last_draft`); the steps and the
+    rejections are read from the messages (`answer_steps`). The model calls
+    are the count `ModelCallLimitMiddleware` keeps in the thread's state:
+    every model call of the question, since each question has a thread of
+    its own, also those after an `ask_user` reply, although the limit
+    counts per run. A run that never reached the graph (its state is empty
+    or could not be read) saved neither steps, rejections nor model calls:
+    `path_saved` is false. A run cut off from outside, when its MCP session
+    fails and cancels `run_question`, loses the questions kept from the
+    interrupts, but its thread in the checkpointer outlives the session:
+    `read_thread` reads the state, and the questions and their options from
+    the `ask_user` calls in the messages (`asks_in`); the caller's
+    `UsageCounter`, passed to `run_question`, keeps the tokens counted until
+    then. The callback runs inline and reads each call's model from
+    LangChain's `ls_model_name` metadata and its tokens from the
+    message's `usage_metadata`; cached input and reasoning are parts of the
+    input and output tokens, as OpenAI reports them. The price table has no
+    price for cached input, so `cost` takes the share of the input price
+    that a cached token costs: 1 gives an upper bound, 0 a lower one. An
+    error is kept as its type and message, with the key and the database
+    password redacted.
 """
 
 import time
@@ -52,11 +73,14 @@ from avtalsagent.agent.graph import ANSWER_SUBMITTED, AvtalAgent
 from avtalsagent.agent.middleware import FINAL_ANSWER_TOOL
 from avtalsagent.agent.schemas import Answer, FinalAnswer
 from avtalsagent.observability.tracing import traced
+from evals.answer_steps import Rejection, Step, read_rejections, read_steps
 
 # What the measurement answers when the agent asks the user (ask_user).
 ASK_USER_REPLY = "Jag har inget att tillägga: svara utifrån frågan som den är ställd."
 # How long an error may be in the report.
 ERROR_CHARS = 300
+# The thread's model calls, as ModelCallLimitMiddleware counts them in the graph's state.
+MODEL_CALL_COUNT = "thread_model_call_count"
 
 
 @dataclass(frozen=True)
@@ -206,6 +230,17 @@ class QuestionRun:
     seconds: float
     usage: Mapping[str, TokenUse]  # by model: the agent's and the reviewer's calls
     error: str | None = None
+    # Left at their defaults by a run that never reached the graph: none of it was saved.
+    steps: tuple[Step, ...] = ()  # every tool call in order: avtal-mcp's, ask_user, each draft
+    model_calls: int | None = None  # the agent's model calls in the question
+    rejections: tuple[Rejection, ...] = ()  # why the check sent each draft back, in order
+    # The options the agent offered with each question in `asked`, in the same order.
+    asked_options: tuple[tuple[str, ...], ...] = ()
+
+    @property
+    def path_saved(self) -> bool:
+        """Whether the graph's state was read: the steps, model calls and rejections are saved."""
+        return self.model_calls is not None
 
 
 async def run_question(
@@ -216,17 +251,24 @@ async def run_question(
     timeout: float,
     redact: Callable[[str], str],
     trace: RunnableConfig | None = None,
+    clarification: str | None = None,
+    usage: UsageCounter | None = None,
 ) -> QuestionRun:
     """Ask `graph` the question and read what it did; an error or a timeout is recorded.
 
     `trace` is merged into the run's config: the tracing's callbacks and metadata.
+    `clarification` is the reply to the agent's questions to the user; ASK_USER_REPLY without.
+    `usage` counts the tokens, a new counter without: a caller that passes its own keeps the
+    count when the run is cut off from outside (`read_thread`).
     """
-    usage = UsageCounter()
+    usage = usage if usage is not None else UsageCounter()
     config = traced({"configurable": {"thread_id": thread_id}, "callbacks": [usage]}, trace or {})
     run_input: InputAgentState | Command[Any] = {
         "messages": [{"role": "user", "content": question}]
     }
     asked: list[str] = []
+    options: list[tuple[str, ...]] = []
+    reply = clarification if clarification is not None else ASK_USER_REPLY
     error: str | None = None
     started = time.monotonic()
     try:
@@ -237,7 +279,8 @@ async def run_question(
                 if not state.interrupts:
                     break
                 asked += [_asked(interrupt.value) for interrupt in state.interrupts]
-                run_input = Command(resume=_replies(state.interrupts))
+                options += [_offered(interrupt.value) for interrupt in state.interrupts]
+                run_input = Command(resume=_replies(state.interrupts, reply))
     except TimeoutError:
         error = f"tidsgränsen på {timeout:g} s nåddes"
     except Exception as failure:  # recorded; the next question is asked all the same
@@ -250,7 +293,51 @@ async def run_question(
         values = (await graph.aget_state(config)).values
     except Exception as failure:  # the checkpointer is in memory; this is not expected
         error = error or redact(error_text(failure))
-    return read_run(values, asked, seconds, usage.by_model, error)
+    return read_run(values, asked, seconds, usage.by_model, error, asked_options=options)
+
+
+async def read_thread(
+    graph: AvtalAgent,
+    thread_id: str,
+    seconds: float,
+    usage: Mapping[str, TokenUse],
+    error: str,
+) -> QuestionRun:
+    """A run cut off from outside `run_question`, as its thread in the checkpointer saved it.
+
+    When the MCP session fails during a run, its task group cancels `run_question`, and the
+    questions it kept from the interrupts go with it; they are read from the messages instead
+    (`asks_in`). A thread that holds nothing, or cannot be read, saved nothing of the run.
+    """
+    try:
+        values = (await graph.aget_state({"configurable": {"thread_id": thread_id}})).values
+    except Exception:  # in memory, so not expected; `error` already names the failure
+        values = {}
+    asked, options = asks_in(values.get("messages") or [])
+    return read_run(values, asked, seconds, usage, error, asked_options=options)
+
+
+def asks_in(
+    messages: Sequence[BaseMessage],
+) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]:
+    """The agent's questions to the user and the options of each, from its `ask_user` calls.
+
+    As the interrupts give them, without the interrupts: a call answered with an error (its
+    arguments did not fit the tool) asked nothing.
+    """
+    refused = {
+        message.tool_call_id
+        for message in messages
+        if isinstance(message, ToolMessage) and message.status == "error"
+    }
+    calls = [
+        call["args"]
+        for message in messages
+        if isinstance(message, AIMessage)
+        for call in message.tool_calls
+        if call["name"] == ask_user.name and call["id"] not in refused
+    ]
+    return tuple(_asked(args) for args in calls), tuple(_offered(args) for args in calls)
 
 
 def read_run(
@@ -259,6 +346,8 @@ def read_run(
     seconds: float,
     usage: Mapping[str, TokenUse],
     error: str | None,
+    *,
+    asked_options: Sequence[tuple[str, ...]] = (),
 ) -> QuestionRun:
     """The run as the graph's final state shows it."""
     messages: list[BaseMessage] = list(values.get("messages") or [])
@@ -286,6 +375,10 @@ def read_run(
         seconds=seconds,
         usage=dict(usage),
         error=error[:ERROR_CHARS] if error else None,
+        steps=read_steps(messages),
+        model_calls=int(values.get(MODEL_CALL_COUNT, 0)) if values else None,
+        rejections=read_rejections(messages),
+        asked_options=tuple(asked_options),
     )
 
 
@@ -338,7 +431,15 @@ def _asked(payload: Any) -> str:
     return " ".join(str(fields.get("question")).split())
 
 
-def _replies(interrupts: Sequence[Interrupt]) -> Any:
-    """ASK_USER_REPLY for each question, as `Command(resume=...)` takes them."""
-    replies = {interrupt.id: ASK_USER_REPLY for interrupt in interrupts}
-    return ASK_USER_REPLY if len(replies) == 1 else replies
+def _offered(payload: Any) -> tuple[str, ...]:
+    """The options a question to the user offered; none when it gave none."""
+    options = payload.get("options") if isinstance(payload, Mapping) else None
+    if not isinstance(options, list | tuple):
+        return ()
+    return tuple(" ".join(str(option).split()) for option in options)
+
+
+def _replies(interrupts: Sequence[Interrupt], reply: str) -> Any:
+    """`reply` for each question, as `Command(resume=...)` takes them."""
+    replies = {interrupt.id: reply for interrupt in interrupts}
+    return reply if len(replies) == 1 else replies

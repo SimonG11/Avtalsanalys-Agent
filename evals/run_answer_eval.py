@@ -10,15 +10,27 @@ What:
       its quotes the citation check found word for word;
     - which of the gold's document sources it cites with a checked quote,
       and which of the gold's agreements its register facts cover;
-    - how many new attempts the check asked for, which tools the agent
-      called, whether it asked the user, how long it took, and the tokens
-      and cost of each model (`answer_run`).
+    - how many new attempts the check asked for and why, which tools the
+      agent called with what arguments, how many model calls it made,
+      whether it asked the user, how long it took, and the tokens and cost
+      of each model (`answer_run`, `answer_steps`).
     It writes a Markdown report in Swedish and a JSON report to
-    evals/reports/ (`answers-<agent model>-<effort>[-<label>]`,
-    `answer_report`) and prints the overall numbers.
+    evals/reports/ (`answers-<agent model>-<effort>[-workflow][-<label>]`,
+    `answer_report`) and prints the overall numbers. `--mode workflow`
+    asks the baseline instead of the agent: a fixed workflow with the same
+    model, answer check, reviewer and bounds (`workflow_baseline`, ADR
+    0024); the scoring, the judge and the cost are the same.
+    For a gold question that says whether the agent should ask the user
+    (`should_ask`), the agent's questions get the gold's clarification as
+    the user's reply, the judge reads the clarification with the question
+    when the agent asked, and the question's cases and the one the gold
+    assumes when it should have asked and did not; an ask judge
+    (`ask_judge`) decides whether a question it should ask separates the
+    gold's options.
 
         uv run python -m evals.run_answer_eval
         uv run python -m evals.run_answer_eval --only q01 q21 --effort medium
+        uv run python -m evals.run_answer_eval --mode workflow
         docker compose --profile eval run --rm eval
 
 Why:
@@ -40,34 +52,52 @@ How:
     graph, as each run of the API does (ADR 0014), and its own thread in a
     memory checkpointer; `--concurrency` questions run at once, and each is
     judged as soon as it is answered. A question whose session fails is
-    recorded with its error, and the run goes on. Errors that stop the run
-    end it with one line and exit code 1, as the agent's command line does
-    (`describe_failure`); the OpenAI key and the database password are
-    never printed.
+    recorded with its error and what its thread saved (`read_thread`: the
+    failure cancels the run, but the checkpointer outlives the session), and
+    the run goes on. Errors that stop the run end it with one line and exit
+    code 1, as the agent's command line does (`describe_failure`); the
+    OpenAI key and the database password are never printed. Before the
+    questions, `run_info` notes what is measured: the commit of the
+    repository the agent's code is imported from, and whether its working
+    tree had changes (`code_commit`, by git), else the commit
+    AVTALSAGENT_COMMIT names (`measured_commit`; compose's `eval` container
+    has no git), else unknown; and the sha256 of SYSTEM_PROMPT (before the
+    date is filled in; in workflow mode of the baseline's
+    `baseline_prompts`), of REVIEWER_PROMPT and, with a judge, of
+    JUDGE_PROMPT and ASK_JUDGE_PROMPT together, so a report says which code
+    and prompts it measured, and by which prompts it was judged. The commit
+    is the code of this process: the agent and the measurement, and
+    avtal-mcp only over stdio.
 """
 
 import argparse
 import asyncio
+import hashlib
 import logging
+import os
+import re
+import subprocess
 import sys
 import time
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import anyio
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
+import avtalsagent
 from avtalsagent.agent.__main__ import CommandError, describe_failure
 from avtalsagent.agent.checkpointer import open_checkpointer
-from avtalsagent.agent.graph import build_agent
+from avtalsagent.agent.graph import AvtalAgent, build_agent
 from avtalsagent.agent.mcp_tools import open_mcp_tools
 from avtalsagent.agent.model import make_agent_model
-from avtalsagent.agent.reviewer import make_reviewer
+from avtalsagent.agent.prompts import SYSTEM_PROMPT
+from avtalsagent.agent.reviewer import REVIEWER_PROMPT, make_reviewer
 from avtalsagent.agent.schemas import Answer
 from avtalsagent.config import Settings, get_settings
 from avtalsagent.ingestion.__main__ import configure_logging, positive_int
@@ -75,7 +105,10 @@ from avtalsagent.observability.tracing import OFF as TRACING_OFF
 from avtalsagent.observability.tracing import Tracing, open_tracing
 from avtalsagent.validation.review import AnswerReviewer
 from evals.answer_report import (
+    COMMIT_VARIABLE,
     AnswerReport,
+    CommitSource,
+    Mode,
     RunInfo,
     check_writable,
     overall_lines,
@@ -87,12 +120,16 @@ from evals.answer_run import (
     TokenUse,
     UsageCounter,
     error_text,
+    read_thread,
     run_question,
     stops_the_run,
+    total_use,
 )
 from evals.answer_scores import JudgedBy, QuestionResult, rule_judgement, score
+from evals.ask_judge import ASK_JUDGE_PROMPT, AskJudgement, ModelAskJudge
 from evals.gold import GoldError, GoldFile, GoldQuestion, load_gold
-from evals.judge import Judgement, ModelJudge, ReasoningEffort, make_judge_model
+from evals.judge import JUDGE_PROMPT, Judgement, ModelJudge, ReasoningEffort, make_judge_model
+from evals.workflow_baseline import baseline_prompts, build_workflow
 
 _log = logging.getLogger("evals.answers")
 
@@ -102,18 +139,25 @@ DEFAULT_CONCURRENCY = 4
 DEFAULT_TIMEOUT = 600  # seconds per question, new attempts and the review included
 DEFAULT_JUDGE_EFFORT: ReasoningEffort = "medium"
 EFFORTS: tuple[ReasoningEffort, ...] = ("low", "medium", "high", "xhigh")
+GIT_TIMEOUT = 10  # seconds for each git command that finds the commit measured
+MODES: tuple[Mode, ...] = get_args(Mode)
 
 # --- The run (models, avtal-mcp) --------------------------------------------------------------
 
 
 class Judge:
-    """The judge and the tokens of its calls."""
+    """The judges (of the answer, and of a question to the user) and the tokens of their calls."""
 
-    def __init__(self, judge: ModelJudge) -> None:
+    def __init__(self, judge: ModelJudge, ask_judge: ModelAskJudge) -> None:
         self._judge = judge
+        self._ask_judge = ask_judge
 
     async def judge(
-        self, question: GoldQuestion, answer: Answer
+        self,
+        question: GoldQuestion,
+        answer: Answer,
+        clarification: str | None = None,
+        cases: Sequence[str] = (),
     ) -> tuple[Judgement | None, Mapping[str, TokenUse]]:
         usage = UsageCounter()
         judgement = await self._judge.judge(
@@ -121,6 +165,21 @@ class Judge:
             question.answer,
             question.answerable,
             answer.text,
+            config={"callbacks": [usage]},
+            clarification=clarification,
+            cases=cases,
+        )
+        return judgement, usage.by_model
+
+    async def judge_ask(
+        self, question: GoldQuestion, run: QuestionRun
+    ) -> tuple[AskJudgement | None, Mapping[str, TokenUse]]:
+        usage = UsageCounter()
+        judgement = await self._ask_judge.judge(
+            question.question,
+            question.options,
+            run.asked,
+            run.asked_options,
             config={"callbacks": [usage]},
         )
         return judgement, usage.by_model
@@ -134,24 +193,40 @@ async def ask_question(
     question: GoldQuestion,
     timeout: float,
     trace: RunnableConfig | None = None,
+    mode: Mode = "agent",
 ) -> QuestionRun:
-    """One question on its own MCP session and graph, as one run of the API."""
+    """One question on its own MCP session and graph, as one run of the API.
+
+    `mode` is the graph: the agent's (`build_agent`) or the baseline's (`build_workflow`).
+    A session that fails during the run cancels `run_question`; the run is then what its
+    thread saved (`read_thread`), with the tokens counted until then. Only a session that
+    never opened leaves nothing of the run.
+    """
+    build = build_workflow if mode == "workflow" else build_agent
+    thread_id = f"eval-{question.id}-{uuid.uuid4()}"
+    usage = UsageCounter()
+    graph: AvtalAgent | None = None
     started = time.monotonic()
     try:
         async with open_mcp_tools(settings) as mcp:
-            graph = build_agent(model, mcp, reviewer, checkpointer, settings)
+            graph = build(model, mcp, reviewer, checkpointer, settings)
             return await run_question(
                 graph,
                 question.question,
-                thread_id=f"eval-{question.id}-{uuid.uuid4()}",
+                thread_id=thread_id,
                 timeout=timeout,
                 redact=settings.redact,
                 trace=trace,
+                clarification=question.clarification,
+                usage=usage,
             )
     except Exception as error:  # the session to avtal-mcp failed; the run goes on
         if stops_the_run(error):
             raise
         message = settings.redact(f"avtal-mcp: {error_text(error)}")
+        seconds = time.monotonic() - started
+        if graph is not None:  # it failed during the run: the checkpointer outlives it
+            return await read_thread(graph, thread_id, seconds, usage.by_model, message)
         return QuestionRun(
             answer=None,
             draft=None,
@@ -160,7 +235,7 @@ async def ask_question(
             asked=(),
             check_retries=0,
             refused_drafts=0,
-            seconds=time.monotonic() - started,
+            seconds=seconds,
             usage={},
             error=message[:ERROR_CHARS],
         )
@@ -169,13 +244,31 @@ async def ask_question(
 async def judge_answer(
     judge: Judge | None, question: GoldQuestion, run: QuestionRun
 ) -> tuple[Judgement | None, JudgedBy | None, Mapping[str, TokenUse]]:
-    """The verdict on the run's answer: by rule, by the judge, or none without a judge."""
+    """The verdict on the run's answer: by rule, by the judge, or none without a judge.
+
+    When the agent asked the user, the judge reads the reply it got (the
+    gold's clarification) with the question, since the gold answer assumes it.
+    When the gold says it should ask and it did not (the baseline cannot), the
+    judge reads the question's cases and the one the gold assumes, so an answer
+    for that case, said to be for it, is not wrong for want of asking (ADR 0024).
+    """
     if run.answer is None or judge is None:
         return None, None, {}
     if (by_rule := rule_judgement(run)) is not None:
         return by_rule, "rule", {}
-    judgement, usage = await judge.judge(question, run.answer)
+    clarification = question.clarification if run.asked or question.should_ask else None
+    cases = question.options if question.should_ask and not run.asked else ()
+    judgement, usage = await judge.judge(question, run.answer, clarification, cases)
     return judgement, "judge", usage
+
+
+async def judge_ask(
+    judge: Judge | None, question: GoldQuestion, run: QuestionRun
+) -> tuple[AskJudgement | None, Mapping[str, TokenUse]]:
+    """The ask judge's verdict, for a question that should ask where the agent asked."""
+    if judge is None or question.should_ask is not True or not run.asked:
+        return None, {}
+    return await judge.judge_ask(question, run)
 
 
 async def check_mcp(settings: Settings) -> None:
@@ -205,9 +298,10 @@ async def evaluate(
     info: RunInfo,
     tracing: Tracing = TRACING_OFF,
 ) -> AnswerReport:
-    """Ask the agent every question, `concurrency` at a time, and score the answers.
+    """Ask the agent (or the baseline, by `info.mode`) every question, and score the answers.
 
-    With tracing on, each question is a trace named by its id, and the run their session.
+    `concurrency` questions run at once. With tracing on, each question is a
+    trace named by its id, and the run their session.
     """
     model = make_agent_model(settings)  # without a key, before a server is started
     reviewer = make_reviewer(settings)
@@ -228,10 +322,19 @@ async def evaluate(
                     name=question.id, session_id=session, tags=["eval", question.category]
                 )
                 run = await ask_question(
-                    settings, model, reviewer, checkpointer, question, timeout, trace=trace
+                    settings,
+                    model,
+                    reviewer,
+                    checkpointer,
+                    question,
+                    timeout,
+                    trace=trace,
+                    mode=info.mode,
                 )
                 judgement, judged_by, judge_usage = await judge_answer(judge, question, run)
-            result = score(question, run, judgement, judged_by, judge_usage)
+                asking, ask_usage = await judge_ask(judge, question, run)
+            usage = total_use([judge_usage, ask_usage])
+            result = score(question, run, judgement, judged_by, usage, ask_judgement=asking)
             results[index] = result
             done += 1
             _log.info(
@@ -279,6 +382,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--gold", type=Path, default=DEFAULT_GOLD, help=f"the gold file; default {DEFAULT_GOLD}"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=MODES,
+        default="agent",
+        help="ask the agent, or the baseline's fixed workflow (ADR 0024); default agent",
     )
     parser.add_argument(
         "--only", nargs="+", metavar="ID", help="ask only these questions, e.g. --only q01 q21"
@@ -341,7 +450,65 @@ def run_settings(settings: Settings, effort: ReasoningEffort | None) -> Settings
     return settings.model_copy(update=changes)
 
 
+def code_commit(where: Path) -> tuple[str | None, bool]:
+    """The short sha of the commit checked out at `where`, and whether the tree has changes.
+
+    Changes are what `git status` lists: edits, and files git neither tracks
+    nor ignores. (None, False) when git cannot tell: no git, or no repository
+    (compose's `eval` container has neither).
+    """
+    try:
+        head = _git(where, "rev-parse", "--short", "HEAD")
+        status = _git(where, "status", "--porcelain")
+    except (OSError, subprocess.SubprocessError):
+        return None, False
+    return head.strip() or None, bool(status.strip())
+
+
+_COMMIT_SHA = re.compile(r"[0-9a-fA-F]{4,40}")
+
+
+def measured_commit(where: Path) -> tuple[str | None, bool, CommitSource | None]:
+    """The commit measured, whether its tree had changes, and where the commit came from.
+
+    By git at `where` (`code_commit`); where git cannot tell, from
+    AVTALSAGENT_COMMIT, which compose's `eval` container is given with
+    `docker compose run -e AVTALSAGENT_COMMIT=$(git rev-parse --short HEAD)`.
+    Whether that tree had changes cannot be told then. A value that is no
+    commit sha is left out, with a warning.
+    """
+    commit, uncommitted = code_commit(where)
+    if commit is not None:
+        return commit, uncommitted, "git"
+    given = os.environ.get(COMMIT_VARIABLE, "").strip()
+    if not given:
+        return None, False, None
+    if not _COMMIT_SHA.fullmatch(given):
+        _log.warning("%s is not a commit sha (4 to 40 hex digits); left out", COMMIT_VARIABLE)
+        return None, False, None
+    return given, False, "environment"
+
+
+def _git(where: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-C", str(where), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=GIT_TIMEOUT,
+    )
+    return done.stdout
+
+
+def sha256_of(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def run_info(settings: Settings, args: argparse.Namespace, judge_model: str | None) -> RunInfo:
+    """How the run is made; the prompt's hash is the baseline's own in workflow mode."""
+    commit, uncommitted, source = measured_commit(Path(avtalsagent.__file__).parent)
+    mode: Mode = args.mode
+    prompt = baseline_prompts() if mode == "workflow" else SYSTEM_PROMPT
     return RunInfo(
         agent_model=settings.agent_model,
         agent_effort=settings.agent_reasoning_effort,
@@ -355,6 +522,15 @@ def run_info(settings: Settings, args: argparse.Namespace, judge_model: str | No
         concurrency=args.concurrency,
         timeout=float(args.timeout),
         label=args.label,
+        commit=commit,
+        commit_source=source,
+        uncommitted=uncommitted,
+        system_prompt_sha256=sha256_of(prompt),
+        reviewer_prompt_sha256=sha256_of(REVIEWER_PROMPT),
+        judge_prompt_sha256=(
+            sha256_of(f"{JUDGE_PROMPT}\n\n{ASK_JUDGE_PROMPT}") if judge_model else None
+        ),
+        mode=mode,
     )
 
 
@@ -374,11 +550,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise SystemExit(1) from None
     try:
         judge_model = None if args.no_judge else (args.judge_model or settings.reviewer_model)
-        judge = (
-            Judge(ModelJudge(make_judge_model(settings, judge_model, args.judge_effort)))
-            if judge_model
-            else None
-        )
+        judge = None
+        if judge_model:
+            judge_client = make_judge_model(settings, judge_model, args.judge_effort)
+            judge = Judge(ModelJudge(judge_client), ModelAskJudge(judge_client))
         check_writable(args.out)  # before the questions are paid for
         with open_tracing(settings) as tracing:
             report = asyncio.run(
