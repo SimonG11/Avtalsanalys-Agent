@@ -513,7 +513,7 @@ Rapporterna (fyra körningar och tre jämförelser) ligger utanför repot, efter
 
 Simon godkände de åtta oklara frågorna (v2) som facit 2026-10-08. Samma dag kördes de en gång för
 agenten och en gång för baslinjen, med resonemangsnivån `low` och mot ersättaren för avtal-mcp
-(ingen Postgres). Den nya regel 4 finns bara i PR #38 (som ersätter #34), så körningen gick på en
+(ingen Postgres). Den nya regel 4 fanns då bara i PR #38 (som ersatte #34), så körningen gick på en
 lokal gren där dess gren (`claude/tankar-fragor-2gc1kx`) var sammanslagen med den här (175b2ce, utan
 oincheckade ändringar, inte pushad). Modellerna och gränserna var desamma som i jämförelsen
 ovan, och svarsdomarens prompt likaså. Frågedomarens prompt i körningen följde den nya regel 4 och
