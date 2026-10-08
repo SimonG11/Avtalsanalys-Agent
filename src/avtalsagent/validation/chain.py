@@ -200,6 +200,7 @@ def _review_sources(
                     section_title=section.section_title,
                     text=section.text if same_as == source.id else "",
                     same_as=same_as if same_as != source.id else None,
+                    source=section.source,
                 )
             )
     return sources

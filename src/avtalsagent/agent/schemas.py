@@ -120,6 +120,10 @@ class FinalAnswer(BaseModel):
     )
 
 
+# Where a cited section is: the agreements' documents (avtal-mcp), or the user's own file.
+SourceKind = Literal["framework", "upload"]
+
+
 class Citation(BaseModel):
     """A checked source of the answer, as the web app's contract has it."""
 
@@ -133,6 +137,11 @@ class Citation(BaseModel):
     page: int | None  # the section's first PDF page; None for a Word file
     quote: str
     verified: bool  # the quote is word for word in the section's text
+    # Where the section is: a framework agreement's document, or a file the user uploaded in
+    # the conversation (ADR 0026); an upload's citation has its id, its file name as
+    # file_title, its file's hash as sha256 and no page_title.
+    source: SourceKind = "framework"
+    upload_id: str | None = None
 
 
 class RegisterFact(BaseModel):

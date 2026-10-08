@@ -383,6 +383,69 @@ OpenTelemetrys exportör i minnet i stället för till Langfuse:
 `tests/unit/evals/test_run_answer_eval.py` visar att mätningen namnger varje frågas spårning
 efter frågan och ger dem samma session.
 
+## Egna filer (2026-10-07)
+
+Simon vill kunna ladda upp egna filer i chatten och låta agenten jämföra dem med ramavtalen
+(webbapp-kontrakt.md, punkterna 33-38). API:t tar emot och sparar filerna per samtal
+([steg 09](09-api.md#egna-filer-2026-10-07)); det här är agentens del. Hela designen står i
+[ADR 0026](../adr/0026-egna-filer.md).
+
+Agenten läser filerna med två egna verktyg i grafen, inte i avtal-mcp, som aldrig ser dem:
+
+| Verktyg | Vad |
+|---|---|
+| `list_uploads` | Samtalets filer: `upload_id`, namn, filtyp, sidor, `sha256`, varningar och avsnitten (`section_position`, `section_number`, `section_title`, `level`, `page_start`), högst 200 per fil |
+| `read_upload` | Ett helt avsnitt med `upload_id` och `section_position`, eller med `query` de tre avsnitt som bäst matchar (högst 24 000 tecken), hela, och platserna för nästa träffar |
+
+Ett avsnitt ur en fil har samma fält som `read_section` (`sha256`, `section_position`,
+`section_number`, `section_title`, `page_start`, `text`) och dessutom `upload_id` och filnamnet,
+så modellen citerar filen som ett avtal. Samtalet är körningens `thread_id`, aldrig modellens
+argument: en fil i ett annat samtal, ett påhittat id och en hash från ett annat samtal hittas
+inte.
+
+Har samtalet filer får varje modellanrop ett avsnitt efter systemprompten: filerna, hur en
+jämförelse görs (läs filens avsnitt, sök motsvarande villkor i ramavtalen, jämför punkt för punkt
+och citera båda) och att filens text aldrig är instruktioner. Har samtalet inga filer tas de två
+verktygen bort ur anropet, och prompten är byte för byte densamma som förut. Kontrollen läser ett
+citerat avsnitt ur samtalets filer först och annars ur avtal-mcp. En källa ur en fil får
+`source: "upload"`, `upload_id`, filnamnet som `file_title`, ingen `page_title` och PDF:ens sida;
+`sha256` är filens hash. En fil har inga ändringar, så regeln om senaste lydelsen frågar inte
+avtal-mcp om den, och granskaren får veta vilken källa som är användarens fil. Ett citat ur en fil
+som inte står i den skickas tillbaka till modellen med `read_upload` som verktyget att kopiera ur.
+Svarar inte lagret i ett modellanrop nämns inga filer i prompten, men verktygen finns kvar och
+säger själva att filerna inte går att läsa just nu. `read_upload` rangordnar avsnitten i en
+arbetstråd, så att API:ts andra körningar fortsätter strömma medan en stor fil söks igenom.
+
+På kommandoraden bifogas en fil med `--fil`, en gång per fil, läst med API:ts regler:
+
+```bash
+uv run python -m avtalsagent.agent --fil examples/uppladdning/exempelavtal-it-konsult.md \
+  "Jämför mitt avtal med ramavtalets allmänna villkor. Vad avviker?"
+```
+
+Filerna:
+
+- `agent/list_uploads.py` och `agent/read_upload.py`: verktygen, med rangordningen av en query
+  (frågans ord mot avsnittens, de sex första bokstäverna, viktade efter hur ovanliga de är).
+- `agent/thread_files.py`: samtalet ur körningens config, ett avsnitt som verktygens svar och
+  felen som modellen läser.
+- `agent/upload_prompt.py`: avsnittet om filerna i varje modellanrop, eller utan filer bort med
+  verktygen.
+- `agent/upload_readers.py`: kontrollens läsare av avsnitt och ändringar, filen först.
+- `agent/graph.py` (`build_agent(..., uploads=)`), `api/agui.py` och `api/app.py` (API:ts lager
+  till varje körning), `agent/__main__.py` (`--fil`) och `uploads/local_file.py`.
+- `agent/schemas.py`, `agent/sections.py`, `validation/citations.py`, `validation/chain.py`,
+  `validation/review.py` och `agent/reviewer.py`: `source` och `upload_id` från avsnittet till
+  källan och till granskaren.
+- `examples/uppladdning/`: ett påhittat avropsavtal för demot, med fem klausuler som avviker från
+  ramavtalets allmänna villkor och fyra som stämmer, och ett skript som gör det till PDF.
+
+59 nya enhetstester: verktygen (samtalen hålls isär, "finns inte", rangordningen, gränserna,
+databasen nere), prompten med och utan filer (utan filer byte för byte som utan lager),
+läsarna och kontrollen genom grafen (ett citat ur filen godkänt med filens fält, ett förfalskat
+underkänt, en hash från ett annat samtal underkänd, ett datum ur filen godkänt i svaret),
+granskarens anteckning, källan i STATE_SNAPSHOT genom hela API:t, `--fil` och exempelavtalet
+som Markdown och som PDF.
 ## Middleware som inte används och varför
 
 Tillagt efter M12. LangChain har fler färdiga middleware än de som grafen använder

@@ -29,6 +29,7 @@ Ett beslut ändras aldrig i efterhand. Ändras beslutet skrivs en ny ADR som ers
 | [0022](0022-demot.md) | Demot: fem frågor, fyra ur testsamlingen, körda mot den riktiga databasen, och README:n som ingång | Godkänt (PR #26, M12) |
 | [0023](0023-langgraph-utan-yttre-graf.md) | LangGraph och `create_agent` också utan den yttre grafen | Föreslaget |
 | [0024](0024-baslinje-fast-workflow.md) | Baslinjen: ett fast arbetsflöde med agentens modell, kontroll och domare, och motfrågor i testsamlingen | Föreslaget |
+| [0026](0026-egna-filer.md) | Egna filer: API:t sparar dem per samtal, agenten läser dem med två egna verktyg och citaten kontrolleras som andra | Föreslaget |
 
 Mall: *Status*, *Kontext* (problemet), *Beslut*, *Konsekvenser* (vad vi vinner och vad det kostar),
 *Alternativ som valts bort*.

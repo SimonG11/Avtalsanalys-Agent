@@ -42,6 +42,13 @@ ENV_VARS = (
     "CHECKPOINTER",
     "API_HOST",
     "API_PORT",
+    "UPLOAD_STORE",
+    "UPLOAD_MAX_BYTES",
+    "UPLOAD_MAX_PAGES",
+    "UPLOAD_MAX_CHARACTERS",
+    "UPLOAD_MAX_PER_THREAD",
+    "UPLOAD_MAX_TOTAL_BYTES",
+    "UPLOAD_RETENTION_DAYS",
 )
 
 
@@ -233,3 +240,33 @@ def test_get_settings_returns_same_instance() -> None:
     get_settings.cache_clear()
 
     assert get_settings() is get_settings()
+
+
+def test_uploads_are_kept_in_memory_with_the_contracts_limits_by_default() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.upload_store == "memory"  # docker compose sets postgres for the API
+    assert settings.upload_max_bytes == 10 * 1024 * 1024  # webbapp-kontrakt.md, point 33
+    assert (settings.upload_max_pages, settings.upload_max_characters) == (300, 1_500_000)
+    assert settings.upload_max_per_thread == 5
+    assert settings.upload_max_total_bytes == 2 * 1024**3
+    assert settings.upload_retention_days == 7  # point 38
+
+
+def test_upload_settings_are_read_and_checked(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UPLOAD_STORE", "postgres")
+    monkeypatch.setenv("UPLOAD_RETENTION_DAYS", "1")
+    settings = Settings(_env_file=None)
+    assert (settings.upload_store, settings.upload_retention_days) == ("postgres", 1)
+
+    monkeypatch.setenv("UPLOAD_STORE", "disk")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+    monkeypatch.setenv("UPLOAD_STORE", "memory")
+    monkeypatch.setenv("UPLOAD_MAX_BYTES", "0")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+    monkeypatch.setenv("UPLOAD_MAX_BYTES", "1")
+    monkeypatch.setenv("UPLOAD_MAX_TOTAL_BYTES", "0")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
