@@ -22,9 +22,10 @@ påstående, inte ett mätt resultat.
 - **Agentens motfrågor mäts inte.** ADR 0019 ger `ask_user` ett fast svar ("svara utifrån frågan
   som den är ställd"), eftersom testfrågorna ska gå att besvara som de är ställda. Att fråga
   användaren när frågan passar flera delområden med olika svar är en av sakerna ett arbetsflöde
-  inte kan, men det syns inte i siffrorna. Det finns ett utkast med sju oklara frågor (fyra där
-  agenten ska fråga och tre kontroller där svaret är detsamma i alla alternativ), ännu inte
-  godkänt och därför inte i repot.
+  inte kan, men det syns inte i siffrorna. De oklara frågorna i
+  `evals/datasets/ambiguous_sv.jsonl` är åtta, skrivna för den nya regel 4 (PR #38): två där
+  agenten ska fråga, tre där den ska svara för varje fall och tre kontroller där svaret är
+  detsamma i alla alternativ ([steg 11](../steg/11-utvardering.md)).
 - **Ingen Postgres i utvecklingsmiljön.** Som i ADR 0019 körs mätningen mot den tillfälliga
   ersättaren för avtal-mcp, och mot den riktiga databasen där den finns.
 
@@ -103,8 +104,11 @@ påstående, inte ett mätt resultat.
    fel svar mot ett facit som bygger på ett förtydligande svaret aldrig fick. En andra domare (samma
    modell och nivå) avgör om motfrågan låter användaren välja mellan de väntade alternativen, och en
    motfråga räknas som rätt bara då. För en kontrollfråga är det rätt att inte fråga, och en
-   motfråga räknas som onödig. Rapporten får avsnittet Motfrågor. Baslinjen kan inte fråga och får 0
-   av de frågor där den borde.
+   motfråga räknas som onödig. Detsamma gäller en fråga med få fall och korta svar, där agenten
+   enligt den nya regel 4 (PR #38) ska svara för vart och ett och facit täcker alla fall. En
+   fråga där inget av körningen sparades räknas inte bland motfrågorna, eftersom det inte går
+   att se om agenten frågade. Rapporten får avsnittet Motfrågor. Baslinjen kan inte fråga och får
+   0 av de frågor där den borde.
 7. **Jämförelsen körs mot ersättaren för avtal-mcp** tills den riktiga databasen finns där
    mätningen körs. Rapporten säger vilken avtal-mcp den mätte, som förut.
 
@@ -136,9 +140,24 @@ påstående, inte ett mätt resultat.
   ligger i repot (`evals/reports/` ignoreras), i
   `/mnt/project-files/case-tokentek/implementering/matning-2026-10-07/`. Jämförelsen bör köras
   om mot den riktiga databasen innan den visas.
+- **Resultat, oklara frågor (2026-10-08, mot ersättaren, med PR #38).** De åtta oklara frågorna
+  kördes på `low`, en gång per arm. Agenten frågade i båda frågorna där den skulle men skilde
+  fallen åt bara i a08, frågade i onödan i a02 och a07 (2 av 5 med den rättade räkningen, där
+  a04 inte räknas; rapporterna säger 2 av 6) och fick 6 av 8 mot baslinjens 5 av 8, där agentens
+  a04 föll på ett transportfel. En omkörning av a04 för sig, på samma commit, gav Delvis rätt
+  utan motfråga: agenten svarade bara för ett av fyra delområden, som baslinjen gjorde för ett
+  annat. Den ingår inte i talen. Granskningen för hand höll med domarna, men åtta frågor visar
+  ett mönster och ingen säker skillnad
+  ([steg 11](../steg/11-utvardering.md#resultat-de-oklara-frågorna-2026-10-08)). De tre luckor
+  som granskningen fann är rättade efter körningen: en körning där inget sparades räknades bland
+  motfrågorna (och en session som föll under körningen kastade det som körningen hade sparat),
+  metodtexten sade att ett svar utan motfråga alltid bedöms mot frågan som den ställdes, och
+  frågedomarens regel 1 sade inte att undantaget för fler än fem alternativ behåller förbudet mot
+  att slå ihop alternativ med olika svar. Rapporterna ligger i
+  `/mnt/project-files/case-tokentek/implementering/matning-2026-10-08/`. Också den här körningen
+  bör göras om mot den riktiga databasen.
 - Motfrågornas domare är en språkmodell, som svarsdomaren, och kan döma fel; dess skäl står i
-  rapporten. Med fyra frågor där agenten ska fråga är talet grovt, och utkastet behöver godkännas
-  innan det läggs i repot.
+  rapporten. Med två frågor där agenten ska fråga är talet grovt.
 - Varje fråga körs en gång per läge, som i ADR 0019, så en enskild fråga kan skifta mellan
   körningar. Bootstrapintervallet tar hänsyn till antalet frågor, inte till att agenten svarar
   olika från gång till gång.

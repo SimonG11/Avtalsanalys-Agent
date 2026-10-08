@@ -45,6 +45,30 @@ def test_the_request_has_the_question_the_expected_options_and_the_agents_questi
     )
 
 
+def test_the_prompt_follows_rule_4_and_the_five_options_of_ask_user() -> None:
+    # Rule 4 of the agent's prompt (PR #34): ask when the cases are too many or the answer
+    # depends on the user's own case. ask_user takes at most five options, so a question with
+    # more expected options is judged on whether it asks for what decides the answer. Its other
+    # options may still not merge expected options with different answers, as rules 1 and 2
+    # say alike; the option "annat", where the user gives their case, merges none.
+    assert (
+        "Frågan passar flera avtal, delområden eller fall med olika svar, eller svaret beror på "
+        "uppgifter om användarens eget fall. Agenten ska därför fråga användaren vilket som "
+        "gäller innan den svarar."
+    ) in ASK_JUDGE_PROMPT
+    assert (
+        "Är de väntade alternativen fler än fem räcker det att motfrågan frågar efter det som "
+        "avgör svaret och låter användaren ange sitt fall, till exempel med ett alternativ för "
+        '"annat", eftersom agenten kan ge högst fem alternativ. Även då får inget av agentens '
+        "övriga alternativ slå ihop väntade alternativ som har olika svar; ett alternativ för "
+        '"annat", där användaren anger sitt fall, slår inte ihop dem.'
+    ) in ASK_JUDGE_PROMPT
+    assert (
+        "separates = false när motfrågan saknar ett väntat alternativ som användaren kan behöva, "
+        "slår ihop väntade alternativ som har olika svar,"
+    ) in ASK_JUDGE_PROMPT
+
+
 def test_every_question_asked_is_shown_numbered_with_its_options_or_none() -> None:
     content = str(ask_messages(QUESTION, EXPECTED, ["Vilket?", "Säker?"], [["A"]])[1].content)
 

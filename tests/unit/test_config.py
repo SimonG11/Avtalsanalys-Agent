@@ -35,6 +35,7 @@ ENV_VARS = (
     "FETCH_DELAY_SECONDS",
     "ACCEPTED_FINDINGS_FILE",
     "AGENT_REASONING_EFFORT",
+    "AGENT_REASONING_SUMMARY",
     "AGENT_MODEL_CALL_LIMIT",
     "VALIDATION_RETRIES",
     "REVIEWER_REASONING_EFFORT",
@@ -153,6 +154,7 @@ def test_the_agents_defaults() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.agent_reasoning_effort == "low"
+    assert settings.agent_reasoning_summary == "auto"
     assert settings.agent_model_call_limit == 16
     assert settings.validation_retries == 2
     assert settings.reviewer_reasoning_effort == "low"
@@ -162,6 +164,7 @@ def test_the_agents_defaults() -> None:
 
 def test_the_agents_settings_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_REASONING_EFFORT", "medium")
+    monkeypatch.setenv("AGENT_REASONING_SUMMARY", "off")
     monkeypatch.setenv("AGENT_MODEL_CALL_LIMIT", "8")
     monkeypatch.setenv("VALIDATION_RETRIES", "0")
     monkeypatch.setenv("REVIEWER_REASONING_EFFORT", "high")
@@ -169,6 +172,7 @@ def test_the_agents_settings_are_read_from_environment(monkeypatch: pytest.Monke
     settings = Settings(_env_file=None)
 
     assert settings.agent_reasoning_effort == "medium"
+    assert settings.agent_reasoning_summary == "off"
     assert settings.agent_model_call_limit == 8
     assert settings.validation_retries == 0
     assert settings.reviewer_reasoning_effort == "high"
@@ -179,6 +183,8 @@ def test_the_agents_settings_are_read_from_environment(monkeypatch: pytest.Monke
     [
         # The agent model takes four levels and refuses "none" (measured in the M7 spike).
         ("AGENT_REASONING_EFFORT", "none"),
+        # OpenAI's summaries, or "off"; not OpenAI's null.
+        ("AGENT_REASONING_SUMMARY", "none"),
         ("AGENT_MODEL_CALL_LIMIT", "0"),
         ("VALIDATION_RETRIES", "-1"),
         ("REVIEWER_REASONING_EFFORT", "none"),

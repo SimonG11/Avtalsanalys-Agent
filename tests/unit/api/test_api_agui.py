@@ -19,6 +19,7 @@ import anyio
 import httpx
 import pytest
 from fastapi import FastAPI
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -177,6 +178,17 @@ def app_with(
     open_trace: OpenTracing = open_tracing,
 ) -> tuple[FastAPI, ScriptedModel]:
     model = ScriptedModel(script=script)
+    return app_on(model, tools=tools, sessions=sessions, open_trace=open_trace), model
+
+
+def app_on(
+    model: BaseChatModel,
+    *,
+    tools: list[BaseTool] | None = None,
+    sessions: Sessions | BreakingSessions | None = None,
+    open_trace: OpenTracing = open_tracing,
+) -> FastAPI:
+    """The app with `model` as the agent's model, and the rest as in every test here."""
     open_tools = (sessions or Sessions(tools or [search_documents])).open
 
     @asynccontextmanager
@@ -187,7 +199,7 @@ def app_with(
     def open_documents(settings: Settings) -> Iterator[DocumentFiles]:
         yield NoDocuments()
 
-    app = create_app(
+    return create_app(
         app_settings(),
         make_model=lambda settings: model,
         make_answer_reviewer=lambda settings: ScriptedReviewer(),
@@ -196,7 +208,6 @@ def app_with(
         open_documents=open_documents,
         open_trace=open_trace,
     )
-    return app, model
 
 
 @asynccontextmanager

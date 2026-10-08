@@ -56,6 +56,16 @@ Why:
       on from there: a client could set `answer` (or the check's private
       `fallback_answer` and `validation_retries`) and skip the check. The
       web app sends neither; the graph's input is the messages alone.
+    The agent model's reasoning summaries (ADR 0025) go through as the
+    library sends them: REASONING_* events before the tool calls of the
+    same model call, and in MESSAGES_SNAPSHOT a message with the role
+    "reasoning" before the model's message. The client's reasoning
+    messages are dropped: the checkpoint already has every summary in the
+    model's messages. After a run that failed or was stopped there is no
+    MESSAGES_SNAPSHOT, and the client keeps the model's message under the
+    streamed id, not the checkpoint's; the library would fold a summary
+    sent back into that message, add it as new, and OpenAI would get the
+    same reasoning item twice and refuse every later call in the thread.
     Each run gets its own session to avtal-mcp. Over HTTP a call that
     fails (avtal-mcp restarting, a timeout) ends its session as well as
     the run (ADR 0013); a session shared by all runs would then fail every
@@ -131,9 +141,9 @@ OpenTools = Callable[[Settings], AbstractAsyncContextManager[McpTools]]
 class AvtalAguiAgent(LangGraphAgent):
     """`LangGraphAgent` with its snapshots, errors, client state and resumes fitted to the API.
 
-    A snapshot holds only the answer, an error names no internals, the client's state is
-    dropped, and the answers to waiting `ask_user` questions go to them by id where an id names
-    a question (`_build_command_from_agui_resume`).
+    A snapshot holds only the answer, an error names no internals, the client's state and
+    reasoning messages are dropped, and the answers to waiting `ask_user` questions go to them
+    by id where an id names a question (`_build_command_from_agui_resume`).
     """
 
     def get_state_snapshot(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -200,12 +210,19 @@ def _another_questions_answer(entry: ResumeEntry, waiting: str) -> bool:
 
 
 def _without_client_state(input: RunAgentInput) -> RunAgentInput:
-    """`input` without the client's state and the key that would write it into the graph."""
+    """`input` without the client's state, the key that writes it in, and reasoning messages.
+
+    The checkpoint has every reasoning item in the model's messages.
+    """
     props = input.forwarded_props
     if isinstance(props, dict):
         # The library reads node_name in any spelling it turns into snake case (nodeName).
         props = {k: v for k, v in props.items() if k.replace("_", "").lower() != "nodename"}
-    return input.model_copy(update={"state": {}, "forwarded_props": props})
+    # After a run that failed or was stopped (no MESSAGES_SNAPSHOT), a summary the client kept
+    # sits before an assistant message the checkpoint has under another id: the library would
+    # add it as new, and OpenAI would get the rs_ item twice.
+    messages = [message for message in input.messages if message.role != "reasoning"]
+    return input.model_copy(update={"state": {}, "forwarded_props": props, "messages": messages})
 
 
 def make_agui_agent(graph: AvtalAgent, config: RunnableConfig | None = None) -> AvtalAguiAgent:

@@ -46,7 +46,12 @@ How:
     percentile bootstrap says nothing (on three questions all of one sign
     its interval has no width), so only the mean is shown. Which run is the
     agent and which the baseline comes from each report's mode (a report
-    made before the mode was recorded is the agent's). Numbers are written
+    made before the mode was recorded is the agent's). The questions to the
+    user are counted from each question's row by `answer_scores.
+    summarize_asks`, as the run's own report counts them: a question whose
+    run saved nothing (no model calls, and no question to the user) is in
+    neither count. The report's own `asks` is not read, so a report
+    written before that rule is counted the same way. Numbers are written
     with `report_text`, as in `answer_report`.
 """
 
@@ -55,12 +60,12 @@ import json
 import statistics
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from evals.answer_report import UNJUDGED_NAME, VERDICT_NAMES
-from evals.answer_scores import verdict_score
+from evals.answer_scores import summarize_asks, verdict_score
 from evals.judge import Verdict
 from evals.metrics import paired_bootstrap
 from evals.report_text import (
@@ -100,6 +105,14 @@ class QuestionRow:
     cost: tuple[float, float] | None
     error: str | None
     judged: bool  # whether the run had a judge
+    should_ask: bool | None = None  # the gold's; None when it does not say
+    asked: bool = False  # whether the agent asked the user
+    asked_right: bool | None = None  # as `answer_scores.QuestionResult.asked_right`
+
+    @property
+    def could_ask(self) -> bool:
+        """Whether the run shows if the agent asked: its model calls were saved, or it asked."""
+        return self.model_calls is not None or self.asked
 
     @property
     def score(self) -> float | None:
@@ -130,7 +143,7 @@ class RunReport:
     gold_sha256: str
     gold_path: str
     questions: tuple[QuestionRow, ...]
-    asks: Mapping[str, int] | None  # answer_scores.AskSummary, when the gold says
+    asks: Mapping[str, int] | None  # answer_scores.AskSummary of the rows, when the gold says
     # How the run was made, as its report's RunInfo gives it; None where it does not.
     judge_model: str | None = None  # also None without a judge (--no-judge)
     judge_effort: str | None = None
@@ -183,6 +196,10 @@ def load_run(path: Path) -> RunReport:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         run, gold = data["run"], data["gold"]
+        questions = tuple(
+            _row_of(item, judged=run.get("judge_model") is not None) for item in data["questions"]
+        )
+        asks = summarize_asks(questions)
         return RunReport(
             path=path,
             mode=str(run.get("mode") or "agent"),
@@ -191,11 +208,8 @@ def load_run(path: Path) -> RunReport:
             label=run.get("label"),
             gold_sha256=str(gold["sha256"]),
             gold_path=str(gold["path"]),
-            questions=tuple(
-                _row_of(item, judged=run.get("judge_model") is not None)
-                for item in data["questions"]
-            ),
-            asks=data.get("asks"),
+            questions=questions,
+            asks=asdict(asks) if asks is not None else None,
             judge_model=run.get("judge_model"),
             judge_effort=run.get("judge_effort"),
             judge_prompt_sha256=run.get("judge_prompt_sha256"),
@@ -227,6 +241,9 @@ def _row_of(item: Mapping[str, Any], judged: bool) -> QuestionRow:
         cost=(float(cost["low"]), float(cost["high"])) if cost else None,
         error=item.get("error"),
         judged=judged,
+        should_ask=item.get("should_ask"),
+        asked=bool(item.get("asked")),
+        asked_right=item.get("asked_right"),
     )
 
 
@@ -489,7 +506,8 @@ def _md_asks(a: RunReport, b: RunReport) -> list[str]:
         "",
         "Frågade när den borde: frågor där testsamlingen säger att agenten ska fråga "
         "användaren, och i parentes de där domaren fann att motfrågan skiljer alternativen åt "
-        "och de motfrågor den inte bedömde." + baseline,
+        "och de motfrågor den inte bedömde. I båda raderna räknas inte en fråga där inget av "
+        "körningen sparades, så A och B kan ha olika många frågor." + baseline,
         "",
     ]
 
