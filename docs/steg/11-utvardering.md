@@ -381,8 +381,8 @@ a09), tre där den ska svara för varje fall (a01, a02 och a04) och tre kontroll
 detsamma överallt (a05, a06 och a07). Frågan a03 är struken, eftersom den ligger på gränsen mellan
 få fall och för många. Frågorna är skrivna för den nya regel 4, så mätningen av den kräver både
 den här grenen och PR #34 (regel 4 och `ask_user` med 2–5 alternativ); den här grenen ensam mäter
-den gamla regeln. Frågedomarens prompt och rapportens metodtext följer den nya regeln. Filen är
-ett utkast som väntar på Simons godkännande. Kör
+den gamla regeln. Frågedomarens prompt och rapportens metodtext följer den nya regeln. Simon
+godkände frågorna som facit 2026-10-08 (resultatet står nedan). Kör
 `uv run python -m evals.run_answer_eval --gold evals/datasets/ambiguous_sv.jsonl`, med
 `--mode workflow` för baslinjen, och gärna med `--label oklara`, eftersom rapportens namn inte
 säger vilken testsamling den mätte.
@@ -499,6 +499,105 @@ Rapporterna (fyra körningar och tre jämförelser) ligger utanför repot, efter
 
 ```
 /mnt/project-files/case-tokentek/implementering/matning-2026-10-07/
+```
+
+### Resultat: de oklara frågorna (2026-10-08)
+
+Simon godkände de åtta oklara frågorna (v2) som facit 2026-10-08. Samma dag kördes de en gång för
+agenten och en gång för baslinjen, med resonemangsnivån `low` och mot ersättaren för avtal-mcp
+(ingen Postgres). Den nya regel 4 finns bara i PR #34, så körningen gick på en lokal gren där
+PR #34:s gren (`claude/tankar-fragor-2gc1kx`) var sammanslagen med den här (commit 175b2ce, utan
+oincheckade ändringar, inte pushad). Modellerna, gränserna och domarna var desamma som i
+jämförelsen ovan, och frågedomarens prompt hade raden om fler än fem alternativ. Ingen fråga
+kördes om. Agentens a04 föll efter 16 s på "avtal-mcp: ReadError", utan svar och utan sparade
+steg. Ersättaren loggade inget fel och svarade på de andra frågorna, så orsaken är okänd. a04
+räknas som fel i poängen.
+
+| Mått | Agenten | Baslinjen | B−A |
+|---|---|---|---|
+| Rätt (poäng) | 6 av 8 | 5 av 8 | −12 p.e. (för få frågor för ett intervall) |
+| Rätt, delvis rätt, fel | 5, 2, 0 och a04 fel i körningen | 3, 4, 1 | – |
+| Kontrollerade svar | 7 av 8 | 8 av 8 | – |
+| Facits källor citerade | 9 av 17 | 9 av 17 | +4 p.e. (andel per fråga) |
+| Tid per fråga (median, längst) | 45 s, 150 s | 39 s, 117 s | – |
+| Modellanrop per fråga (median) | 7 | 2 | – |
+| Kostnad, agent och granskare | 0,85–2,12 USD | 1,16–1,52 USD | – |
+| Kostnad, domarna | 0,16 USD | 0,19 USD | – |
+
+Båda körningarna kostade 2,36–3,99 USD med domarna. Agentens körning tog 171 s och baslinjens
+183 s, fyra frågor åt gången.
+
+Per grupp (poäng som ovan):
+
+| Grupp | Agentens motfrågor | Agentens svar | Baslinjens svar |
+|---|---|---|---|
+| A, ska fråga (a08, a09) | i 2 av 2, skiljer fallen åt i 1 (a08) | 2 av 2 | 2 av 2 |
+| B, svara för varje fall (a01, a02, a04) | i onödan i 1 av 2 (a02) | 2 av 3 | 1 av 3 |
+| C, kontroller (a05, a06, a07) | i onödan i 1 av 3 (a07) | 2 av 3 | 2 av 3 |
+
+Baslinjen kan inte fråga: 0 av 2 i grupp A och ingen onödig motfråga. Svaren räknas för sig. I
+grupp A fick båda Rätt på båda frågorna, eftersom domaren läser vilket fall facit bygger på när
+ingen frågar (domarens regel 7). Baslinjens a09 är hela tabellen med sju takpriser, alltså det
+långa svar som grupp A ska undvika. Baslinjens enda fel är a01, där den svarade att underlaget
+inte räcker. Utan a04 blir poängen 6 av 7 för agenten mot 4,5 av 7 för baslinjen.
+
+Agentens motfrågor:
+
+- **a08** (demots fråga 1): "Vilken uppsägning gäller din fråga?" med fyra alternativ: vi som
+  avropare säger upp utan skäl, vi säger upp för leverantörens avtalsbrott, leverantören säger upp
+  vårt kontrakt, och uppsägning av själva ramavtalet. De motsvarar facits fyra fall ett mot ett,
+  och domaren fann att motfrågan skiljer dem åt. Likheten är väntad: facits alternativ är tagna
+  ur agentens egna körningar av demot (`docs/demo.md`), inte ur prompten. Svaret efter
+  förtydligandet var rätt.
+- **a09:** "Vilken ramavtalsleverantör anlitar ni på IT-drift Större?" med fyra alternativ:
+  Advania eller Videnca, Iver eller Orange, Fujitsu eller Shibuya, och Nordlo. Facit har sju
+  leverantörer, och `ask_user` tar högst fem alternativ. Varje par har två olika takpriser (1 116
+  och 733, 585 och 744, 1 321 och 1 324 kr), så domaren fann att motfrågan inte skiljer fallen
+  åt. Paren behövdes inte: ett av fem alternativ var oanvänt, och agenten frågade direkt efter
+  registret, innan den hade läst pristabellen. Svaret efter förtydligandet (Iver, 585 kr per
+  timme exklusive moms) var rätt.
+- **a02** (grupp B, onödig): agenten läste båda taken (50 och 25 procent) och frågade sedan om
+  delområdet, och dessutom om kontraktsvärde, skada och särskilda villkor. Svaret för alla fem
+  delområden kom först när mätningen svarade "Svara för alla". a01 är därför den enda frågan i
+  grupp B där agenten svarade för alla fall utan att fråga; a04 mättes inte.
+- **a07** (kontroll, onödig): agentens första utkast svarade utan att fråga, men granskaren
+  skickade tillbaka det, eftersom regeln bara var citerad för Programvarulösningar. Först då
+  frågade agenten om delområdet. Rätt drag var att hitta den gemensamma källan, vägledningens 2.8,
+  som agenten fann efter svaret på motfrågan.
+
+**Granskningen för hand.** Två granskningar prövade alla bedömningar: svaren mot facit och
+avsnittens lagrade text, och motfrågorna mot regel 4. Ingen av dem är oenig med domarna, och alla
+59 citat står ordagrant i sitt avsnitt. Två bedömningar ligger nära gränsen. Baslinjens a07 är
+delvis rätt men nästan rätt, och fylligare än agentens a07, som fick samma bedömning. Agentens a01
+är rätt, fast "nej" för uppdrag på högst 1 000 timmar bara är underförstått. Granskningen fann tre
+fel i räkningen och texten, som inte är rättade här:
+
+- "Frågade i onödan i 2 av 6" räknar a04, som aldrig nådde agenten. Rätt tal är 2 av 5
+  (baslinjen 0 av 5). `summarize_asks` i `evals/answer_scores.py` utesluter inte en körning som
+  aldrig nådde grafen, och samma lucka skulle räkna en fråga i grupp A som föll som "frågade
+  inte".
+- Rapportens metodtext (punkten Motfrågor i `evals/answer_report.py`) säger att ett svar utan
+  motfråga bedöms "mot frågan som den ställdes". I grupp A får domaren i stället fallen och facits
+  fall (regel 7), och det är därför baslinjen fick Rätt på a08 och a09.
+- Frågedomarens regel 1 säger inte att undantaget för fler än fem alternativ behåller förbudet mot
+  att slå ihop alternativ med olika svar. Domaren höll fast vid förbudet i a09, och granskningen
+  håller med, men det vilar på ett enda utfall. En mening i prompten skulle göra det stabilt.
+
+**Vad åtta frågor kan visa.** Varje arm kördes en gång, och grupp A har två frågor. En fråga är
+12,5 procentenheter, och jämförelsen ger inget intervall under tio frågor. B−A på −12 p.e. är
+alltså ingen säker skillnad, särskilt som a04 står för en del av den. Frågorna visar ett mönster:
+agenten frågar när regel 4 säger att den ska, men ger inte alltid alternativ som skiljer fallen åt
+(a09), och den frågar också där den borde svara för alla fall (a02) eller där svaret är detsamma
+(a07). De visar inte hur ofta det händer. En ny körning kan ge andra motfrågor, och domarens
+bedömning av a09 kan skifta. Grupp A ligger nära guldfrågorna (a08 är q04 efter förtydligandet
+och a09 ligger nära q24), så den mäter frågandet mer än svaren. Körningen gick mot ersättaren och
+bör göras om mot den riktiga databasen.
+
+Rapporterna (två körningar, en jämförelse och `LASMIG.md`) ligger utanför repot, eftersom
+`evals/reports/` ignoreras av git:
+
+```
+/mnt/project-files/case-tokentek/implementering/matning-2026-10-08/
 ```
 
 ### Tester
