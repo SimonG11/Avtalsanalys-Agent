@@ -11,7 +11,13 @@ What:
     gives the `PathSummary` of how the agent went about them: the calls per
     tool, its model calls, the sections it read from a reference (and of
     those, the ones no earlier search had returned), and the check's
-    rejections by rule.
+    rejections by rule. `verdict_score` scores a verdict (correct 1,
+    partly correct 0.5, incorrect 0), as the runs are compared
+    (`compare_answer_runs`). For a gold question that says whether the
+    agent should ask the user (`should_ask`), a result also has the ask
+    judge's verdict (`ask_judge`), whether the agent asked as it should
+    (`asked_right`) and whether it asked without need (`unnecessary_ask`);
+    `summarize_asks` gives their `AskSummary`.
 
 Why:
     The report's numbers come from plain values, so they can be tested
@@ -30,7 +36,12 @@ How:
     incorrect by rule. Percentiles are nearest-rank. The path's numbers
     count the questions whose path was saved (`QuestionRun.path_saved`):
     every question but one that never reached the graph, which is counted
-    as not saved instead of as no calls.
+    as not saved instead of as no calls. An ask is right for a question
+    that should ask only when the agent asked and the ask judge found that
+    its question separates the expected options; one the ask judge did not
+    judge (no judge, or no verdict) is neither right nor wrong (None). For a
+    question that should not ask, not asking is right. A run that never
+    asks (the fixed workflow) scores 0 of the questions that should ask.
 """
 
 import math
@@ -44,6 +55,7 @@ from avtalsagent.agent.schemas import Answer, AnswerStatus, FinalAnswer
 from avtalsagent.domain.identifiers import agreement_key
 from evals.answer_run import QuestionRun, TokenUse, cost_range, total_use
 from evals.answer_steps import CHECK_RULES, READ_SECTION, CheckRule, Step, rule_counts
+from evals.ask_judge import AskJudgement
 from evals.gold import Alternative, DocumentSource, GoldQuestion, RegisterSource
 from evals.judge import Judgement, Verdict
 
@@ -53,6 +65,8 @@ NO_DRAFT_REASON = "Agenten kom inte fram till ett svar inom gränsen för modell
 VERDICTS: tuple[Verdict, ...] = ("correct", "partly_correct", "incorrect")
 STATUSES: tuple[AnswerStatus, ...] = ("verified", "with_reservation", "no_answer")
 JudgedBy = Literal["judge", "rule"]
+# The right-score of a verdict: what the runs' comparison averages.
+VERDICT_SCORES: Mapping[Verdict, float] = {"correct": 1.0, "partly_correct": 0.5, "incorrect": 0.0}
 
 # --- Scoring (pure) ---------------------------------------------------------------------------
 
@@ -86,7 +100,37 @@ class QuestionResult:
     register_extra: int  # agreements the answer declares that the gold does not name
     judgement: Judgement | None
     judged_by: JudgedBy | None
-    judge_usage: Mapping[str, TokenUse] = field(default_factory=dict)
+    judge_usage: Mapping[str, TokenUse] = field(default_factory=dict)  # both judges' calls
+    should_ask: bool | None = None  # the gold's; None when it does not say
+    expected_options: tuple[str, ...] = ()  # the gold's options for the agent's question
+    ask_judgement: AskJudgement | None = None  # None unless it should ask, asked and was judged
+
+    @property
+    def asked(self) -> bool:
+        """Whether the agent asked the user at least once."""
+        return bool(self.run.asked)
+
+    @property
+    def asked_right(self) -> bool | None:
+        """Asked when it should, with a question that separates; did not when it should not.
+
+        None when the gold does not say, for an ask the ask judge did not judge, and
+        for a run that never reached the graph (it could not ask).
+        """
+        if self.should_ask is None:
+            return None
+        if not self.run.path_saved and not self.asked:
+            return None
+        if not self.should_ask:
+            return not self.asked
+        if not self.asked:
+            return False
+        return self.ask_judgement.separates if self.ask_judgement is not None else None
+
+    @property
+    def unnecessary_ask(self) -> bool | None:
+        """Asked although the gold says it should not; None when the gold does not say."""
+        return None if self.should_ask is None else (self.asked and not self.should_ask)
 
     @property
     def status(self) -> AnswerStatus | None:
@@ -189,8 +233,9 @@ def score(
     judgement: Judgement | None,
     judged_by: JudgedBy | None,
     judge_usage: Mapping[str, TokenUse] | None = None,
+    ask_judgement: AskJudgement | None = None,
 ) -> QuestionResult:
-    """The question's result: the run, its sources and register rows scored, and the verdict."""
+    """The question's result: the run, its sources and register rows scored, and the verdicts."""
     places = cited_places(run.answer, run.draft)
     required, found, extra = register_score(question, run.answer)
     return QuestionResult(
@@ -210,7 +255,15 @@ def score(
         judgement=judgement,
         judged_by=judged_by if judgement is not None else None,
         judge_usage=dict(judge_usage or {}),
+        should_ask=question.should_ask,
+        expected_options=question.options,
+        ask_judgement=ask_judgement if question.should_ask and run.asked else None,
     )
+
+
+def verdict_score(verdict: Verdict | None) -> float | None:
+    """Correct 1, partly correct 0.5, incorrect 0; None for an answer not judged."""
+    return VERDICT_SCORES[verdict] if verdict is not None else None
 
 
 # --- Summaries (pure) -------------------------------------------------------------------------
@@ -295,6 +348,35 @@ def summarize(results: Sequence[QuestionResult]) -> Summary:
         seconds=tuple(r.run.seconds for r in results),
         cost=cost_range(usage),
         usage=usage,
+    )
+
+
+@dataclass(frozen=True)
+class AskSummary:
+    """Whether the agent asked the user where the gold says it should, and where not."""
+
+    should_ask: int  # questions where it should ask
+    asked: int  # of those, where it asked
+    separating: int  # of those, where the ask judge found its question separates the options
+    unjudged: int  # of those, where the ask judge gave no verdict
+    should_not_ask: int  # questions where it should answer without asking
+    asked_unnecessarily: int  # of those, where it asked
+
+
+def summarize_asks(results: Sequence[QuestionResult]) -> AskSummary | None:
+    """The `AskSummary` of `results`; None when no question says whether to ask."""
+    should = [r for r in results if r.should_ask is True]
+    should_not = [r for r in results if r.should_ask is False]
+    if not should and not should_not:
+        return None
+    asked = [r for r in should if r.asked]
+    return AskSummary(
+        should_ask=len(should),
+        asked=len(asked),
+        separating=sum(1 for r in asked if r.asked_right),
+        unjudged=sum(1 for r in asked if r.asked_right is None),
+        should_not_ask=len(should_not),
+        asked_unnecessarily=sum(1 for r in should_not if r.asked),
     )
 
 

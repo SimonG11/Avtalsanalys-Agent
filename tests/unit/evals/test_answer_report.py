@@ -27,8 +27,10 @@ from evals.answer_report import (
 from evals.answer_run import ASK_USER_REPLY, QuestionRun, TokenUse
 from evals.answer_scores import rule_judgement, score
 from evals.answer_steps import Problem, Rejection, Step
+from evals.ask_judge import AskJudgement
 from evals.gold import Alternative, DocumentSource, GoldQuestion, GoldScope
 from evals.judge import Judgement
+from evals.workflow_baseline import FIXED_STEPS
 
 SHA = "a1" * 32
 NBSP = " "
@@ -230,6 +232,7 @@ def test_the_markdown_without_a_judge_says_so() -> None:
     assert "- **Domare:** ingen (--no-judge)" in markdown
     assert "Frågor som avtalen inte besvarar" not in markdown
     assert "Domaren svarade inte" not in markdown
+    assert "domarnas prompter" not in markdown
     assert overall_lines(unjudged)[1] == "judge: none (--no-judge)"
 
 
@@ -556,6 +559,7 @@ def test_the_run_names_the_commit_and_the_prompts_it_measured() -> None:
             "uncommitted": True,
             "system_prompt_sha256": "5a" * 32,
             "reviewer_prompt_sha256": "6b" * 32,
+            "judge_prompt_sha256": "7c" * 32,
         }
     )
     markdown = render_markdown(replace(report(), info=measured))
@@ -569,7 +573,8 @@ def test_the_run_names_the_commit_and_the_prompts_it_measured() -> None:
     # The agent's prompt is hashed as the template, before the date is filled in.
     assert (
         "- **Prompter, sha256:** agentens systemprompt `5a5a5a5a5a5a` (mallen `SYSTEM_PROMPT`, "
-        "innan dagens datum fylls i), granskarens prompt `6b6b6b6b6b6b`" in markdown
+        "innan dagens datum fylls i), granskarens prompt `6b6b6b6b6b6b`, domarnas prompter "
+        "`7c7c7c7c7c7c` (`JUDGE_PROMPT` och `ASK_JUDGE_PROMPT`)\n" in markdown
     )
     assert (
         "- **Agent:** gpt-6.1-sol, resonemang low, högst 16 modellanrop per körning av grafen "
@@ -595,7 +600,8 @@ def test_the_run_names_the_commit_and_the_prompts_it_measured() -> None:
     )
     assert (
         "- **Prompter, sha256:** agentens systemprompt inte sparat (mallen `SYSTEM_PROMPT`, "
-        "innan dagens datum fylls i), granskarens prompt inte sparat" in unknown
+        "innan dagens datum fylls i), granskarens prompt inte sparat, domarnas prompter inte "
+        "sparat (`JUDGE_PROMPT` och `ASK_JUDGE_PROMPT`)\n" in unknown
     )
 
 
@@ -679,3 +685,128 @@ def test_what_is_missing_and_wrong_is_one_sentence_each() -> None:
         "- **q18 Delvis rätt.** Rätt pris men utan moms. Saknas: Att priset är exklusive moms. "
         "Motsäger facit: Sju anbud; Fel datum." in markdown
     )
+
+
+# --- the baseline and the questions to the user -----------------------------------------------
+
+OPTIONS = ("Delområde 1", "Delområde 3")
+SEPARATES = AskJudgement(separates=True, reason="Båda delområdena går att välja.")
+
+
+def asking(id: str, should_ask: bool) -> GoldQuestion:
+    return replace(gold(id), should_ask=should_ask, options=OPTIONS, clarification="Delområde 3.")
+
+
+def asked(answer: Answer, *questions: str) -> QuestionRun:
+    return replace(run(answer), asked=questions, asked_options=tuple(("1", "3") for _ in questions))
+
+
+def ask_report(info: RunInfo = INFO) -> AnswerReport:
+    answered = Answer(text="Minst 10 miljoner kronor [1].", status="verified", citations=[CITED])
+    correct = Judgement(verdict="correct", missing=[], wrong=[], reason="Samma belopp.")
+    results = (
+        score(
+            asking("a01", True),
+            asked(answered, "Vilket delområde?"),
+            correct,
+            "judge",
+            None,
+            ask_judgement=SEPARATES,
+        ),
+        score(asking("a02", True), run(answered), None, None),
+        score(asking("a05", False), asked(answered, "Större eller Mindre?"), correct, "judge"),
+        score(asking("a06", False), run(answered), correct, "judge"),
+        score(gold("q01"), run(answered), correct, "judge"),
+    )
+    return replace(report(), info=info, results=results)
+
+
+def test_the_asks_section_shows_each_question_that_says_whether_to_ask() -> None:
+    markdown = render_markdown(ask_report())
+
+    summary = (
+        "frågade när den borde i 1 av 2 frågor (1 med en motfråga som skiljer alternativen åt); "
+        "frågade i onödan i 1 av 2 frågor"
+    )
+    assert f"- **Motfrågor:** {summary} (se Motfrågor)." in markdown
+    assert f"## Motfrågor\n\nAgenten {summary}.\n" in markdown
+    assert "| a01 | ja | ja | ja | rätt | Rätt |" in markdown
+    assert "| a02 | ja | nej | – | fel | Ej bedömd |" in markdown
+    assert "| a05 | nej | ja | – | onödig | Rätt |" in markdown
+    assert "| a06 | nej | nej | – | rätt | Rätt |" in markdown
+    assert "| q01 |" not in markdown.split("## Motfrågor")[1].split("##")[0]
+    assert (
+        "- **a01** (ska fråga; väntade alternativ: Delområde 1; Delområde 3). Frågade: "
+        "”Vilket delområde?” Alternativ: 1; 3. Domaren: skiljer. Båda delområdena går att välja."
+    ) in markdown
+    assert "- **a02** (ska fråga; väntade alternativ: Delområde 1; Delområde 3). Frågade inte." in (
+        markdown
+    )
+    assert "- **a05** (ska svara utan att fråga" in markdown
+    assert "med frågans förtydligande när testsamlingen har ett" in markdown
+    assert "- **Motfrågor:** för en fråga där testsamlingen säger" in markdown
+
+
+def test_a_report_without_ask_questions_has_no_asks_section() -> None:
+    markdown = render_markdown(report())
+
+    assert "## Motfrågor" not in markdown and "- **Motfrågor:**" not in markdown
+    assert json.loads(report_json(report()))["asks"] is None
+
+
+def test_the_json_and_the_printout_carry_the_asks() -> None:
+    data = json.loads(report_json(ask_report()))
+
+    assert data["asks"] == {
+        "should_ask": 2,
+        "asked": 1,
+        "separating": 1,
+        "unjudged": 0,
+        "should_not_ask": 2,
+        "asked_unnecessarily": 1,
+    }
+    first = data["questions"][0]
+    assert (first["should_ask"], first["asked_right"], first["unnecessary_ask"]) == (
+        True,
+        True,
+        False,
+    )
+    assert first["asked_options"] == [["1", "3"]]
+    assert first["expected_options"] == list(OPTIONS)
+    assert first["ask_judgement"] == SEPARATES.model_dump()
+    assert data["questions"][2]["unnecessary_ask"] is True
+    assert data["questions"][4]["should_ask"] is None
+    assert data["run"]["mode"] == "agent"
+    assert (
+        "asks: asked when it should 1/2 (separating 1, unjudged 0); asked unnecessarily 1/2"
+        in overall_lines(ask_report())
+    )
+
+
+def test_a_workflow_run_is_named_lists_its_steps_and_asks_in_none() -> None:
+    info = replace(INFO, mode="workflow")
+    never = replace(
+        ask_report(info),
+        results=tuple(
+            score(asking(f"a0{n}", True), run(None, error="x"), None, None) for n in (1, 2, 3)
+        ),
+    )
+
+    markdown = render_markdown(never)
+
+    assert report_stem(never) == "answers-gpt-6.1-sol-low-workflow-stub"
+    assert markdown.startswith(
+        "# Mätning av baslinjens svar (fast arbetsflöde): gpt-6.1-sol, resonemang low\n"
+    )
+    assert "## Baslinjens fasta steg\n" in markdown
+    assert f"1. {FIXED_STEPS[0]}" in markdown and f"6. {FIXED_STEPS[5]}" in markdown
+    assert "- **Följdfrågor:** baslinjen kan inte fråga användaren." in markdown
+    assert "frågade när den borde i 0 av 3 frågor (0 med en motfråga som skiljer" in markdown
+    assert "frågade i onödan" not in markdown  # the gold here has no question of that kind
+    assert "## Baslinjens väg" in markdown and "- **Baslinjens modellanrop per fråga:**" in markdown
+    assert "Baslinjen frågade när den borde i 0 av 3 frågor" in markdown
+    assert "- **Baslinje (fast arbetsflöde):** gpt-6.1-sol, resonemang low" in markdown
+    assert "baslinjens prompter" in markdown and "`PLAN_PROMPT` med `QueryPlan`" in markdown
+    assert "läsningen av frågan inräknad" in markdown
+    assert overall_lines(never)[0].startswith("Answer evaluation, gpt-6.1-sol (low, workflow)")
+    assert json.loads(report_json(never))["run"]["mode"] == "workflow"

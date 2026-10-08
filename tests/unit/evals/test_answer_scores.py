@@ -22,6 +22,7 @@ from avtalsagent.agent.schemas import (
 from evals.answer_run import QuestionRun, TokenUse
 from evals.answer_scores import (
     NO_DRAFT_REASON,
+    AskSummary,
     CitedPlace,
     QuestionResult,
     RuleCount,
@@ -36,9 +37,12 @@ from evals.answer_scores import (
     score,
     sources_found,
     summarize,
+    summarize_asks,
     summarize_paths,
+    verdict_score,
 )
 from evals.answer_steps import Problem, Rejection, Step, TargetSource
+from evals.ask_judge import AskJudgement
 from evals.gold import Alternative, DocumentSource, GoldQuestion, GoldScope, RegisterSource
 from evals.judge import Judgement, Verdict
 
@@ -433,3 +437,93 @@ def test_the_percentile_is_nearest_rank() -> None:
     assert percentile(values, 0.5) == 5.0
     assert percentile([7.0], 0.9) == 7.0
     assert median([3.0, 1.0, 2.0]) == 2.0
+
+
+# --- questions to the user ---------------------------------------------------------------------
+
+SEPARATES = AskJudgement(separates=True, reason="Delområdena går att välja.")
+MIXES = AskJudgement(separates=False, reason="Delområde 1 och 3 slås ihop.")
+OPTIONS = ("Delområde 1", "Delområde 3")
+
+
+def asking(id: str, should_ask: bool | None) -> GoldQuestion:
+    question = replace(gold(id=id), should_ask=should_ask)
+    if should_ask is None:
+        return question
+    return replace(question, options=OPTIONS, clarification="Delområde 3.")
+
+
+def asked_run(*questions: str) -> QuestionRun:
+    """A run that reached the graph (its path was read), and asked `questions`."""
+    options = tuple(OPTIONS for _ in questions)
+    return replace(run(answer()), asked=questions, asked_options=options, model_calls=2)
+
+
+def test_an_ask_is_right_only_when_it_should_ask_asked_and_separates() -> None:
+    right = score(asking("a01", True), asked_run("Vilket?"), None, None, ask_judgement=SEPARATES)
+    mixed = score(asking("a02", True), asked_run("Vilket?"), None, None, ask_judgement=MIXES)
+    unjudged = score(asking("a03", True), asked_run("Vilket?"), None, None)
+    silent = score(asking("a04", True), asked_run(), None, None, ask_judgement=SEPARATES)
+
+    assert (right.asked, right.asked_right, right.unnecessary_ask) == (True, True, False)
+    assert (mixed.asked_right, unjudged.asked_right) == (False, None)
+    assert (silent.asked, silent.asked_right) == (False, False)
+    assert silent.ask_judgement is None  # a judgement of no question is not kept
+    assert right.expected_options == OPTIONS and right.should_ask is True
+
+
+def test_not_asking_is_right_where_it_should_not_and_an_ask_there_is_unnecessary() -> None:
+    quiet = score(asking("a05", False), asked_run(), None, None)
+    needless = score(asking("a06", False), asked_run("Större eller Mindre?"), None, None)
+    plain = score(asking("q01", None), asked_run("Vilket?"), None, None)
+    # A run that never reached the graph had no chance to ask, or not to.
+    broken = run(None, error="avtal-mcp: ConnectError")
+    lost = [
+        score(asking(id, should), broken, None, None)
+        for id, should in (("a07", True), ("a08", False))
+    ]
+
+    assert (quiet.asked_right, quiet.unnecessary_ask) == (True, False)
+    assert [result.asked_right for result in lost] == [None, None]
+    assert (needless.asked_right, needless.unnecessary_ask) == (False, True)
+    assert (plain.asked_right, plain.unnecessary_ask, plain.should_ask) == (None, None, None)
+
+
+def test_the_asks_summary_counts_the_asks_and_is_none_without_ask_questions() -> None:
+    results = [
+        score(asking("a01", True), asked_run("Vilket?"), None, None, ask_judgement=SEPARATES),
+        score(asking("a02", True), asked_run("Vilket?"), None, None, ask_judgement=MIXES),
+        score(asking("a03", True), asked_run("Vilket?"), None, None),
+        score(asking("a04", True), run(answer()), None, None),
+        score(asking("a05", False), asked_run("Båda?"), None, None),
+        score(asking("a06", False), run(answer()), None, None),
+        score(asking("q01", None), asked_run("Vilket?"), None, None),
+    ]
+
+    assert summarize_asks(results) == AskSummary(
+        should_ask=4,
+        asked=3,
+        separating=1,
+        unjudged=1,
+        should_not_ask=2,
+        asked_unnecessarily=1,
+    )
+    assert summarize_asks(results[-1:]) is None
+
+
+def test_a_run_that_never_asks_asks_in_none_of_the_questions_that_should_ask() -> None:
+    results = [score(asking(f"a0{n}", True), run(answer()), None, None) for n in range(1, 5)]
+
+    asks = summarize_asks(results)
+
+    assert asks is not None and (asks.should_ask, asks.asked, asks.separating) == (4, 0, 0)
+    assert (asks.should_not_ask, asks.asked_unnecessarily) == (0, 0)
+
+
+def test_a_verdict_scores_one_a_half_or_none() -> None:
+    assert [verdict_score(v) for v in ("correct", "partly_correct", "incorrect", None)] == [
+        1.0,
+        0.5,
+        0.0,
+        None,
+    ]

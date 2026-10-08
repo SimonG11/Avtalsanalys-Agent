@@ -287,6 +287,72 @@ def test_the_gold_file_of_the_repository_parses() -> None:
     }
 
 
+# --- Whether the agent should ask the user ---------------------------------------------------
+
+OPTIONS = ["IT-drift Större", "IT-drift Mindre"]
+
+
+def test_a_question_without_the_ask_fields_reads_as_before() -> None:
+    result = parsed()
+
+    assert (result.should_ask, result.options, result.clarification) == (None, (), None)
+    assert all(item.should_ask is None for item in load_gold(GOLD_FILE).questions)
+
+
+def test_a_question_that_should_ask_has_its_options_and_clarification() -> None:
+    result = parsed(should_ask=True, options=OPTIONS, clarification="Vi har IT-drift Mindre.")
+
+    assert result.should_ask is True
+    assert result.options == ("IT-drift Större", "IT-drift Mindre")
+    assert result.clarification == "Vi har IT-drift Mindre."
+
+
+def test_a_question_that_should_not_ask_may_name_the_options_or_none() -> None:
+    named = parsed(should_ask=False, options=OPTIONS, clarification="Svara för båda.")
+    bare = parsed(should_ask=False)
+
+    assert (named.should_ask, named.options, named.clarification) == (
+        False,
+        tuple(OPTIONS),
+        "Svara för båda.",
+    )
+    assert (bare.should_ask, bare.options, bare.clarification) == (False, (), None)
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"should_ask": "ja"}, "should_ask must be true or false"),
+        ({"should_ask": True, "clarification": "Mindre."}, "at least two options"),
+        (
+            {"should_ask": True, "options": ["Större"], "clarification": "Mindre."},
+            "at least two options",
+        ),
+        ({"should_ask": True, "options": OPTIONS}, "should_ask needs a clarification"),
+        (
+            {"should_ask": True, "options": OPTIONS, "clarification": "  "},
+            "clarification is blank",
+        ),
+        ({"should_ask": True, "options": "Större", "clarification": "x"}, "options must be a list"),
+        (
+            {"should_ask": True, "options": ["Större", 2], "clarification": "x"},
+            "options must be a list of strings",
+        ),
+        (
+            {"should_ask": True, "options": ["Större", " "], "clarification": "x"},
+            "an option is blank",
+        ),
+        ({"options": OPTIONS}, "options and clarification need should_ask"),
+        ({"clarification": "Mindre."}, "options and clarification need should_ask"),
+    ],
+)
+def test_ask_fields_of_the_wrong_form_are_a_gold_error(
+    changes: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(GoldError, match=message):
+        parse_gold(gold_text(question(**changes)))
+
+
 # --- Which questions are measured, and how ----------------------------------------------------
 
 
