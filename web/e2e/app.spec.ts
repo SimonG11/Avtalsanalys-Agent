@@ -1,10 +1,13 @@
 /**
  * The whole flow in the browser, against the mock agent (mock/scenarios.ts): a question, the
  * agent's thoughts and steps in the timeline, the answer, the source panel with the highlighted
- * quote, the agent's question in the chat, and readable text in both themes.
+ * quote, the agent's question in the chat, a file of one's own compared with the agreement, and
+ * readable text in both themes.
  */
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+
+import { buildOwnContractPdf } from "../mock/fixture-pdf.ts";
 
 async function ask(page: Page, question: string): Promise<void> {
   const input = page.getByPlaceholder("Ställ en fråga om ramavtalen…");
@@ -268,6 +271,98 @@ test("answers from the register with one line per agreement", async ({ page }) =
   await expect(agreements.nth(0)).toContainText("längst till 2030-12-31");
   await expect(agreements.nth(1)).toContainText("Testleverantören AB (fiktiv) (000000-0002)");
   await expect(agreements.nth(1)).not.toContainText("längst till");
+});
+
+test("uploads a contract of one's own and compares it with the agreement", async ({ page }) => {
+  const pdf = await buildOwnContractPdf();
+  await page.getByTestId("file-input").setInputFiles({
+    name: "vårt-kontrakt.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from(pdf.bytes),
+  });
+  const chip = page.getByTestId("file-chip");
+  await expect(chip).toHaveAttribute("data-status", "ready");
+  await expect(chip).toContainText("vårt-kontrakt.pdf");
+  await expect(chip).toContainText("1 sida");
+
+  await ask(page, "Jämför min fil med ramavtalet. Vad skiljer sig om uppsägning?");
+  // The file goes with the question, and the chat field is empty again.
+  const turn = page.getByTestId("turn");
+  await expect(turn.getByTestId("file-chip")).toContainText("vårt-kontrakt.pdf");
+  await expect(chip).toHaveCount(1);
+
+  const card = page.getByTestId("answer-card");
+  await expect(card).toHaveAttribute("data-status", "verified");
+  await expect(card).toContainText("Uppsägningstiden skiljer sig");
+  await expect(card.getByTestId("source-1").getByTestId("own-file")).toHaveText("Din fil");
+  await expect(card.getByTestId("source-2").getByTestId("own-file")).toHaveCount(0);
+
+  // The agent's steps name the file, not its id.
+  await openTimeline(page);
+  await expect(page.locator('[data-testid="agent-step"][data-tool="list_uploads"]')).toContainText(
+    "1 fil",
+  );
+  const read = page.locator('[data-testid="agent-step"][data-tool="read_upload"]');
+  await expect(read).toContainText("Läste din fil");
+  await expect(read).toContainText("vårt-kontrakt.pdf");
+
+  // The source opens the uploaded PDF with the quote marked, over two lines.
+  await card.getByTestId("source-1").click();
+  const panel = page.getByTestId("source-panel");
+  await expect(panel).toContainText("Källa 1 · Din fil");
+  await expect(panel).toContainText("Kontrollerat mot filens text");
+  const marks = panel.locator("mark.quote-mark");
+  await expect(marks).toHaveCount(2);
+  await expect(marks.first()).toContainText("Kunden får säga upp Kontraktet");
+  await expect(page.getByTestId("match-note")).toHaveCount(0);
+});
+
+test("says why a file cannot be uploaded, and removes a file", async ({ page }) => {
+  await page.getByTestId("file-input").setInputFiles([
+    { name: "prislista.xlsx", mimeType: "application/octet-stream", buffer: Buffer.from("x") },
+    { name: "inskannad.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4") },
+    {
+      name: "anteckningar.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Uppsägning: en månad."),
+    },
+  ]);
+  const chips = page.getByTestId("file-chip");
+  await expect(chips).toHaveCount(3);
+  await expect(chips.nth(0)).toHaveAttribute("data-status", "failed");
+  await expect(chips.nth(0)).toContainText("Filtypen stöds inte");
+  // The API's own Swedish reason is shown.
+  await expect(chips.nth(1)).toHaveAttribute("data-status", "failed");
+  await expect(chips.nth(1)).toContainText("Den är troligen inskannad");
+  await expect(chips.nth(2)).toHaveAttribute("data-status", "ready");
+  await expect(chips.nth(2)).toContainText("1 avsnitt");
+
+  // Removing the text file removes it from the conversation too, so the agent has no file.
+  const removed = page.waitForResponse((response) => response.request().method() === "DELETE");
+  await page.getByRole("button", { name: "Ta bort anteckningar.txt" }).click();
+  expect((await removed).status()).toBe(204);
+  await expect(chips).toHaveCount(2);
+  await ask(page, "Jämför min fil med ramavtalet.");
+  await expect(page.getByTestId("answer-card")).toHaveAttribute("data-status", "no_answer");
+  // The files that failed did not go with the question.
+  await expect(page.getByTestId("turn").getByTestId("file-chip")).toHaveCount(0);
+});
+
+test("shows only the quote for an uploaded text file", async ({ page }) => {
+  await page.getByTestId("file-input").setInputFiles({
+    name: "vårt-kontrakt.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      "5 Uppsägning\n\nKunden får säga upp Kontraktet med en (1) månads uppsägningstid.",
+    ),
+  });
+  await expect(page.getByTestId("file-chip")).toHaveAttribute("data-status", "ready");
+  await ask(page, "Jämför filen med ramavtalet.");
+  const card = page.getByTestId("answer-card");
+  await expect(card.getByTestId("source-1")).toContainText("vårt-kontrakt.txt");
+  await card.getByTestId("source-1").click();
+  await expect(page.getByTestId("source-panel")).toContainText("Källa 1 · Din fil");
+  await expect(page.getByTestId("no-pdf")).toBeVisible();
 });
 
 test("keeps the text readable in the dark theme and lets the person switch theme", async ({

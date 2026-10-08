@@ -1,5 +1,5 @@
 /**
- * What: the small line icons the app uses (steps, buttons, statuses).
+ * What: the small line icons the app uses (steps, buttons, statuses, files).
  *
  * Why: a handful of icons is enough, and drawing them here keeps the app free of an icon
  * package and lets every icon take the text colour around it (currentColor), in both themes.
@@ -81,6 +81,9 @@ const PATHS = {
   arrowUp: <path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" />,
   stop: <rect x="7" y="7" width="10" height="10" rx="1.5" />,
   plus: <path d="M12 5v14M5 12h14" />,
+  attach: (
+    <path d="m20.5 11.5-8.4 8.4a5 5 0 0 1-7.1-7.1l8.4-8.4a3.3 3.3 0 0 1 4.7 4.7l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8" />
+  ),
   sun: (
     <>
       <circle cx="12" cy="12" r="4" />

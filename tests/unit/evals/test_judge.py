@@ -16,7 +16,16 @@ from pydantic import SecretStr
 
 from avtalsagent.agent.model import MissingApiKeyError
 from avtalsagent.config import Settings
-from evals.judge import JUDGE_PROMPT, Judgement, ModelJudge, judge_messages, make_judge_model
+from evals.judge import (
+    ASSUMED_LEAD,
+    CASES_LEAD,
+    CLARIFICATION_LEAD,
+    JUDGE_PROMPT,
+    Judgement,
+    ModelJudge,
+    judge_messages,
+    make_judge_model,
+)
 
 DUMMY_KEY = "sk-test-not-a-real-key"
 QUESTION = "Hur många anbud skulle antas i IT-drift Mindre?"
@@ -75,6 +84,30 @@ def test_the_request_has_the_question_both_answers_and_whether_it_is_answered() 
     )
     unanswered = judge_messages(QUESTION, "Framgår inte.", False, "Framgår inte.")
     assert "Avtalen besvarar frågan enligt facit: nej" in str(unanswered[1].content)
+
+
+def test_the_clarification_follows_the_question_in_its_element() -> None:
+    messages = judge_messages(QUESTION, GOLD, True, "Åtta.", clarification=" Mindre, 2026. ")
+
+    assert messages[0].content == JUDGE_PROMPT  # the prompt is the same for every run
+    assert str(messages[1].content).startswith(
+        f"<fråga>\n{QUESTION}\n\n{CLARIFICATION_LEAD} Mindre, 2026.\n</fråga>\n\n"
+    )
+    assert CLARIFICATION_LEAD not in str(judge_messages(QUESTION, GOLD, True, "Åtta.")[1].content)
+
+
+def test_a_question_answered_without_asking_gets_its_cases_and_the_one_the_gold_assumes() -> None:
+    cases = ("IT-drift Mindre", " IT-drift Större ")
+    messages = judge_messages(QUESTION, GOLD, True, "Åtta.", clarification="Mindre.", cases=cases)
+
+    assert messages[0].content == JUDGE_PROMPT and "7. Står det i <fråga> vilka fall" in (
+        JUDGE_PROMPT
+    )
+    assert str(messages[1].content).startswith(
+        f"<fråga>\n{QUESTION}\n\n{CASES_LEAD} IT-drift Mindre; IT-drift Större.\n"
+        f"{ASSUMED_LEAD} Mindre.\n</fråga>\n\n"
+    )
+    assert CLARIFICATION_LEAD not in str(messages[1].content)
 
 
 def test_no_text_can_end_its_element() -> None:

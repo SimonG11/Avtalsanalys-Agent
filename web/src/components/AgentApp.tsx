@@ -9,7 +9,7 @@
  * How: CopilotKitProvider talks to the CopilotKit runtime at /api/copilotkit, which forwards
  * runs to the backend's AG-UI endpoint. Only CopilotKit's hooks are used, not its chat
  * components, so the app's look is entirely its own (globals.css). AnswersProvider keeps the
- * answers; the open citation is React state here and reaches the answers through
+ * answers and UploadsProvider the person's files; the open citation is React state here and reaches the answers through
  * OpenSourceContext. A new conversation reloads the page, which gives the agent a new thread
  * and leaves nothing of the previous one behind.
  */
@@ -25,6 +25,7 @@ import { Icon } from "./icons";
 import { SourcePanel } from "./SourcePanel";
 import { OpenSourceContext } from "./SourceContext";
 import { ThemeToggle } from "./ThemeToggle";
+import { UploadsProvider } from "./Uploads";
 import styles from "./AgentApp.module.css";
 
 export function AgentApp() {
@@ -38,23 +39,25 @@ export function AgentApp() {
       showIntelligenceIndicator={false}
     >
       <AnswersProvider>
-        <OpenSourceContext.Provider value={setSource}>
-          <div className={styles.app}>
-            <Header />
-            <main className={source ? `${styles.main} ${styles.withSource}` : styles.main}>
-              <section className={styles.chat} aria-label="Konversation">
-                <Conversation />
-              </section>
-              {source && (
-                <SourcePanel
-                  key={`${source.sha256}:${source.page}:${source.quote}`}
-                  citation={source}
-                  onClose={() => setSource(null)}
-                />
-              )}
-            </main>
-          </div>
-        </OpenSourceContext.Provider>
+        <UploadsProvider>
+          <OpenSourceContext.Provider value={setSource}>
+            <div className={styles.app}>
+              <Header />
+              <main className={source ? `${styles.main} ${styles.withSource}` : styles.main}>
+                <section className={styles.chat} aria-label="Konversation">
+                  <Conversation />
+                </section>
+                {source && (
+                  <SourcePanel
+                    key={`${source.upload_id ?? source.sha256}:${source.page}:${source.quote}`}
+                    citation={source}
+                    onClose={() => setSource(null)}
+                  />
+                )}
+              </main>
+            </div>
+          </OpenSourceContext.Provider>
+        </UploadsProvider>
       </AnswersProvider>
     </CopilotKitProvider>
   );

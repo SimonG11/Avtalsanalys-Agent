@@ -1,13 +1,15 @@
 /**
- * What: builds the PDF the mock agent cites: a short, made-up agreement in Swedish.
+ * What: builds the PDFs of the mock: a short, made-up agreement in Swedish that the mock agent
+ * cites, and a made-up contract of one's own to upload and compare with it.
  *
  * Why: the source panel has to be tested against a real PDF with a text layer, but the
  * repository must not contain documents from avropa.se (their reuse rights are still open).
- * So the mock writes its own document, marked as fictitious on every page.
+ * So the mock writes its own documents, marked as fictitious on every page.
  *
- * How: pdf-lib draws the lines of `PAGES` with a standard font, which gives PDF.js a text
- * layer to search. The scenarios quote these lines, so a quote in an answer is always on the
- * page it names. The dates are fixed so the file, and its SHA-256, are the same on every run.
+ * How: pdf-lib draws the lines of `PAGES` (or `OWN_CONTRACT_PAGES`) with a standard font,
+ * which gives PDF.js a text layer to search. The scenarios quote these lines, so a quote in an
+ * answer is always on the page it names. The dates are fixed so a file, and its SHA-256, are
+ * the same on every run.
  */
 import { createHash } from "node:crypto";
 
@@ -61,6 +63,24 @@ export const PAGES: string[][] = [
   ],
 ];
 
+/**
+ * A contract of one's own, the kind a person uploads to compare with the framework agreement.
+ * Its notice period differs from the agreement's on purpose. The upload scenario quotes it.
+ */
+export const OWN_CONTRACT_PAGES: string[][] = [
+  [
+    "Kontrakt om IT-drift (fiktivt exempel)",
+    "",
+    "1 Parter",
+    "Kontraktet gäller mellan Exempelmyndigheten (Kunden) och",
+    "Exempelleverantören AB (Leverantören).",
+    "",
+    "5 Uppsägning",
+    "Kunden får säga upp Kontraktet med en (1) månads uppsägningstid.",
+    "Uppsägningen kan göras muntligen eller skriftligen.",
+  ],
+];
+
 export interface FixturePdf {
   bytes: Uint8Array;
   sha256: string;
@@ -68,15 +88,24 @@ export interface FixturePdf {
 
 const FIXED_DATE = new Date("2026-10-01T00:00:00Z");
 
-export async function buildFixturePdf(): Promise<FixturePdf> {
+export function buildFixturePdf(): Promise<FixturePdf> {
+  return buildPdf(DOCUMENT_TITLE, PAGES);
+}
+
+/** The contract of one's own as a PDF, for uploads in the tests and in the mock. */
+export function buildOwnContractPdf(): Promise<FixturePdf> {
+  return buildPdf("Kontrakt om IT-drift (fiktivt exempel)", OWN_CONTRACT_PAGES);
+}
+
+async function buildPdf(title: string, pages: string[][]): Promise<FixturePdf> {
   const document = await PDFDocument.create();
-  document.setTitle(DOCUMENT_TITLE);
+  document.setTitle(title);
   document.setCreationDate(FIXED_DATE);
   document.setModificationDate(FIXED_DATE);
   const regular = await document.embedFont(StandardFonts.Helvetica);
   const bold = await document.embedFont(StandardFonts.HelveticaBold);
 
-  PAGES.forEach((lines, index) => {
+  pages.forEach((lines, index) => {
     const page = document.addPage([595, 842]); // A4 in points
     let y = 780;
     for (const line of lines) {
@@ -85,7 +114,7 @@ export async function buildFixturePdf(): Promise<FixturePdf> {
       y -= 18;
     }
     page.drawText(NOTICE, { x: 60, y: 50, size: 8, font: regular, color: rgb(0.45, 0.45, 0.45) });
-    page.drawText(`Sida ${index + 1} av ${PAGES.length}`, {
+    page.drawText(`Sida ${index + 1} av ${pages.length}`, {
       x: 480,
       y: 50,
       size: 8,

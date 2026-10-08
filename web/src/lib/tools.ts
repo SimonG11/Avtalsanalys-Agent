@@ -32,6 +32,9 @@ export const TOOL_LABELS: Record<string, ToolLabel> = {
   find_amendments: { running: "Letar efter ändringar", done: "Letade efter ändringar" },
   calculate_date: { running: "Räknar ut datum", done: "Räknade ut datum" },
   ask_user: { running: "Frågar dig", done: "Fick svar" },
+  // The person's own files (webbapp-kontrakt.md, point 35).
+  list_uploads: { running: "Listar dina filer", done: "Listade dina filer" },
+  read_upload: { running: "Läser din fil", done: "Läste din fil" },
 };
 
 /**
@@ -62,6 +65,7 @@ const ARGUMENT_LABELS: Record<string, string> = {
   direction: "riktning",
   include_start: "startdagen ingår",
   options: "alternativ",
+  upload_id: "fil",
 };
 
 /** Swedish words for arguments whose value is one of a few English words (calculate_date). */
@@ -84,6 +88,7 @@ const MAIN_ARGUMENT: Record<string, string> = {
   find_amendments: "section_number",
   resolve_reference: "reference",
   ask_user: "question",
+  read_upload: "upload_id",
 };
 
 export interface ToolCallDescription {
@@ -95,10 +100,15 @@ export interface ToolCallDescription {
   details: [string, string][];
 }
 
+/**
+ * `fileNames` maps the ids of the person's uploaded files to their names, so a step that reads
+ * a file names it ("Läser din fil: kontrakt.pdf") instead of showing its id.
+ */
 export function describeToolCall(
   name: string,
   args: unknown,
   status: "inProgress" | "executing" | "complete",
+  fileNames: ReadonlyMap<string, string> = new Map(),
 ): ToolCallDescription {
   const label = TOOL_LABELS[name];
   const title = label ? (status === "complete" ? label.done : label.running) : name;
@@ -110,7 +120,7 @@ export function describeToolCall(
   for (const [key, value] of entries) {
     if (value === undefined || value === null || value === "") continue;
     if (isRedundant(key, value, args)) continue;
-    const text = formatValue(key, value);
+    const text = formatValue(key, value, fileNames);
     if (key === mainKey) subject = text;
     else details.push([ARGUMENT_LABELS[key] ?? key, text]);
   }
@@ -132,12 +142,13 @@ function isRedundant(key: string, value: unknown, args: unknown): boolean {
 }
 
 /**
- * Long hashes are shortened, English words get their Swedish name, yes and no are written out
- * and lists of words joined; other objects are written compactly.
+ * Long hashes are shortened, an uploaded file is named, English words get their Swedish name,
+ * yes and no are written out and lists of words joined; other objects are written compactly.
  */
-function formatValue(key: string, value: unknown): string {
+function formatValue(key: string, value: unknown, fileNames: ReadonlyMap<string, string>): string {
   if (typeof value === "string") {
     if (key === "sha256" && value.length > 12) return `${value.slice(0, 8)}…`;
+    if (key === "upload_id") return fileNames.get(value) ?? value;
     return VALUE_LABELS[key]?.[value] ?? value;
   }
   if (typeof value === "boolean") return value ? "ja" : "nej";
@@ -150,12 +161,21 @@ function formatValue(key: string, value: unknown): string {
 
 /**
  * A line that says what a tool found, for the tools whose answer has one: the calculation
- * calculate_date made ("2027-02-17 minus 3 månader = 2026-11-17 (tisdag)") and the number of
- * amendments find_amendments found. Other answers, and a tool's error text, have none; they are
- * shown raw behind the disclosure.
+ * calculate_date made ("2027-02-17 minus 3 månader = 2026-11-17 (tisdag)"), the number of
+ * amendments find_amendments found and the number of files list_uploads found. Other answers,
+ * and a tool's error text, have none; they are shown raw behind the disclosure.
  */
 export function summarizeResult(name: string, result: string | undefined): string | null {
   const answer = parseJson(result);
+  if (name === "list_uploads") {
+    const files = Array.isArray(answer) ? answer : isRecord(answer) ? answer.uploads : undefined;
+    if (!Array.isArray(files)) return null;
+    return files.length === 0
+      ? "Inga filer"
+      : files.length === 1
+        ? "1 fil"
+        : `${files.length} filer`;
+  }
   if (!isRecord(answer)) return null;
   if (name === "calculate_date" && typeof answer.step === "string") {
     return typeof answer.weekday === "string" ? `${answer.step} (${answer.weekday})` : answer.step;

@@ -21,6 +21,7 @@ import { describeToolCall, summarizeResult } from "@/lib/tools";
 
 import { Icon, Spinner } from "./icons";
 import type { IconName } from "./icons";
+import { useUploads } from "./Uploads";
 import styles from "./Timeline.module.css";
 
 const TOOL_ICONS: Record<string, IconName> = {
@@ -33,6 +34,8 @@ const TOOL_ICONS: Record<string, IconName> = {
   find_amendments: "history",
   calculate_date: "calendar",
   ask_user: "question",
+  list_uploads: "attach",
+  read_upload: "attach",
 };
 
 export function Timeline({
@@ -159,7 +162,8 @@ export function AgentStep({
 }) {
   const status = result === undefined ? "inProgress" : "complete";
   const done = status === "complete";
-  const { title, subject, details } = describeToolCall(name, args, status);
+  const { names } = useUploads();
+  const { title, subject, details } = describeToolCall(name, args, status, names);
   const isQuestion = name === "ask_user";
   const outcome = done
     ? isQuestion
