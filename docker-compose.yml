@@ -75,6 +75,8 @@ services:
       MCP_TRANSPORT: streamable_http
       MCP_URL: http://mcp:8001/mcp
       CHECKPOINTER: postgres
+      # The user's own files, in tables the API creates at start (no migration needed).
+      UPLOAD_STORE: postgres
     volumes:
       - ./data:/app/data:ro
     ports:
