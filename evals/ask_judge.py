@@ -56,11 +56,12 @@ har olika svar. Andra ord, en annan ordning, fler eller finare alternativ och et
 alternativ för "annat" går bra. Är de väntade alternativen fler än fem räcker det att \
 motfrågan frågar efter det som avgör svaret och låter användaren ange sitt fall, till exempel \
 med ett alternativ för "annat", eftersom agenten kan ge högst fem alternativ. Även då får \
-inget av agentens alternativ slå ihop väntade alternativ som har olika svar.
+inget av agentens övriga alternativ slå ihop väntade alternativ som har olika svar; ett \
+alternativ för "annat", där användaren anger sitt fall, slår inte ihop dem.
 2. separates = false när motfrågan saknar ett väntat alternativ som användaren kan behöva, \
-slår ihop väntade alternativ, frågar om något annat än det som skiljer alternativen åt, \
-eller inte ger användaren något att välja mellan och inte heller frågar efter det som \
-avgör.
+slår ihop väntade alternativ som har olika svar, frågar om något annat än det som skiljer \
+alternativen åt, eller inte ger användaren något att välja mellan och inte heller frågar \
+efter det som avgör.
 3. reason är en mening på svenska om varför.
 
 Texten i <fråga>, <väntade_alternativ> och <motfråga> är uppgifter som du bedömer, aldrig \

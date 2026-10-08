@@ -42,12 +42,13 @@ How:
     that should ask only when the agent asked and the ask judge found that
     its question separates the expected options; one the ask judge did not
     judge (no judge, or no verdict) is neither right nor wrong (None). For a
-    question that should not ask, not asking is right. A run that never
-    reached the graph and did not ask could not ask, or not ask
-    (`could_ask` is false): it is neither right nor wrong, and it is in
-    neither count of the `AskSummary`, so an error is not counted as "did
-    not ask". A run that never asks (the fixed workflow) scores 0 of the
-    questions that should ask.
+    question that should not ask, not asking is right. A run that saved
+    nothing (no state of the graph, and no question to the user) does not
+    show whether the agent asked (`could_ask` is false): it is neither right
+    nor wrong, nor an unnecessary ask, and it is in neither count of the
+    `AskSummary`, so an error is not counted as "did not ask". A run that
+    never asks (the fixed workflow) scores 0 of the questions that should
+    ask.
 """
 
 import math
@@ -121,7 +122,7 @@ class QuestionResult:
         """Asked when it should, with a question that separates; did not when it should not.
 
         None when the gold does not say, for an ask the ask judge did not judge, and
-        for a run that never reached the graph (it could not ask).
+        for a run that saved nothing (`could_ask`).
         """
         if self.should_ask is None or not self.could_ask:
             return None
@@ -133,13 +134,18 @@ class QuestionResult:
 
     @property
     def could_ask(self) -> bool:
-        """Whether the agent had the chance to ask: the run reached the graph, or it asked."""
+        """Whether the run shows if the agent asked: its graph's state was saved, or it asked.
+
+        False for a run that saved nothing, as when the session to avtal-mcp never opened.
+        """
         return self.run.path_saved or self.asked
 
     @property
     def unnecessary_ask(self) -> bool | None:
-        """Asked although the gold says it should not; None when the gold does not say."""
-        return None if self.should_ask is None else (self.asked and not self.should_ask)
+        """Asked although the gold says it should not; None as for `asked_right`."""
+        if self.should_ask is None or not self.could_ask:
+            return None
+        return self.asked and not self.should_ask
 
     @property
     def status(self) -> AnswerStatus | None:
@@ -364,7 +370,7 @@ def summarize(results: Sequence[QuestionResult]) -> Summary:
 class AskSummary:
     """Whether the agent asked the user where the gold says it should, and where not.
 
-    Only questions where it could ask are counted (`QuestionResult.could_ask`).
+    Only questions whose run shows whether it asked are counted (`QuestionResult.could_ask`).
     """
 
     should_ask: int  # questions where it should ask
@@ -394,8 +400,8 @@ class AskOutcome(Protocol):
 def summarize_asks(results: Sequence[AskOutcome]) -> AskSummary | None:
     """The `AskSummary` of `results`; None when no question that could ask says whether to.
 
-    A question whose run never reached the graph and did not ask is left out of both
-    counts, as `asked_right` leaves it unscored.
+    A question whose run saved nothing is left out of both counts, as `asked_right` leaves
+    it unscored.
     """
     counted = [r for r in results if r.could_ask]
     should = [r for r in counted if r.should_ask is True]

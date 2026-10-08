@@ -333,13 +333,16 @@ def test_the_asks_numbers_are_compared_when_a_report_has_them(tmp_path: Path) ->
     assert "Baslinjen" not in agents  # two runs of the agent
 
 
-def test_the_asks_are_counted_from_the_rows_without_a_run_that_never_reached_the_graph(
+def test_the_asks_are_counted_from_the_rows_without_a_run_that_saved_nothing(
     tmp_path: Path,
 ) -> None:
     options = ("Större", "Mindre")
     reached = result("a00", "oklar", "correct", 30.0).run  # its model calls were saved
     asked = replace(reached, asked=("Större eller Mindre?",), asked_options=(options,))
-    broken = failed("a00", "oklar").run  # never reached the graph
+    # As the agent's a04 on 2026-10-08: the session failed, and nothing of the run was kept.
+    broken = replace(failed("a00", "oklar").run, seconds=16.5, error="avtal-mcp: ReadError")
+    # No model calls saved, but the asks were: it is counted.
+    cut = replace(broken, asked=("Större eller Mindre?",), asked_options=(options,))
     separates = AskJudgement(separates=True, reason="Båda går att välja.")
 
     def asking(id: str, should_ask: bool, run: QuestionRun) -> QuestionResult:
@@ -355,13 +358,14 @@ def test_the_asks_are_counted_from_the_rows_without_a_run_that_never_reached_the
         asking("a01", False, asked),
         asking("a02", False, reached),
         asking("a04", False, broken),
+        asking("a07", False, cut),
     )
     workflow = tuple(asking(r.id, bool(r.should_ask), reached) for r in agent)
     base = AnswerReport(
         created_at=datetime(2026, 10, 8, tzinfo=UTC),
         gold_path="evals/datasets/ambiguous_sv.jsonl",
         gold_sha256="9c1d" + "0" * 60,
-        gold_questions=5,
+        gold_questions=6,
         info=INFO,
         seconds=60.0,
         results=agent,
@@ -369,7 +373,7 @@ def test_the_asks_are_counted_from_the_rows_without_a_run_that_never_reached_the
     path = write(tmp_path, "a", base)
     # A report written before the rule counted the errors as silences: its own asks are not read.
     data = json.loads(path.read_text(encoding="utf-8"))
-    data["asks"] |= {"should_ask": 2, "should_not_ask": 3}
+    data["asks"] |= {"should_ask": 2, "should_not_ask": 4}
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     a = load_run(path)
     b = load_run(
@@ -383,15 +387,16 @@ def test_the_asks_are_counted_from_the_rows_without_a_run_that_never_reached_the
         "asked": 1,
         "separating": 1,
         "unjudged": 0,
-        "should_not_ask": 2,
-        "asked_unnecessarily": 1,
+        "should_not_ask": 3,
+        "asked_unnecessarily": 2,
     }
-    assert b.asks is not None and (b.asks["should_ask"], b.asks["should_not_ask"]) == (2, 3)
+    assert [row.could_ask for row in a.questions] == [True, False, True, True, False, True]
+    assert b.asks is not None and (b.asks["should_ask"], b.asks["should_not_ask"]) == (2, 4)
     assert "| Frågade när den borde | 1 av 1 (1 skiljer) | 0 av 2 (0 skiljer) |" in markdown
-    assert "| Frågade i onödan | 1 av 2 | 0 av 3 |" in markdown
+    assert "| Frågade i onödan | 2 av 3 | 0 av 4 |" in markdown
     assert (
-        "En fråga där körningen aldrig nådde agenten räknas inte, så A och B kan ha olika många "
-        "frågor. Baslinjen kan inte fråga."
+        "I båda raderna räknas inte en fråga där inget av körningen sparades, så A och B kan ha "
+        "olika många frågor. Baslinjen kan inte fråga."
     ) in markdown
 
 

@@ -769,9 +769,9 @@ def test_the_asks_section_shows_each_question_that_says_whether_to_ask() -> None
     ) in markdown
 
 
-def test_a_question_whose_run_never_reached_the_graph_is_not_counted() -> None:
+def test_a_question_whose_run_saved_nothing_is_not_counted() -> None:
     plain = ask_report()
-    broken = run(None, error="avtal-mcp: ReadError")
+    broken = run(None, error="avtal-mcp: ReadError")  # it does not show whether the agent asked
     lost = (
         score(asking("a03", True), broken, None, None),
         score(asking("a04", False), broken, None, None),
@@ -787,13 +787,22 @@ def test_a_question_whose_run_never_reached_the_graph_is_not_counted() -> None:
     assert "frågade i onödan i 1 av 2 frågor" in markdown
     assert "| a03 | ja | nej | – | räknas inte | Ej bedömd |" in markdown
     assert "| a04 | nej | nej | – | räknas inte | Ej bedömd |" in markdown
-    assert "och räknas inte när körningen aldrig nådde agenten." in markdown
+    assert "och räknas inte när inget av körningen sparades." in markdown
+    lines = markdown.split("## Motfrågor")[1].split("\n")
+    assert [line for line in lines if line.startswith(("- **a03**", "- **a04**"))] == [
+        "- **a03** (ska fråga; väntade alternativ: Delområde 1; Delområde 3). Inget av "
+        "körningen sparades, så frågan räknas inte.",
+        "- **a04** (ska svara utan att fråga; väntade alternativ: Delområde 1; Delområde 3). "
+        "Inget av körningen sparades, så frågan räknas inte.",
+    ]
     assert (
-        "En fråga där körningen aldrig nådde agenten, och där den alltså inte kunde fråga, "
-        "räknas inte, varken bland frågorna där den skulle fråga eller bland dem där den inte "
-        "skulle."
+        "En fråga där inget av körningen sparades (ett fel i sessionen mot avtal-mcp) räknas "
+        "inte, varken bland frågorna där den skulle fråga eller bland dem där den inte skulle, "
+        "eftersom det inte går att se om agenten frågade."
     ) in markdown
-    assert [item["asked_right"] for item in data["questions"][-2:]] == [None, None]
+    # Neither a right silence nor an unnecessary ask in the JSON either.
+    outcomes = [(item["asked_right"], item["unnecessary_ask"]) for item in data["questions"]]
+    assert outcomes[-2:] == [(None, None), (None, None)]
 
 
 def test_a_report_without_ask_questions_has_no_asks_section() -> None:

@@ -49,8 +49,8 @@ How:
     made before the mode was recorded is the agent's). The questions to the
     user are counted from each question's row by `answer_scores.
     summarize_asks`, as the run's own report counts them: a question whose
-    run never reached the graph (no model calls saved) and did not ask is
-    in neither count. The report's own `asks` is not read, so a report
+    run saved nothing (no model calls, and no question to the user) is in
+    neither count. The report's own `asks` is not read, so a report
     written before that rule is counted the same way. Numbers are written
     with `report_text`, as in `answer_report`.
 """
@@ -111,7 +111,7 @@ class QuestionRow:
 
     @property
     def could_ask(self) -> bool:
-        """Whether the agent had the chance to ask: the run reached the graph, or it asked."""
+        """Whether the run shows if the agent asked: its model calls were saved, or it asked."""
         return self.model_calls is not None or self.asked
 
     @property
@@ -506,8 +506,8 @@ def _md_asks(a: RunReport, b: RunReport) -> list[str]:
         "",
         "Frågade när den borde: frågor där testsamlingen säger att agenten ska fråga "
         "användaren, och i parentes de där domaren fann att motfrågan skiljer alternativen åt "
-        "och de motfrågor den inte bedömde. En fråga där körningen aldrig nådde agenten räknas "
-        "inte, så A och B kan ha olika många frågor." + baseline,
+        "och de motfrågor den inte bedömde. I båda raderna räknas inte en fråga där inget av "
+        "körningen sparades, så A och B kan ha olika många frågor." + baseline,
         "",
     ]
 

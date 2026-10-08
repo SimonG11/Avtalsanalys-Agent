@@ -52,15 +52,17 @@ How:
     graph, as each run of the API does (ADR 0014), and its own thread in a
     memory checkpointer; `--concurrency` questions run at once, and each is
     judged as soon as it is answered. A question whose session fails is
-    recorded with its error, and the run goes on. Errors that stop the run
-    end it with one line and exit code 1, as the agent's command line does
-    (`describe_failure`); the OpenAI key and the database password are
-    never printed. Before the questions, `run_info` notes what is measured:
-    the commit of the repository the agent's code is imported from, and
-    whether its working tree had changes (`code_commit`, by git), else the
-    commit AVTALSAGENT_COMMIT names (`measured_commit`; compose's `eval`
-    container has no git), else unknown; and the sha256 of SYSTEM_PROMPT
-    (before the date is filled in; in workflow mode of the baseline's
+    recorded with its error and what its thread saved (`read_thread`: the
+    failure cancels the run, but the checkpointer outlives the session), and
+    the run goes on. Errors that stop the run end it with one line and exit
+    code 1, as the agent's command line does (`describe_failure`); the
+    OpenAI key and the database password are never printed. Before the
+    questions, `run_info` notes what is measured: the commit of the
+    repository the agent's code is imported from, and whether its working
+    tree had changes (`code_commit`, by git), else the commit
+    AVTALSAGENT_COMMIT names (`measured_commit`; compose's `eval` container
+    has no git), else unknown; and the sha256 of SYSTEM_PROMPT (before the
+    date is filled in; in workflow mode of the baseline's
     `baseline_prompts`), of REVIEWER_PROMPT and, with a judge, of
     JUDGE_PROMPT and ASK_JUDGE_PROMPT together, so a report says which code
     and prompts it measured, and by which prompts it was judged. The commit
@@ -91,7 +93,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 import avtalsagent
 from avtalsagent.agent.__main__ import CommandError, describe_failure
 from avtalsagent.agent.checkpointer import open_checkpointer
-from avtalsagent.agent.graph import build_agent
+from avtalsagent.agent.graph import AvtalAgent, build_agent
 from avtalsagent.agent.mcp_tools import open_mcp_tools
 from avtalsagent.agent.model import make_agent_model
 from avtalsagent.agent.prompts import SYSTEM_PROMPT
@@ -118,6 +120,7 @@ from evals.answer_run import (
     TokenUse,
     UsageCounter,
     error_text,
+    read_thread,
     run_question,
     stops_the_run,
     total_use,
@@ -195,8 +198,14 @@ async def ask_question(
     """One question on its own MCP session and graph, as one run of the API.
 
     `mode` is the graph: the agent's (`build_agent`) or the baseline's (`build_workflow`).
+    A session that fails during the run cancels `run_question`; the run is then what its
+    thread saved (`read_thread`), with the tokens counted until then. Only a session that
+    never opened leaves nothing of the run.
     """
     build = build_workflow if mode == "workflow" else build_agent
+    thread_id = f"eval-{question.id}-{uuid.uuid4()}"
+    usage = UsageCounter()
+    graph: AvtalAgent | None = None
     started = time.monotonic()
     try:
         async with open_mcp_tools(settings) as mcp:
@@ -204,16 +213,20 @@ async def ask_question(
             return await run_question(
                 graph,
                 question.question,
-                thread_id=f"eval-{question.id}-{uuid.uuid4()}",
+                thread_id=thread_id,
                 timeout=timeout,
                 redact=settings.redact,
                 trace=trace,
                 clarification=question.clarification,
+                usage=usage,
             )
     except Exception as error:  # the session to avtal-mcp failed; the run goes on
         if stops_the_run(error):
             raise
         message = settings.redact(f"avtal-mcp: {error_text(error)}")
+        seconds = time.monotonic() - started
+        if graph is not None:  # it failed during the run: the checkpointer outlives it
+            return await read_thread(graph, thread_id, seconds, usage.by_model, message)
         return QuestionRun(
             answer=None,
             draft=None,
@@ -222,7 +235,7 @@ async def ask_question(
             asked=(),
             check_retries=0,
             refused_drafts=0,
-            seconds=time.monotonic() - started,
+            seconds=seconds,
             usage={},
             error=message[:ERROR_CHARS],
         )

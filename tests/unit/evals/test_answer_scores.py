@@ -476,7 +476,7 @@ def test_not_asking_is_right_where_it_should_not_and_an_ask_there_is_unnecessary
     quiet = score(asking("a05", False), asked_run(), None, None)
     needless = score(asking("a06", False), asked_run("Större eller Mindre?"), None, None)
     plain = score(asking("q01", None), asked_run("Vilket?"), None, None)
-    # A run that never reached the graph had no chance to ask, or not to.
+    # A run that saved nothing does not show whether the agent asked, or did not.
     broken = run(None, error="avtal-mcp: ConnectError")
     lost = [
         score(asking(id, should), broken, None, None)
@@ -484,7 +484,10 @@ def test_not_asking_is_right_where_it_should_not_and_an_ask_there_is_unnecessary
     ]
 
     assert (quiet.asked_right, quiet.unnecessary_ask) == (True, False)
-    assert [result.asked_right for result in lost] == [None, None]
+    assert [(result.asked_right, result.unnecessary_ask) for result in lost] == [
+        (None, None),
+        (None, None),
+    ]
     assert (needless.asked_right, needless.unnecessary_ask) == (False, True)
     assert (plain.asked_right, plain.unnecessary_ask, plain.should_ask) == (None, None, None)
 
@@ -511,8 +514,8 @@ def test_the_asks_summary_counts_the_asks_and_is_none_without_ask_questions() ->
     assert summarize_asks(results[-1:]) is None
 
 
-def test_a_run_that_never_reached_the_graph_and_did_not_ask_is_in_neither_count() -> None:
-    # As the agent's a04 on 2026-10-08: a transport error before the graph, and no ask.
+def test_a_run_that_saved_nothing_is_in_neither_count() -> None:
+    # As the agent's a04 on 2026-10-08: a transport error, and nothing of the run kept.
     broken = run(None, error="avtal-mcp: ReadError")
     results = [
         score(asking("a01", True), asked_run("Vilket?"), None, None, ask_judgement=SEPARATES),
@@ -535,8 +538,9 @@ def test_a_run_that_never_reached_the_graph_and_did_not_ask_is_in_neither_count(
     assert summarize_asks([results[1], results[4]]) is None
 
 
-def test_a_run_that_asked_before_it_failed_is_counted() -> None:
-    # Its path was not saved, but it did ask: the ask is there to judge.
+def test_a_run_that_asked_before_its_state_was_lost_is_counted() -> None:
+    # Its state could not be read after it failed (run_question), but the asks it kept from
+    # the interrupts are there to judge.
     cut = replace(
         run(None, error="avtal-mcp: ReadError"), asked=("Vilket?",), asked_options=(OPTIONS,)
     )
