@@ -233,8 +233,8 @@ som citeras utan ändringen, men inte en fråga som borde ha ställts.
 Kontrollerna ligger i sex lager, och varje lager fångar fel som de andra inte ser. Siffrorna kommer
 från den riktiga databasen 2026-10-07 ([steg 12](docs/steg/12-demo.md)).
 
-1. **Koden.** 2 059 tester: 1 867 utan databas och utan anrop till OpenAI, där en skriptad modell
-   spelar agenten och granskaren, och 192 mot en riktig Postgres i testcontainers. Ruff, mypy i
+1. **Koden.** 2 426 tester: 2 214 utan databas och utan anrop till OpenAI, där en skriptad modell
+   spelar agenten och granskaren, och 212 mot en riktig Postgres i testcontainers. Ruff, mypy i
    strikt läge och alla tester körs i CI vid varje push och pull request. CI bygger och startar också
    hela Docker Compose-stacken på både amd64 och arm64 och kör webbappens webbläsartester mot en mock
    av agenten, men ställer aldrig en fråga genom hela kedjan.

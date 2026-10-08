@@ -271,10 +271,10 @@ def test_the_agents_reason_is_a_line_of_its_own_under_the_call() -> None:
     ]
 
 
-def test_a_tool_error_is_shown_without_fastmcps_english_prefix() -> None:
+def test_a_tool_error_is_shown_on_one_line() -> None:
     error = ToolMessage(
-        content="Error executing tool read_section: Det finns inget avsnitt med nummer 9.9 i "
-        "dokumentet a1a1a1a1a1a1…. Kontrollera numret med get_outline.",
+        content="Det finns inget avsnitt med nummer 9.9 i dokumentet a1a1a1a1a1a1…. "
+        "Kontrollera numret med get_outline.",
         tool_call_id="c1",
         name="read_section",
         status="error",
@@ -283,6 +283,21 @@ def test_a_tool_error_is_shown_without_fastmcps_english_prefix() -> None:
     assert cli.message_lines(error) == [
         "  ✗ read_section: Det finns inget avsnitt med nummer 9.9 i dokumentet a1a1a1a1a1a1…. "
         "Kontrollera numret med get_outline."
+    ]
+
+
+def test_a_tool_error_shows_its_first_line_and_not_what_follows_for_the_model() -> None:
+    error = ToolMessage(
+        content="Ramavtalsområdet 'Bemanning' finns inte i registret. Menade du "
+        "Bemanningstjänster?\nOmråden i registret: Bemanningstjänster, IT-drift, Möbler.",
+        tool_call_id="c1",
+        name="search_register",
+        status="error",
+    )
+
+    assert cli.message_lines(error) == [
+        "  ✗ search_register: Ramavtalsområdet 'Bemanning' finns inte i registret. Menade du "
+        "Bemanningstjänster?"
     ]
 
 

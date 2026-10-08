@@ -214,6 +214,26 @@ def test_the_markdown_has_each_question_its_error_and_its_answer() -> None:
     assert "**Svar:** inget (fel i körningen)." in markdown
 
 
+def test_a_source_names_its_agreement_page() -> None:
+    # Two agreements' files can share a title, a section and a page: IT-drift Mindre and Större.
+    pages = ("IT-drift Mindre, upp till 200 anställda", "IT-drift Större, fler än 200 anställda")
+    cited = [
+        CITED.model_copy(update={"id": n, "page_title": page})
+        for n, page in enumerate(pages, start=1)
+    ]
+    answered = Answer(text="Samma regel [1][2].", status="verified", citations=cited)
+    markdown = render_markdown(
+        replace(report(), results=(score(gold("q01"), run(answered), None, None),))
+    )
+
+    assert "- [1] Allmänna villkor (IT-drift Mindre, upp till 200 anställda), 6.21.4 Vite ✓" in (
+        markdown
+    )
+    assert "- [2] Allmänna villkor (IT-drift Större, fler än 200 anställda), 6.21.4 Vite ✓" in (
+        markdown
+    )
+
+
 def test_the_markdown_without_a_judge_says_so() -> None:
     plain = report()
     unjudged = AnswerReport(

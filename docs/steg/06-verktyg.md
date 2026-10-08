@@ -54,7 +54,10 @@ kan skriva ett avtal på två sätt på olika rader (`23.3-12000-2020-001` och `
 som indexet sparade, så att leverantörens avtal kommer med. Ett nummer utan leverantörens
 löpnummer, som `23.3-5890-2023`, betyder hela upphandlingen. Ett värde som registret inte har ger
 ett fel som säger vad modellen kan göra (ett okänt område listar alla områden), i stället för en
-tom lista som modellen skulle tolka som att avtalen inte säger något.
+tom lista som modellen skulle tolka som att avtalen inte säger något. Sedan skärmbilderna
+2026-10-08 gissar felet för ett okänt område på första raden vilket område som menades
+("Ramavtalsområdet 'Bemanning' finns inte i registret. Menade du Bemanningstjänster?") och listar
+alla områden på nästa rad.
 
 **Ett filter utanför piloten är också ett fel** (tillagt efter M12). Registret har alla 51
 ramavtalsområden, men dokument är inlästa bara för pilotens fyra. Ett område, ett avtal eller en
@@ -62,7 +65,8 @@ upphandling som registret har men som ingen fil som verktygen får visa matchar 
 `NotFoundError` från både `search_documents` och `list_documents`: "Ramavtalsområdet Möbler och
 inredning finns i registret, men områdets dokument är inte inlästa. Områden med inlästa dokument:
 Bemanningstjänster, IT-drift, … Svara med det registret säger (search_register) och säg till
-användaren att områdets dokument inte är inlästa, …". Förut blev svaret en tom lista, och modellen
+användaren att områdets dokument inte är inlästa, …". Sedan 2026-10-08 står allt efter den första
+meningen på en egen rad. Förut blev svaret en tom lista, och modellen
 skulle troligen svara att det inte framgår, eller söka utan filtret och citera ett annat områdes
 villkor. Filerna matchas som i sökningens filter, så ett avtal utan eget leverantörskort räknas som
 inläst när upphandlingens gemensamma filer är det. Varje filter prövas för sig och utan
@@ -76,7 +80,10 @@ upp, och verktygen svarar som förut: utan index säger de att sökindexet inte 
 är en fråga mot `document_scope` per anrop, i `visibility.document_filters`, som båda verktygen
 tar sina filter från.
 
-**Felen** är skrivna för modellen och säger vad den ska göra härnäst:
+**Felen** är skrivna för modellen och säger vad den ska göra härnäst. Användaren ser felets första
+rad i agentens steg, i webbappen och på kommandoraden. Den säger därför vad som gick fel, och en
+lång lista eller ett långt råd till modellen står på raderna efter (sedan skärmbilderna
+2026-10-08):
 
 | Fel | När | Exempel på meddelande |
 |---|---|---|
@@ -354,8 +361,10 @@ som servern gör.
 - **Ingen container ännu.** `docker-compose.yml` har bara Postgres; tjänsten för avtal-mcp kommer
   med API:t. Verktygen är inte provade i MCP Inspector.
 - **Engelska framför felen.** SDK:t 1.x skriver "Error executing tool <namn>: " före varje
-  felmeddelande, också våra svenska. Pydantics meddelanden om argument utanför gränserna är också
-  på engelska ("String should have at least 2 characters").
+  felmeddelande, också våra svenska. Sedan 2026-10-08 tar agenten bort det innan modellen,
+  webbappen och kommandoraden ser felet ([steg 07](07-agent.md)); andra MCP-klienter ser det
+  fortfarande. Pydantics meddelanden om argument utanför gränserna är också på engelska ("String
+  should have at least 2 characters").
 - **Skrivskyddet är en inställning per anslutning**, inte en egen databasroll. Verktygen skickar
   bara sina egna frågor, men en databasroll med bara SELECT är det säkra skyddet.
 - **`list_documents` räknar inte filer som hålls tillbaka hela.** En fil som var i karantän när

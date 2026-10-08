@@ -384,7 +384,7 @@ def test_the_limit_cuts_the_list_but_not_the_total(sessions: sessionmaker[Sessio
         ({"agreement_number": "23.3-5890-2023-009"}, "Numret 23.3-5890-2023-009 finns inte"),
         (
             {"framework_area": "Möbler"},
-            "'Möbler' finns inte i registret. Områden: Bemanningstjänster, IT-drift.",
+            "'Möbler' finns inte i registret.\nOmråden i registret: Bemanningstjänster, IT-drift.",
         ),
     ],
     ids=["agreement", "procurement", "sequence", "area"],
@@ -622,7 +622,7 @@ def test_the_offset_pages_through_the_rows_in_order(
         ({"agreement_number": "23.3-5890-2023-009"}, "Numret 23.3-5890-2023-009 finns inte"),
         (
             {"supplier": "advania", "framework_area": "Möbler"},
-            "'Möbler' finns inte i registret. Områden: Bemanningstjänster, IT-drift.",
+            "'Möbler' finns inte i registret.\nOmråden i registret: Bemanningstjänster, IT-drift.",
         ),
     ],
     ids=["agreement", "procurement", "sequence", "area"],

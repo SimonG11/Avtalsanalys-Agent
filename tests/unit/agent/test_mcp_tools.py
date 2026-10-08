@@ -414,7 +414,20 @@ async def test_a_tool_error_reaches_the_model_as_an_error_message_and_the_run_go
     )
 
     assert message.status == "error"
-    assert NOT_FOUND.format(position=7, sha=SHA[:12]) in text_of(message)
+    # The server's own text, without the English "Error executing tool read_section: ".
+    assert text_of(message) == NOT_FOUND.format(position=7, sha=SHA[:12])
+
+
+@pytest.mark.anyio
+async def test_an_error_of_the_servers_argument_check_also_loses_the_english_prefix(
+    mcp_tools: McpTools,
+) -> None:
+    message = await call(
+        by_name(mcp_tools.tools, "read_section"), {"sha256": SHA, "section_position": -1}
+    )
+
+    assert message.status == "error"
+    assert not text_of(message).startswith("Error executing tool")
 
 
 # --- the section reader ---

@@ -586,8 +586,10 @@ Nivån kan ändras med `AGENT_REASONING_EFFORT` och i mätningen med `--effort`
   ([steg 09](09-api.md)).
 - **Vanlig text begärs, men kontrolleras inte.** Prompten ber om text utan Markdown; skriver
   modellen ändå `**`, syns tecknen i webbappen.
-- **Engelska framför verktygsfelen.** SDK:t skriver "Error executing tool …" före varje fel som
-  modellen läser; kommandoraden tar bort det när felet visas.
+- **Engelska framför verktygsfelen.** SDK:t skriver "Error executing tool …" före varje fel.
+  Sedan 2026-10-08 tar agentens anslutning till avtal-mcp bort det (`without_error_prefix` i
+  `mcp_tools.py`, en interceptor i adaptern), så modellen, webbappen och kommandoraden får bara
+  serverns svenska text. Kommandoraden visar felets första rad, som webbappen.
 
 ## Så verifierar du M7 själv
 

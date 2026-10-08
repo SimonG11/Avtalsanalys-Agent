@@ -29,7 +29,12 @@ How:
     `load_mcp_tools` turns the server's tool list into LangChain tools; a
     tool's error result (the server's Swedish `ToolError` text) comes back
     as a `ToolMessage` with status "error" that the model reads, and the run
-    goes on (the adapter's `handle_tool_errors`, on by default).
+    goes on (the adapter's `handle_tool_errors`, on by default). The MCP SDK
+    writes "Error executing tool <name>: " in English before the server's
+    text; `without_error_prefix`, an interceptor of the adapter, takes it
+    away before the text becomes the message, so the model, the web app and
+    the command line get the server's text only. The step shows its first
+    line (avtal-mcp's errors.py).
     `McpSectionReader.read` calls `read_section` with the hash and the
     position, and validates the result's `structuredContent` (avtal-mcp's
     `Section`) into a `CitedSection`; an error result is None.
@@ -54,18 +59,19 @@ How:
 import logging
 import os
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.interceptors import MCPToolCallRequest, MCPToolCallResult
 from langchain_mcp_adapters.sessions import StreamableHttpConnection
 from langchain_mcp_adapters.tools import load_mcp_tools
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.types import TextContent
+from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel, ValidationError
 
 from avtalsagent.agent.amendments import AmendmentInfo, AmendmentReader
@@ -82,6 +88,8 @@ READ_SECTION = "read_section"
 SEARCH_REGISTER = "search_register"
 FIND_AMENDMENTS = "find_amendments"
 REGISTER_PAGE = 20  # search_register's largest limit
+# The MCP SDK writes this in English before every tool error's own (Swedish) text.
+MCP_ERROR_PREFIX = "Error executing tool "
 
 
 @dataclass(frozen=True)
@@ -247,9 +255,29 @@ def _same_agreement(row: RegisterEntry, number: str, key: str | None) -> bool:
     )
 
 
+async def without_error_prefix(
+    request: MCPToolCallRequest,
+    handler: Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]],
+) -> MCPToolCallResult:
+    """The tool's result; an error's text without the MCP SDK's English prefix."""
+    result = await handler(request)
+    if not isinstance(result, CallToolResult) or not result.isError:
+        return result
+    prefix = f"{MCP_ERROR_PREFIX}{request.name}: "
+    content = [
+        block.model_copy(update={"text": block.text.removeprefix(prefix)})
+        if isinstance(block, TextContent)
+        else block
+        for block in result.content
+    ]
+    return result.model_copy(update={"content": content})
+
+
 async def load_tools(session: ClientSession) -> McpTools:
     """The tools and the readers of an open, initialised session."""
-    tools = await load_mcp_tools(session, server_name=SERVER_NAME)
+    tools = await load_mcp_tools(
+        session, server_name=SERVER_NAME, tool_interceptors=[without_error_prefix]
+    )
     return McpTools(
         tools=tools,
         reader=McpSectionReader(session),

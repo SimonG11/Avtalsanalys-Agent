@@ -20,7 +20,10 @@ Why:
     quarantine does not hold it. After `process` and before `index` the
     tools show nothing. The register check turns a misspelt or unknown
     filter into an error the model can act on, instead of an empty result
-    it would take as "the agreements say nothing". The register has every
+    it would take as "the agreements say nothing". An unknown area's error
+    guesses the areas meant ("Bemanning" for "Bemanningstjänster") on its
+    first line, which the user sees in the step, and lists every area on
+    the next, for the model. The register has every
     framework area, but documents are loaded only for the pilot's, so a
     filter the register knows can still match no file. That is an error
     too, which names the areas that are loaded and tells the model to
@@ -34,7 +37,9 @@ How:
     the stored findings (`extraction_store.quarantine`), once per tool call.
     Numbers are compared by `agreement_key` and `procurement_key`
     (domain/identifiers.py), so "23.3.5890-23-003" finds
-    "23.3-5890-2023-003"; an area by case-insensitive equality. The register
+    "23.3-5890-2023-003"; an area by case-insensitive equality. The guessed
+    areas are those that contain the unknown one, then those `difflib`
+    finds alike, at most `GUESSES`. The register
     can write one agreement two ways on different rows
     ("23.3-12000-2020-001" and "23.3-12000-2020-01"), so an agreement number
     finds every spelling with its key. Step 6 stores one of them in the
@@ -51,6 +56,7 @@ How:
 """
 
 from dataclasses import dataclass
+from difflib import get_close_matches
 
 from sqlalchemy import ColumnElement, String, and_, any_, bindparam, select
 from sqlalchemy.orm import Session
@@ -62,6 +68,9 @@ from avtalsagent.domain.search import SearchFilters
 from avtalsagent.ingestion.extraction_store import quarantine
 from avtalsagent.mcp_server.errors import NotFoundError
 from avtalsagent.retrieval.hybrid_search import scope_conditions
+
+GUESSES = 3  # the most areas an unknown area's error suggests
+_ALIKE = 0.75  # how alike in spelling (difflib's ratio) a guessed area or word must be
 
 
 @dataclass(frozen=True)
@@ -131,18 +140,58 @@ def register_procurements(session: Session, number: str) -> list[str]:
 
 
 def register_area(session: Session, framework_area: str) -> str:
-    """The framework area as the register spells it; `NotFoundError` listing the known ones."""
+    """The framework area as the register spells it; `NotFoundError` listing the known ones.
+
+    The error's first line says that the area is not in the register and
+    guesses the areas meant; the next lists every area.
+    """
     areas = sorted(set(session.scalars(select(models.SubArea.framework_area))))
     wanted = framework_area.strip().casefold()
     for area in areas:
         if area.casefold() == wanted:
             return area
-    known = ", ".join(areas)
+    if not areas:
+        raise NotFoundError(f"Ramavtalsområdet '{framework_area}' finns inte: registret är tomt.")
+    guesses = _guessed_areas(wanted, areas)
+    guess = f" Menade du {_either(guesses)}?" if guesses else ""
     raise NotFoundError(
-        f"Ramavtalsområdet '{framework_area}' finns inte i registret. Områden: {known}."
-        if areas
-        else f"Ramavtalsområdet '{framework_area}' finns inte: registret är tomt."
+        f"Ramavtalsområdet '{framework_area}' finns inte i registret.{guess}\n"
+        f"Områden i registret: {', '.join(areas)}."
     )
+
+
+def _guessed_areas(wanted: str, areas: list[str]) -> list[str]:
+    """The areas `wanted` (casefolded) may mean, at most `GUESSES`; empty when none is alike.
+
+    First the areas that contain it or that it contains ("IT-drift Större"),
+    those that start alike first ("it" is IT-drift before E-litteratur);
+    else those alike in spelling ("bemanningstjanster"); else those with a
+    word alike ("programvara").
+    """
+    if not wanted:
+        return []
+    folded = {area.casefold(): area for area in areas}
+    starts = sorted(
+        (
+            not (f.startswith(wanted) or wanted.startswith(f)),
+            not any(word.startswith(wanted) for word in f.split()),
+            area,
+        )
+        for f, area in folded.items()
+        if wanted in f or f in wanted
+    )
+    found = [area for *_, area in starts]
+    if not found:
+        found = [folded[f] for f in get_close_matches(wanted, folded, GUESSES, _ALIKE)]
+    if not found:
+        words = {word: area for f, area in folded.items() for word in f.split()}
+        found = [words[w] for w in get_close_matches(wanted, words, GUESSES, _ALIKE)]
+    return list(dict.fromkeys(found))[:GUESSES]
+
+
+def _either(names: list[str]) -> str:
+    """'A', 'A eller B', 'A, B eller C'."""
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} eller {names[-1]}"
 
 
 def document_filters(
@@ -191,10 +240,11 @@ def require_loaded(session: Session, visibility: Visibility, filters: SearchFilt
     """`NotFoundError` when the area, agreement or procurement, each alone, matches no shown file.
 
     Each is matched as the search's filter matches it, without the
-    document type. The message names the areas whose documents are loaded
-    and says what the model can do: answer from the register, or, when only
-    the area is missing and the agreement's documents are loaded, search
-    again without the area. When no file is shown at all (no index, or
+    document type. The message's first line says whose documents are not
+    loaded; the next names the areas whose documents are loaded and says
+    what the model can do: answer from the register, or, when only the area
+    is missing and the agreement's documents are loaded, search again
+    without the area. When no file is shown at all (no index, or
     every file held back), nothing is raised and the tools answer as before.
     """
     wanted: list[tuple[str, str, SearchFilters]] = []  # what, whose documents, its filter alone
@@ -224,7 +274,7 @@ def require_loaded(session: Session, visibility: Visibility, filters: SearchFilt
     else:  # the area and the agreement or procurement: at most two
         whose = "deras"
         named = f"Både {wanted[0][0]} och {wanted[1][0]}"
-    said = f"{named} finns i registret, men {whose} dokument är inte inlästa. "
+    said = f"{named} finns i registret, men {whose} dokument är inte inlästa.\n"
     if missing == [0] and len(wanted) == 2:  # only the area: the agreement's are loaded elsewhere
         other = wanted[1][0]
         raise NotFoundError(
