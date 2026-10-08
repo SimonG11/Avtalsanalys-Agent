@@ -193,7 +193,10 @@ till regeln som skrev det (citat, registeruppgifter, senaste lydelsen eller gran
 regeln formulerar sina fel; testerna prövar varje regels egna fel, så en regel som formuleras om
 syns där i stället för att räknas fel. Modellanropen är den räkning som `ModelCallLimitMiddleware`
 för i trådens tillstånd. En fråga som aldrig nådde agenten (sessionen mot avtal-mcp kom inte igång)
-har varken väg, skäl eller modellanrop sparade (`QuestionRun.path_saved`).
+har varken väg, skäl eller modellanrop sparade (`QuestionRun.path_saved`). Faller sessionen under
+körningen avbryts `run_question`, och motfrågorna den hade sparat ur avbrotten försvinner med den.
+Tråden finns kvar i kontrollpunkterna, så `read_thread` läser det som körningen sparade, och
+motfrågorna med alternativ ur agentens anrop till `ask_user` (`asks_in`).
 
 ### 3. `evals/answer_scores.py` – poängen
 
@@ -248,9 +251,10 @@ säger "not saved".
 
 Gör modellerna, prövar avtal-mcp en gång, kör frågorna med en egen MCP-session var
 (`--concurrency` åt gången), låter domaren bedöma varje svar när det är klart och skriver
-rapporterna. Fel som stoppar körningen ger en rad och slutkod 1, som agentens kommandorad. Före
-frågorna noterar `run_info` commit (`measured_commit`: ur git, annars ur `AVTALSAGENT_COMMIT`)
-och prompternas sha256.
+rapporterna. En fråga vars session faller sparas med felet och det som tråden sparade
+(`read_thread`), med tokens fram till felet, och körningen går vidare. Fel som stoppar körningen ger
+en rad och slutkod 1, som agentens kommandorad. Före frågorna noterar `run_info` commit
+(`measured_commit`: ur git, annars ur `AVTALSAGENT_COMMIT`) och prompternas sha256.
 
 ### 6. `docker-compose.yml` – tjänsten `eval`
 
@@ -267,10 +271,10 @@ ställs, så en körning som har kostat pengar inte går förlorad på slutet.
 |---|---:|---|
 | `tests/unit/evals/test_answer_run.py` | 19 | En fråga genom agentens riktiga graf med en skriptad modell: svar, utkast, verktyg med argument, modellanrop och tokens; `ask_user` får det fasta svaret, eller frågans förtydligande, och alternativen sparas per motfråga; ett utkast som kontrollen och ett som granskaren skickar tillbaka, med skälen ur återkopplingen; ett `read_section` till ett mål ur ett tidigare svars hänvisningar; ett verktygsfel; ett fel med en hemlighet som döljs; en nyckel som OpenAI inte tar emot stoppar körningen; tidsgränsen; gränsen för modellanrop; ett felaktigt argument som inte gör att svaret går förlorat; tokens, kostnad och felgrupper |
 | `tests/unit/evals/test_answer_steps.py` | 17 | Varje anrop i ordning med argument och utfall; mål ur hänvisningar (position eller nummer, bara ur svar före anropet, inte hela filer, också ur `resolve_reference` och ur JSON-texten) och ändringar ur `find_amendments`; om en tidigare sökning hade gett avsnittet (träff eller kopia, bara ur lyckade svar före anropet); positioner som inte är siffrorna 0–9 ("²", "①", "٣٧"); varje regels egna fel räknas till rätt regel; återkopplingens rader och de underkända utkasten |
-| `tests/unit/evals/test_answer_scores.py` | 25 | Citatens positioner ur utkastet, källor på plats (position eller nummer), bara godkända citat, avtal med samma nyckel, regeln för svar utan utkast, sammanfattningen (där ett svar utan utkast inte räknas som "framgår inte"), agentens väg (verktyg, modellanrop, läsningar ur hänvisningar med och utan sökträff och nya försök efter regel, i de frågor vars väg sparades), kategorierna och percentilen; motfrågorna (rätt bara när den skiljer alternativen åt, onödig, ej bedömd, en körning som aldrig frågar, en körning som aldrig nådde grafen och därför inte bedöms) och poängen per bedömning |
-| `tests/unit/evals/test_answer_report.py` | 28 | Rapporternas namn, Markdown med svenska tal, skäl, fel och svar som citat, utan domare, en domare som inte svarade, svar utan utkast, samma modell som agent och granskare, raden Följdfrågor också vid noll, vägen per fråga med argument och märken, utkastet som blev ett svar med reservation, tabellerna per verktyg och regel, båda måtten för hänvisningar och `resolve_reference`, en fråga som aldrig nådde agenten (inte sparat, `null` i JSON) och en som nådde den utan anrop (noll), metodens definitioner, commit (ur git eller `AVTALSAGENT_COMMIT`, och vad den gäller) och prompternas hash (domarnas bara med domare), JSON, utskriften, och mappen som prövas före körningen och vid skrivning; avsnittet Motfrågor (fråga, inte fråga, onödig), dess JSON och utskrift, och en körning av baslinjen (namn, de fasta stegen, 0 av de frågor där den borde fråga) |
+| `tests/unit/evals/test_answer_scores.py` | 27 | Citatens positioner ur utkastet, källor på plats (position eller nummer), bara godkända citat, avtal med samma nyckel, regeln för svar utan utkast, sammanfattningen (där ett svar utan utkast inte räknas som "framgår inte"), agentens väg (verktyg, modellanrop, läsningar ur hänvisningar med och utan sökträff och nya försök efter regel, i de frågor vars väg sparades), kategorierna och percentilen; motfrågorna (rätt bara när den skiljer alternativen åt, onödig, ej bedömd, en körning som aldrig frågar, en körning där inget sparades och som därför varken bedöms, räknas som onödig eller räknas, och en som frågade innan dess tillstånd gick förlorat och räknas) och poängen per bedömning |
+| `tests/unit/evals/test_answer_report.py` | 29 | Rapporternas namn, Markdown med svenska tal, skäl, fel och svar som citat, utan domare, en domare som inte svarade, svar utan utkast, samma modell som agent och granskare, raden Följdfrågor också vid noll, vägen per fråga med argument och märken, utkastet som blev ett svar med reservation, tabellerna per verktyg och regel, båda måtten för hänvisningar och `resolve_reference`, en fråga som aldrig nådde agenten (inte sparat, `null` i JSON) och en som nådde den utan anrop (noll), metodens definitioner, commit (ur git eller `AVTALSAGENT_COMMIT`, och vad den gäller) och prompternas hash (domarnas bara med domare), JSON, utskriften, och mappen som prövas före körningen och vid skrivning; avsnittet Motfrågor (fråga, inte fråga, onödig, en körning där inget sparades och som inte räknas, i tabellen, i raden per fråga och i JSON, och metodtexten), dess JSON och utskrift, och en körning av baslinjen (namn, de fasta stegen, 0 av de frågor där den borde fråga) |
 | `tests/unit/evals/test_judge.py` | 10 | Domarens klient, frågan med båda svaren, förtydligandet efter frågan, fallen och facits fall när frågan inte ställdes, att ingen text kan avsluta sitt element, det strikta schemat, ett lyckat och två misslyckade anrop |
-| `tests/unit/evals/test_run_answer_eval.py` | 26 | Urvalet av frågor, inställningarna, commit och ändringar ur git (och utan git eller utanför ett repo, oberoende av var testets mapp ligger och av `GIT_DIR`), commit ur `AVTALSAGENT_COMMIT` när git inte kan svara, prompternas hash (domarnas bara med domare), bedömningen (ingen utan domare), avtal-mcp som inte svarar, en nyckel som OpenAI inte tar emot, frågor åt gången i facits ordning, kommandoradens utskrift och fel, och en mapp som inte går att skriva i stoppar före första frågan; `--mode workflow` (baslinjens graf, rapportens namn och hashen av baslinjens prompter), förtydligandet till domaren som svaret agenten fick, eller som facits fall när den borde ha frågat men inte gjorde det, motfrågornas domare bara där agenten skulle fråga och frågade, och båda domarnas tokens |
+| `tests/unit/evals/test_run_answer_eval.py` | 27 | Urvalet av frågor, inställningarna, commit och ändringar ur git (och utan git eller utanför ett repo, oberoende av var testets mapp ligger och av `GIT_DIR`), commit ur `AVTALSAGENT_COMMIT` när git inte kan svara, prompternas hash (domarnas bara med domare), bedömningen (ingen utan domare), avtal-mcp som inte svarar, en session som faller efter en motfråga (det som tråden sparade läses, med motfrågan och tokens), en nyckel som OpenAI inte tar emot, frågor åt gången i facits ordning, kommandoradens utskrift och fel, och en mapp som inte går att skriva i stoppar före första frågan; `--mode workflow` (baslinjens graf, rapportens namn och hashen av baslinjens prompter), förtydligandet till domaren som svaret agenten fick, eller som facits fall när den borde ha frågat men inte gjorde det, motfrågornas domare bara där agenten skulle fråga och frågade, och båda domarnas tokens |
 
 ## Kända begränsningar
 
@@ -370,13 +374,26 @@ de övriga inställningar där körningarna skiljer sig åt.
   väntade alternativen. Rapportens avsnitt Motfrågor visar per fråga om agenten skulle fråga, om den
   frågade, motfrågan med alternativen, om den skiljer alternativen åt och varför, och bedömningen av
   svaret, med raden "frågade när den borde i n av m (k med en motfråga som skiljer alternativen åt);
-  frågade i onödan i n av m". Baslinjen kan inte fråga och får 0 av m.
+  frågade i onödan i n av m". En fråga där inget av körningen sparades räknas inte i något av
+  talen, eftersom det inte går att se om agenten frågade. Baslinjen kan inte fråga och får 0 av m.
 
 En provkörning 2026-10-07 mot ersättaren för avtal-mcp: baslinjen på q01 blev rätt och
 kontrollerad på 30 sekunder med två modellanrop; agenten på den oklara frågan a01 frågade om
 uppdraget är högst eller över 1 000 timmar (domaren: skiljer alternativen åt), fick
 förtydligandet och svarade rätt; baslinjen på a01 svarade fel. Utkastet med de oklara frågorna
-är inte godkänt och ligger inte i repot.
+(v1) är inte godkänt och ligger inte i repot.
+
+**Oklara frågor v2 (2026-10-07).** Den omskrivna testsamlingen ligger i
+`evals/datasets/ambiguous_sv.jsonl`, med tre grupper: två frågor där agenten ska fråga (a08 och
+a09), tre där den ska svara för varje fall (a01, a02 och a04) och tre kontroller där svaret är
+detsamma överallt (a05, a06 och a07). Frågan a03 är struken, eftersom den ligger på gränsen mellan
+få fall och för många. Frågorna är skrivna för den nya regel 4, så mätningen av den kräver både
+den här grenen och PR #38 (regel 4 och `ask_user` med 2–5 alternativ); den här grenen ensam mäter
+den gamla regeln. Frågedomarens prompt och rapportens metodtext följer den nya regeln. Simon
+godkände frågorna som facit 2026-10-08 (resultatet står nedan). Kör
+`uv run python -m evals.run_answer_eval --gold evals/datasets/ambiguous_sv.jsonl`, med
+`--mode workflow` för baslinjen, och gärna med `--label oklara`, eftersom rapportens namn inte
+säger vilken testsamling den mätte.
 
 ### Resultat: agenten mot baslinjen
 
@@ -492,14 +509,161 @@ Rapporterna (fyra körningar och tre jämförelser) ligger utanför repot, efter
 /mnt/project-files/case-tokentek/implementering/matning-2026-10-07/
 ```
 
+### Resultat: de oklara frågorna (2026-10-08)
+
+Simon godkände de åtta oklara frågorna (v2) som facit 2026-10-08. Samma dag kördes de en gång för
+agenten och en gång för baslinjen, med resonemangsnivån `low` och mot ersättaren för avtal-mcp
+(ingen Postgres). Den nya regel 4 finns bara i PR #38 (som ersätter #34), så körningen gick på en
+lokal gren där dess gren (`claude/tankar-fragor-2gc1kx`) var sammanslagen med den här (175b2ce, utan
+oincheckade ändringar, inte pushad). Modellerna och gränserna var desamma som i jämförelsen
+ovan, och svarsdomarens prompt likaså. Frågedomarens prompt i körningen följde den nya regel 4 och
+hade raden om fler än fem alternativ (domarnas sha256 `6c128d582c28` mot `c9ee05406838`). Ingen
+fråga kördes om i körningen. Agentens a04 föll efter 16 s på "avtal-mcp: ReadError", utan svar och
+utan sparade steg. Ersättaren loggade inget fel och svarade på de andra frågorna, så orsaken är
+okänd. a04 räknas som fel i poängen. Den kördes om för sig efteråt (se Omkörningen av a04 nedan),
+och omkörningen ingår inte i talen här.
+
+| Mått | Agenten | Baslinjen | B−A |
+|---|---|---|---|
+| Rätt (poäng) | 6 av 8 | 5 av 8 | −12 p.e. (för få frågor för ett intervall) |
+| Rätt, delvis rätt, fel | 5, 2, 0 och a04 fel i körningen | 3, 4, 1 | – |
+| Kontrollerade svar | 7 av 8 | 8 av 8 | – |
+| Facits källor citerade | 9 av 17 | 9 av 17 | +4 p.e. (andel per fråga) |
+| Tid per fråga (median, längst) | 45 s, 150 s | 39 s, 117 s | – |
+| Modellanrop per fråga (median) | 7 | 2 | – |
+| Kostnad, agent och granskare | 0,85–2,12 USD | 1,16–1,52 USD | – |
+| Kostnad, domarna | 0,16 USD | 0,19 USD | – |
+
+De två körningarna kostade tillsammans 2,36–3,99 USD med domarna. Agentens körning tog 171 s och
+baslinjens 183 s, fyra frågor åt gången.
+
+Per grupp (poäng som ovan):
+
+| Grupp | Agentens motfrågor | Agentens svar | Baslinjens svar |
+|---|---|---|---|
+| A, ska fråga (a08, a09) | i 2 av 2, skiljer fallen åt i 1 (a08) | 2 av 2 | 2 av 2 |
+| B, svara för varje fall (a01, a02, a04) | i onödan i 1 av 2 (a02) | 2 av 3 | 1 av 3 |
+| C, kontroller (a05, a06, a07) | i onödan i 1 av 3 (a07) | 2 av 3 | 2 av 3 |
+
+Baslinjen kan inte fråga: 0 av 2 i grupp A och ingen onödig motfråga. Svaren räknas för sig. I
+grupp A fick båda Rätt på båda frågorna: agenten efter förtydligandet, och baslinjen eftersom
+domaren läser vilket fall facit bygger på när ingen frågar (domarens regel 7). Baslinjens a09 är
+hela tabellen med sju takpriser, alltså det långa svar som grupp A ska undvika. Baslinjens enda
+fel är a01, där den svarade att underlaget inte räcker. Utan a04 blir poängen 6 av 7 för agenten
+mot 4,5 av 7 för baslinjen.
+
+Agentens motfrågor:
+
+- **a08** (demots fråga 1): "Vilken uppsägning gäller din fråga?" med fyra alternativ, i
+  korthet: vi som avropare säger upp utan skäl, vi säger upp för leverantörens avtalsbrott,
+  leverantören säger upp vårt kontrakt, och uppsägning av själva ramavtalet. De motsvarar facits
+  fyra fall ett mot ett, och domaren fann att motfrågan skiljer dem åt. Likheten är väntad:
+  facits alternativ är nästan ordagrant agentens fyra val i demokörningarna 2026-10-07
+  (`demo-fragorna.md` i `matning-2026-10-07/`, se `docs/demo.md`), inte tagna ur prompten.
+  Svaret efter förtydligandet var rätt.
+- **a09:** "Vilken ramavtalsleverantör anlitar ni på IT-drift Större?" med fyra alternativ, i
+  korthet: Advania eller Videnca, Iver eller Orange, Fujitsu eller Shibuya, och Nordlo. Facit har
+  sju leverantörer, och `ask_user` tar högst fem alternativ. Domaren fann att motfrågan inte
+  skiljer fallen åt, eftersom den slår ihop leverantörer som ska kunna särskiljas. Domaren nämner
+  inte priserna, men varje par har två olika takpriser (1 116 och 733, 585 och 744,
+  1 321 och 1 324 kr). Paren behövdes inte: ett av fem alternativ var oanvänt, och agenten
+  frågade direkt efter registret, innan den hade läst pristabellen. Svaret efter förtydligandet
+  (Iver, 585 kr per timme exklusive moms) var rätt.
+- **a02** (grupp B, onödig): agenten läste båda taken (50 och 25 procent) och frågade sedan om
+  delområdet, och dessutom om kontraktsvärde, skada och särskilda villkor. Svaret för alla fem
+  delområden kom först när mätningen svarade "Svara för alla". a01 är därför den enda frågan i
+  grupp B där agenten svarade för alla fall utan att fråga. a04 föll, och i omkörningen svarade
+  agenten bara för ett delområde.
+- **a07** (kontroll, onödig): agentens första utkast svarade utan att fråga, men granskaren
+  skickade tillbaka det, eftersom regeln bara var citerad för Programvarulösningar. Först då
+  frågade agenten om delområdet. Rätt drag enligt facit var att se att avsnittet Skadestånd är
+  ordagrant lika i alla fyra delområdenas allmänna villkor (2.29, 7.30, 6.30 och 7.29) och svara
+  utan att fråga. Efter motfrågan citerade agenten i stället bara vägledningens 2.8, utan att ange
+  undantagen från taket, och fick 0 av 2 av facits källor.
+
+**Granskningen för hand.** Två granskningar prövade alla bedömningar: svaren mot facit och
+avsnittens lagrade text, och motfrågorna mot regel 4. Ingen av dem är oenig med domarna, och alla
+59 citat står ordagrant i sitt avsnitt. Två bedömningar ligger nära gränsen. Baslinjens a07 är
+delvis rätt men nästan rätt, och fylligare än agentens a07, som fick samma bedömning. Agentens a01
+är rätt, fast "nej" för uppdrag på högst 1 000 timmar bara är underförstått. Granskningen fann tre
+luckor i räkningen, texten och prompten. De är rättade efter körningen, så rapporterna i mappen
+har kvar de gamla talen och den gamla texten:
+
+- Rapporten räknade a04 bland frågorna där agenten inte skulle fråga ("frågade i onödan i 2 av
+  6"), fast inget av körningen sparades, så det inte går att se om agenten frågade. Sessionen
+  föll troligen under körningen, och då kastade mätningen allt som körningen hade gjort. Nu
+  räknar `summarize_asks` i `evals/answer_scores.py` inte en fråga där inget av körningen
+  sparades, varken bland frågorna där agenten skulle fråga eller bland dem där den inte skulle.
+  Rapportens rad i Motfrågor säger då "räknas inte". Jämförelsen räknar nu motfrågorna ur
+  frågornas rader, så en ny jämförelse av de här rapporterna ger de nya talen. Agenten frågade i
+  onödan i 2 av 5, och baslinjen i 0 av 6, eftersom baslinjens a04 nådde grafen. Frågade när
+  den borde är oförändrat: 2 av 2 (1 skiljer) mot 0 av 2. En fråga där inget av körningen
+  sparades (som a04, ett fel i sessionen mot avtal-mcp) räknas inte heller som "frågade inte".
+  En körning som når tidsgränsen eller faller efter att ha nått agenten räknas som förut. Faller
+  sessionen under körningen läser mätningen nu det som tråden sparade, med motfrågorna, i stället
+  för att kasta det.
+- Rapportens metodtext (punkten Motfrågor i `evals/answer_report.py`) sade att ett svar utan
+  motfråga bedöms "mot frågan som den ställdes". Nu säger den att domaren läser förtydligandet
+  med frågan när agenten frågade. När agenten inte frågade i en fråga där den skulle, får domaren
+  i stället veta vilka fall frågan passar och vilket fall facit bygger på (regel 7), och ett svar
+  för det fallet som säger att det gäller det fallet har kärnan. Det är därför baslinjen fick Rätt
+  på a08 och a09. Bara övriga svar bedöms mot frågan som den ställdes.
+- Frågedomarens regel 1 sade inte om undantaget för fler än fem alternativ behåller förbudet i
+  regel 1 och 2 mot att slå ihop alternativ med olika svar. Nu slutar regeln med att inget av
+  agentens övriga alternativ får slå ihop väntade alternativ som har olika svar, och att ett
+  alternativ för "annat", där användaren anger sitt fall, inte slår ihop dem. Regel 2 säger nu
+  också "som har olika svar", som regel 1. a09 bedömdes före de ändringarna, och domarens
+  "skiljer inte" stämmer med dem. Domarnas sha256 är nu `1f4f47cab04f`, så `compare_answer_runs`
+  vägrar jämföra en ny körning med de här rapporterna.
+
+**Omkörningen av a04.** Agentens a04 kördes om en gång för sig efter transportfelet, på samma
+commit (175b2ce) och med samma modeller, gränser och prompter, 2026-10-08 kl. 03:11–03:12 UTC.
+Den föll inte. Agenten frågade inte, vilket är rätt i grupp B, men svarade bara för
+Programvarulösningar: leverantören får säga upp kontraktet helt eller delvis, med 60
+arbetsdagars uppsägningstid. Det stämmer med facit men är ett av fyra delområden. Svaret säger
+inte att Licenser och licenstjänster har samma regel, och inte att Informationsförsörjning och
+Systemutveckling saknar den. Domaren gav Delvis rätt, svaret var kontrollerat, och agenten
+citerade 1 av facits 3 källor. Granskaren skickade tillbaka ett första utkast som sade ja för
+hela området, med en källa bara ur Programvarulösningar. Agenten smalnade då av svaret i stället
+för att läsa de andra delområdena. Dess första sökning, gjord om efteråt mot ersättaren, ger
+träffar också i Licenser och licenstjänster och Informationsförsörjning, och Systemutveckling som
+kopia. Baslinjens a04 var också Delvis rätt och täckte bara Licenser och licenstjänster.
+Omkörningen tog 56 s och 7 modellanrop och kostade 0,13–0,31 USD för agent och granskare. Läggs
+den in i agentens körning i stället för den som föll, blandas två körningar. Då blir det 6,5 av 8
+mot 5 av 8 (B−A −19 p.e.), 2,5 av 3 i grupp B, 10 av facits 17 källor (B−A 0 p.e. per fråga) och
+onödiga motfrågor i 2 av 6.
+
+**Vad åtta frågor kan visa.** Varje arm kördes en gång, och grupp A har två frågor. En fråga är
+12,5 procentenheter, och jämförelsen ger inget intervall under tio frågor. B−A på −12 p.e. är
+alltså ingen säker skillnad. a04 drar åt andra hållet: agentens körning föll och räknas som fel,
+och utan a04 blir B−A −21 p.e. (6 av 7 mot 4,5 av 7), men inte heller det är en säker skillnad
+på sju frågor. Frågorna visar ett mönster: agenten frågar när regel 4 säger att den ska, men ger
+inte alltid alternativ som skiljer fallen åt (a09), och den frågar också där den borde svara för
+alla fall (a02) eller där svaret är detsamma (a07). De visar inte hur ofta det händer. I
+omkörningen av a04 frågade agenten inte, men svarade bara för ett delområde, som baslinjen. En ny
+körning kan ge andra motfrågor, och domarens bedömning av a09 kan skifta. Grupp A ligger nära
+guldfrågorna (a08 är q04 efter förtydligandet och a09 ligger nära q24), så den mäter frågandet
+mer än svaren. Körningen gick mot ersättaren och bör göras om mot den riktiga databasen.
+
+Rapporterna (två körningar, omkörningen av a04, en jämförelse och `LASMIG.md`) ligger utanför
+repot, eftersom `evals/reports/` ignoreras av git:
+
+```
+/mnt/project-files/case-tokentek/implementering/matning-2026-10-08/
+```
+
+`LASMIG.md` skrevs före granskningen för hand, och bara raden om omkörningens filer lades till
+efteråt. Dess rad om a09 (paren "för att få plats med högst fem alternativ"), agentens 2 av 6
+onödiga motfrågor och att ingen fråga kördes om rättas av texten ovan.
+
 ### Tester
 
 | Fil | Tester | Vad |
 |---|---:|---|
 | `tests/unit/evals/test_workflow_baseline.py` | 23 | De fasta stegen i ordning med sina argument, sparade som steg (en ändring märkt som ändring); läsningen av frågan räknas som modellanrop, mot gränsen, och dess tokens når körningens räknare; modellen erbjuds bara `FinalAnswer`; kontrollen skickar tillbaka ett dåligt utkast; ett verktygsfel (också ett verktyg som saknas) stoppar inte flödet; en plan som inte går att läsa ger en sökning på frågan utan filter; registrets enda upphandling eller avtal begränsar sökningen (också när avtalsnumret är tomt, och två upphandlingar gör det inte); registret läst sida för sida upp till taket; ett vägrat delområde och avtalsnummer tas bort och stegen går vidare; sökfrågor kortas och en för kort blir frågan; en krasch i ett senare steg behåller stegen före och läsningens modellanrop; prompten delar agentens regler ordagrant och går inte att bygga om agentens prompt ändras (också en ny regel 7); planens områden täcker testsamlingens |
-| `tests/unit/evals/test_ask_judge.py` | 6 | Motfrågans domare: frågan, de väntade alternativen och agentens motfrågor med alternativ, att ingen text kan avsluta sitt element, det strikta schemat, ett lyckat och två misslyckade anrop |
-| `tests/unit/evals/test_compare_answer_runs.py` | 9 | Två rapporter sida vid sida (domaren, samma inställningar, för få frågor för ett intervall), den parade skillnaden över frågor som bedömts i båda, en fråga utan svar som räknas som fel (och ett intervall över tolv frågor) men inte i två rapporter utan domare, olika testsamlingar, frågor, domare (också domarnas prompter) och avtal-mcp vägras, inställningar som skiljer sig listas, kommandoraden, motfrågornas tal (också ej bedömda, och baslinjens rad bara när en körning är baslinjen) och en rapport från före läget |
-| `tests/unit/evals/test_gold.py` | 13 nya (63) | Fälten för motfrågor: utan dem som förut, giltiga, och tio sätt att ange dem fel |
+| `tests/unit/evals/test_ask_judge.py` | 7 | Motfrågans domare: prompten följer regel 4 och högst fem alternativ (utan att slå ihop alternativ med olika svar, där "annat" inte slår ihop dem, i regel 1 som i regel 2), frågan, de väntade alternativen och agentens motfrågor med alternativ, att ingen text kan avsluta sitt element, det strikta schemat, ett lyckat och två misslyckade anrop |
+| `tests/unit/evals/test_compare_answer_runs.py` | 10 | Två rapporter sida vid sida (domaren, samma inställningar, för få frågor för ett intervall), den parade skillnaden över frågor som bedömts i båda, en fråga utan svar som räknas som fel (och ett intervall över tolv frågor) men inte i två rapporter utan domare, olika testsamlingar, frågor, domare (också domarnas prompter) och avtal-mcp vägras, inställningar som skiljer sig listas, kommandoraden, motfrågornas tal (också ej bedömda, räknade ur frågornas rader utan en körning där inget sparades men med en som frågade fast modellanropen inte sparades, och baslinjens rad bara när en körning är baslinjen) och en rapport från före läget |
+| `tests/unit/evals/test_gold.py` | 14 nya (64) | Fälten för motfrågor: utan dem som förut, giltiga, och tio sätt att ange dem fel; `ambiguous_sv.jsonl` med två frågor där agenten ska fråga och sex där den inte ska |
 
 Ändrade filer har fått tester i tabellen ovan (talen där gäller nu).
 
@@ -511,7 +675,7 @@ Rapporterna (fyra körningar och tre jämförelser) ligger utanför repot, efter
   just det jämförelsen ska visa värdet av.
 - **Ersättaren.** Jämförelsen är körd mot ersättaren för avtal-mcp; den bör köras om mot den
   riktiga databasen innan den visas.
-- **Motfrågornas domare är en modell**, och med fyra frågor där agenten ska fråga är talet grovt.
+- **Motfrågornas domare är en modell**, och med två frågor där agenten ska fråga är talet grovt.
 - **En körning per fråga och läge.** Intervallet tar hänsyn till antalet frågor, inte till att
   svaren varierar mellan körningar. Enskilda frågor skiftade mellan `low` och `medium`: q01, q18,
   q26 och q29 för baslinjen, och q06 för agenten (fel i alla fyra körningarna på `low`, tre i M11

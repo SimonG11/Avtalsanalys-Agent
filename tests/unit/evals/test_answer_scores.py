@@ -476,7 +476,7 @@ def test_not_asking_is_right_where_it_should_not_and_an_ask_there_is_unnecessary
     quiet = score(asking("a05", False), asked_run(), None, None)
     needless = score(asking("a06", False), asked_run("Större eller Mindre?"), None, None)
     plain = score(asking("q01", None), asked_run("Vilket?"), None, None)
-    # A run that never reached the graph had no chance to ask, or not to.
+    # A run that saved nothing does not show whether the agent asked, or did not.
     broken = run(None, error="avtal-mcp: ConnectError")
     lost = [
         score(asking(id, should), broken, None, None)
@@ -484,7 +484,10 @@ def test_not_asking_is_right_where_it_should_not_and_an_ask_there_is_unnecessary
     ]
 
     assert (quiet.asked_right, quiet.unnecessary_ask) == (True, False)
-    assert [result.asked_right for result in lost] == [None, None]
+    assert [(result.asked_right, result.unnecessary_ask) for result in lost] == [
+        (None, None),
+        (None, None),
+    ]
     assert (needless.asked_right, needless.unnecessary_ask) == (False, True)
     assert (plain.asked_right, plain.unnecessary_ask, plain.should_ask) == (None, None, None)
 
@@ -494,9 +497,9 @@ def test_the_asks_summary_counts_the_asks_and_is_none_without_ask_questions() ->
         score(asking("a01", True), asked_run("Vilket?"), None, None, ask_judgement=SEPARATES),
         score(asking("a02", True), asked_run("Vilket?"), None, None, ask_judgement=MIXES),
         score(asking("a03", True), asked_run("Vilket?"), None, None),
-        score(asking("a04", True), run(answer()), None, None),
+        score(asking("a04", True), asked_run(), None, None),
         score(asking("a05", False), asked_run("Båda?"), None, None),
-        score(asking("a06", False), run(answer()), None, None),
+        score(asking("a06", False), asked_run(), None, None),
         score(asking("q01", None), asked_run("Vilket?"), None, None),
     ]
 
@@ -511,8 +514,57 @@ def test_the_asks_summary_counts_the_asks_and_is_none_without_ask_questions() ->
     assert summarize_asks(results[-1:]) is None
 
 
+def test_a_run_that_saved_nothing_is_in_neither_count() -> None:
+    # As the agent's a04 on 2026-10-08: a transport error, and nothing of the run kept.
+    broken = run(None, error="avtal-mcp: ReadError")
+    results = [
+        score(asking("a01", True), asked_run("Vilket?"), None, None, ask_judgement=SEPARATES),
+        score(asking("a02", True), broken, None, None),
+        score(asking("a05", False), asked_run("Båda?"), None, None),
+        score(asking("a06", False), asked_run(), None, None),
+        score(asking("a07", False), broken, None, None),
+    ]
+
+    assert [result.could_ask for result in results] == [True, False, True, True, False]
+    assert summarize_asks(results) == AskSummary(
+        should_ask=1,
+        asked=1,
+        separating=1,
+        unjudged=0,
+        should_not_ask=2,
+        asked_unnecessarily=1,
+    )
+    # With only such runs there is nothing to count.
+    assert summarize_asks([results[1], results[4]]) is None
+
+
+def test_a_run_that_asked_before_its_state_was_lost_is_counted() -> None:
+    # Its state could not be read after it failed (run_question), but the asks it kept from
+    # the interrupts are there to judge.
+    cut = replace(
+        run(None, error="avtal-mcp: ReadError"), asked=("Vilket?",), asked_options=(OPTIONS,)
+    )
+    results = [
+        score(asking("a01", True), cut, None, None),
+        score(asking("a02", False), cut, None, None),
+    ]
+
+    assert [(result.could_ask, result.asked_right) for result in results] == [
+        (True, None),
+        (True, False),
+    ]
+    assert summarize_asks(results) == AskSummary(
+        should_ask=1,
+        asked=1,
+        separating=0,
+        unjudged=1,
+        should_not_ask=1,
+        asked_unnecessarily=1,
+    )
+
+
 def test_a_run_that_never_asks_asks_in_none_of_the_questions_that_should_ask() -> None:
-    results = [score(asking(f"a0{n}", True), run(answer()), None, None) for n in range(1, 5)]
+    results = [score(asking(f"a0{n}", True), asked_run(), None, None) for n in range(1, 5)]
 
     asks = summarize_asks(results)
 

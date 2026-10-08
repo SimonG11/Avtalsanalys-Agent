@@ -745,6 +745,64 @@ def test_the_asks_section_shows_each_question_that_says_whether_to_ask() -> None
     assert "- **a05** (ska svara utan att fråga" in markdown
     assert "med frågans förtydligande när testsamlingen har ett" in markdown
     assert "- **Motfrågor:** för en fråga där testsamlingen säger" in markdown
+    # The method follows the prompt's rule 4: ask when the cases are too many or depend on the
+    # user's own case; answer each case when they are few and short.
+    assert (
+        "(för att fallen är för många för ett svar, eller för att svaret beror på uppgifter om "
+        "användarens eget fall)"
+    ) in markdown
+    assert (
+        "För en fråga där svaret är detsamma i alla alternativ, eller där fallen är få och "
+        "korta och svaret ska ta upp vart och ett, är det rätt att inte fråga, och en motfråga "
+        "räknas som onödig."
+    ) in markdown
+    # As judge_answer judges: the reply when the agent asked; the cases and the gold's case
+    # (the judge's rule 7) when it should have asked and did not.
+    assert (
+        "Svaret bedöms mot facit som förut. När agenten frågade och mätningen svarade med "
+        "förtydligandet, läser domaren det med frågan. När agenten inte frågade i en fråga där "
+        "den skulle fråga, får domaren i stället veta vilka fall frågan passar och vilket fall "
+        "facit bygger på (domarens regel 7). Ett svar som ger facits svar för det fallet och "
+        "säger att det gäller det fallet har då kärnan, och svar för de andra fallen är inget "
+        "fel. Att agenten inte frågade räknas alltså bara bland motfrågorna. Annars bedöms "
+        "svaret mot frågan som den ställdes."
+    ) in markdown
+
+
+def test_a_question_whose_run_saved_nothing_is_not_counted() -> None:
+    plain = ask_report()
+    broken = run(None, error="avtal-mcp: ReadError")  # it does not show whether the agent asked
+    lost = (
+        score(asking("a03", True), broken, None, None),
+        score(asking("a04", False), broken, None, None),
+    )
+    lossy = replace(plain, results=plain.results + lost)
+
+    markdown = render_markdown(lossy)
+    data = json.loads(report_json(lossy))
+
+    # The same counts as without the two: an error is neither an ask nor a silence.
+    assert data["asks"] == json.loads(report_json(plain))["asks"]
+    assert "frågade när den borde i 1 av 2 frågor" in markdown
+    assert "frågade i onödan i 1 av 2 frågor" in markdown
+    assert "| a03 | ja | nej | – | räknas inte | Ej bedömd |" in markdown
+    assert "| a04 | nej | nej | – | räknas inte | Ej bedömd |" in markdown
+    assert "och räknas inte när inget av körningen sparades." in markdown
+    lines = markdown.split("## Motfrågor")[1].split("\n")
+    assert [line for line in lines if line.startswith(("- **a03**", "- **a04**"))] == [
+        "- **a03** (ska fråga; väntade alternativ: Delområde 1; Delområde 3). Inget av "
+        "körningen sparades, så frågan räknas inte.",
+        "- **a04** (ska svara utan att fråga; väntade alternativ: Delområde 1; Delområde 3). "
+        "Inget av körningen sparades, så frågan räknas inte.",
+    ]
+    assert (
+        "En fråga där inget av körningen sparades (ett fel i sessionen mot avtal-mcp) räknas "
+        "inte, varken bland frågorna där den skulle fråga eller bland dem där den inte skulle, "
+        "eftersom det inte går att se om agenten frågade."
+    ) in markdown
+    # Neither a right silence nor an unnecessary ask in the JSON either.
+    outcomes = [(item["asked_right"], item["unnecessary_ask"]) for item in data["questions"]]
+    assert outcomes[-2:] == [(None, None), (None, None)]
 
 
 def test_a_report_without_ask_questions_has_no_asks_section() -> None:
@@ -785,11 +843,10 @@ def test_the_json_and_the_printout_carry_the_asks() -> None:
 
 def test_a_workflow_run_is_named_lists_its_steps_and_asks_in_none() -> None:
     info = replace(INFO, mode="workflow")
+    answered = Answer(text="Minst 10 miljoner kronor.", status="verified", citations=[])
     never = replace(
         ask_report(info),
-        results=tuple(
-            score(asking(f"a0{n}", True), run(None, error="x"), None, None) for n in (1, 2, 3)
-        ),
+        results=tuple(score(asking(f"a0{n}", True), run(answered), None, None) for n in (1, 2, 3)),
     )
 
     markdown = render_markdown(never)

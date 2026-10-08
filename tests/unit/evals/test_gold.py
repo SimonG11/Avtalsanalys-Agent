@@ -1,7 +1,7 @@
 """Tests for evals.gold: the gold file's form, and the sections its sources resolve to.
 
 The section texts are made up in the style of the agreements' clauses. The
-gold file of the repository is parsed too, so a line that breaks its form
+gold files of the repository are parsed too, so a line that breaks their form
 fails here rather than in a measurement.
 """
 
@@ -35,6 +35,7 @@ from evals.gold import (
 )
 
 GOLD_FILE = Path(__file__).parents[3] / "evals" / "datasets" / "gold_sv.jsonl"
+AMBIGUOUS_FILE = Path(__file__).parents[3] / "evals" / "datasets" / "ambiguous_sv.jsonl"
 
 TERMS = "a" * 64  # general terms
 COPY = "b" * 64  # a procurement document that prints the general terms again
@@ -290,6 +291,16 @@ def test_the_gold_file_of_the_repository_parses() -> None:
 # --- Whether the agent should ask the user ---------------------------------------------------
 
 OPTIONS = ["IT-drift Större", "IT-drift Mindre"]
+
+
+def test_the_ambiguous_questions_of_the_repository_parse() -> None:
+    gold = load_gold(AMBIGUOUS_FILE)
+
+    # Two where the agent should ask; three it should answer for each case and three controls.
+    assert Counter(item.should_ask for item in gold.questions) == {True: 2, False: 6}
+    assert all(len(item.options) >= 2 for item in gold.questions if item.should_ask)
+    assert all(item.clarification for item in gold.questions)
+    assert all(skip_reason(item) is None for item in gold.questions)  # each cites a document
 
 
 def test_a_question_without_the_ask_fields_reads_as_before() -> None:

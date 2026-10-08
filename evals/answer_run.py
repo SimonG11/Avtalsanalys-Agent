@@ -8,8 +8,10 @@ What:
     questions to the user and the options it offered with each, the drafts
     the check sent back (and why) or the schema refused, the time, the
     tokens of every model call by model, and the error, if any.
-    `UsageCounter` is the callback that counts the tokens, `TokenUse` one
-    model's count, and `cost` its price in dollars at PRICES.
+    `read_thread` reads the same from a run that was cut off from outside,
+    as its thread saved it. `UsageCounter` is the callback that counts the
+    tokens, `TokenUse` one model's count, and `cost` its price in dollars
+    at PRICES.
 
 Why:
     The measurement must see what a user gets and what it costs, from the
@@ -34,8 +36,14 @@ How:
     its own, also those after an `ask_user` reply, although the limit
     counts per run. A run that never reached the graph (its state is empty
     or could not be read) saved neither steps, rejections nor model calls:
-    `path_saved` is false. The callback runs inline and reads each call's
-    model from LangChain's `ls_model_name` metadata and its tokens from the
+    `path_saved` is false. A run cut off from outside, when its MCP session
+    fails and cancels `run_question`, loses the questions kept from the
+    interrupts, but its thread in the checkpointer outlives the session:
+    `read_thread` reads the state, and the questions and their options from
+    the `ask_user` calls in the messages (`asks_in`); the caller's
+    `UsageCounter`, passed to `run_question`, keeps the tokens counted until
+    then. The callback runs inline and reads each call's model from
+    LangChain's `ls_model_name` metadata and its tokens from the
     message's `usage_metadata`; cached input and reasoning are parts of the
     input and output tokens, as OpenAI reports them. The price table has no
     price for cached input, so `cost` takes the share of the input price
@@ -244,13 +252,16 @@ async def run_question(
     redact: Callable[[str], str],
     trace: RunnableConfig | None = None,
     clarification: str | None = None,
+    usage: UsageCounter | None = None,
 ) -> QuestionRun:
     """Ask `graph` the question and read what it did; an error or a timeout is recorded.
 
     `trace` is merged into the run's config: the tracing's callbacks and metadata.
     `clarification` is the reply to the agent's questions to the user; ASK_USER_REPLY without.
+    `usage` counts the tokens, a new counter without: a caller that passes its own keeps the
+    count when the run is cut off from outside (`read_thread`).
     """
-    usage = UsageCounter()
+    usage = usage if usage is not None else UsageCounter()
     config = traced({"configurable": {"thread_id": thread_id}, "callbacks": [usage]}, trace or {})
     run_input: InputAgentState | Command[Any] = {
         "messages": [{"role": "user", "content": question}]
@@ -283,6 +294,50 @@ async def run_question(
     except Exception as failure:  # the checkpointer is in memory; this is not expected
         error = error or redact(error_text(failure))
     return read_run(values, asked, seconds, usage.by_model, error, asked_options=options)
+
+
+async def read_thread(
+    graph: AvtalAgent,
+    thread_id: str,
+    seconds: float,
+    usage: Mapping[str, TokenUse],
+    error: str,
+) -> QuestionRun:
+    """A run cut off from outside `run_question`, as its thread in the checkpointer saved it.
+
+    When the MCP session fails during a run, its task group cancels `run_question`, and the
+    questions it kept from the interrupts go with it; they are read from the messages instead
+    (`asks_in`). A thread that holds nothing, or cannot be read, saved nothing of the run.
+    """
+    try:
+        values = (await graph.aget_state({"configurable": {"thread_id": thread_id}})).values
+    except Exception:  # in memory, so not expected; `error` already names the failure
+        values = {}
+    asked, options = asks_in(values.get("messages") or [])
+    return read_run(values, asked, seconds, usage, error, asked_options=options)
+
+
+def asks_in(
+    messages: Sequence[BaseMessage],
+) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]:
+    """The agent's questions to the user and the options of each, from its `ask_user` calls.
+
+    As the interrupts give them, without the interrupts: a call answered with an error (its
+    arguments did not fit the tool) asked nothing.
+    """
+    refused = {
+        message.tool_call_id
+        for message in messages
+        if isinstance(message, ToolMessage) and message.status == "error"
+    }
+    calls = [
+        call["args"]
+        for message in messages
+        if isinstance(message, AIMessage)
+        for call in message.tool_calls
+        if call["name"] == ask_user.name and call["id"] not in refused
+    ]
+    return tuple(_asked(args) for args in calls), tuple(_offered(args) for args in calls)
 
 
 def read_run(

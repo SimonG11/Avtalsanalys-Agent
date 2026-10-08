@@ -22,10 +22,13 @@ import httpx2
 import openai
 import pytest
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import SecretStr
 
 import avtalsagent
 from avtalsagent.agent.__main__ import CommandError
+from avtalsagent.agent.checkpointer import serializer
 from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.agent.middleware import NO_DRAFT_TEXT
 from avtalsagent.agent.prompts import SYSTEM_PROMPT
@@ -55,6 +58,14 @@ from evals.run_answer_eval import (
     select_questions,
 )
 from evals.workflow_baseline import PLAN_PROMPT, baseline_prompts, workflow_template
+from tests.unit.agent.scripted_model import (
+    DictAmendments,
+    DictReader,
+    ListRegister,
+    ScriptedModel,
+    ScriptedReviewer,
+    tool_call,
+)
 
 SECRET = "sk-test-not-a-real-key"
 CORRECT = Judgement(verdict="correct", missing=[], wrong=[], reason="Samma som facit.")
@@ -365,6 +376,66 @@ async def test_a_refused_key_is_not_recorded_as_the_questions_error(
 
     with pytest.raises(ExceptionGroup):
         await ask_question(settings, None, None, None, gold("q01"), 10)  # type: ignore[arg-type]
+
+
+@pytest.mark.anyio
+async def test_a_session_that_fails_after_an_ask_keeps_what_the_thread_saved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # As the agent's a04 on 2026-10-08 may have failed: a request of the MCP client fails in
+    # the session's task group, which cancels run_question; the thread has the ask all the same.
+    called = anyio.Event()
+
+    @tool
+    async def search_documents(query: str) -> str:
+        """Sök i dokumenten."""
+        called.set()
+        await anyio.sleep(60)  # the session fails while the call waits
+        raise AssertionError("not reached")
+
+    @asynccontextmanager
+    async def failing(settings: Settings) -> AsyncIterator[McpTools]:
+        async with anyio.create_task_group() as group:
+
+            async def request() -> None:
+                await called.wait()
+                raise httpx2.ReadError("")
+
+            group.start_soon(request)
+            try:
+                yield McpTools(
+                    tools=[search_documents],
+                    reader=DictReader([]),
+                    register=ListRegister(),
+                    amendments=DictAmendments(),
+                )
+            finally:
+                group.cancel_scope.cancel()
+
+    monkeypatch.setattr(runner, "open_mcp_tools", failing)
+    model = ScriptedModel(
+        script=[
+            tool_call("ask_user", {"question": "Vilket  delområde?", "options": ["1", "3"]}, "c1"),
+            tool_call("search_documents", {"query": "vite"}, "c2"),
+        ]
+    )
+    settings = Settings(_env_file=None, openai_api_key=SecretStr(SECRET))
+    checkpointer = InMemorySaver(serde=serializer())
+
+    with anyio.fail_after(10):
+        result = await ask_question(
+            settings, model, ScriptedReviewer(), checkpointer, asking("a04", False), 30
+        )
+
+    assert result.error == "avtal-mcp: ReadError: "
+    assert result.answer is None
+    assert (result.asked, result.asked_options) == (("Vilket delområde?",), (("1", "3"),))
+    assert result.model_calls == 2 and result.path_saved
+    assert [step.name for step in result.steps] == ["ask_user", "search_documents"]
+    assert sum(use.calls for use in result.usage.values()) == 2  # counted until the failure
+    # So the question is counted: the agent asked where it should not.
+    scored = score(asking("a04", False), result, None, None)
+    assert (scored.could_ask, scored.unnecessary_ask) == (True, True)
 
 
 # --- the run ----------------------------------------------------------------------------------
