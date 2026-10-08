@@ -105,8 +105,10 @@ påstående, inte ett mätt resultat.
    modell och nivå) avgör om motfrågan låter användaren välja mellan de väntade alternativen, och en
    motfråga räknas som rätt bara då. För en kontrollfråga är det rätt att inte fråga, och en
    motfråga räknas som onödig. Detsamma gäller en fråga med få fall och korta svar, där agenten
-   enligt den nya regel 4 (PR #34) ska svara för vart och ett och facit täcker alla fall.
-   Rapporten får avsnittet Motfrågor. Baslinjen kan inte fråga och får 0 av de frågor där den borde.
+   enligt den nya regel 4 (PR #34) ska svara för vart och ett och facit täcker alla fall. En
+   fråga där körningen aldrig nådde agenten, och där den inte frågade, räknas inte bland
+   motfrågorna, eftersom agenten inte kunde fråga. Rapporten får avsnittet Motfrågor. Baslinjen
+   kan inte fråga och får 0 av de frågor där den borde.
 7. **Jämförelsen körs mot ersättaren för avtal-mcp** tills den riktiga databasen finns där
    mätningen körs. Rapporten säger vilken avtal-mcp den mätte, som förut.
 
@@ -140,12 +142,18 @@ påstående, inte ett mätt resultat.
   om mot den riktiga databasen innan den visas.
 - **Resultat, oklara frågor (2026-10-08, mot ersättaren, med PR #34).** De åtta oklara frågorna
   kördes på `low`, en gång per arm. Agenten frågade i båda frågorna där den skulle men skilde
-  fallen åt bara i a08, frågade i onödan i a02 och a07 och fick 6 av 8 mot baslinjens 5 av 8,
-  där agentens a04 föll på ett transportfel. Granskningen för hand höll med domarna, men åtta
-  frågor visar ett mönster och ingen säker skillnad
-  ([steg 11](../steg/11-utvardering.md#resultat-de-oklara-frågorna-2026-10-08)). Rapporterna
-  ligger i `/mnt/project-files/case-tokentek/implementering/matning-2026-10-08/`. Också den här
-  körningen bör göras om mot den riktiga databasen.
+  fallen åt bara i a08, frågade i onödan i a02 och a07 (2 av 5, eftersom a04 inte räknas) och
+  fick 6 av 8 mot baslinjens 5 av 8, där agentens a04 föll på ett transportfel. En omkörning av
+  a04 för sig, på samma commit, gav Delvis rätt utan motfråga: agenten svarade bara för ett av
+  fyra delområden, som baslinjen. Den ingår inte i talen. Granskningen för hand höll med domarna,
+  men åtta frågor visar ett mönster och ingen säker skillnad
+  ([steg 11](../steg/11-utvardering.md#resultat-de-oklara-frågorna-2026-10-08)). De tre luckor
+  den fann är rättade efter körningen: en körning som föll räknades bland motfrågorna,
+  metodtexten sade att ett svar utan motfråga alltid bedöms mot frågan som den ställdes, och
+  frågedomarens regel 1 sade inte att undantaget för fler än fem alternativ behåller förbudet mot
+  att slå ihop alternativ med olika svar. Rapporterna ligger i
+  `/mnt/project-files/case-tokentek/implementering/matning-2026-10-08/`. Också den här körningen
+  bör göras om mot den riktiga databasen.
 - Motfrågornas domare är en språkmodell, som svarsdomaren, och kan döma fel; dess skäl står i
   rapporten. Med två frågor där agenten ska fråga är talet grovt.
 - Varje fråga körs en gång per läge, som i ADR 0019, så en enskild fråga kan skifta mellan
