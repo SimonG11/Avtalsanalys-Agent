@@ -1,12 +1,13 @@
 # Demoskript
 
 Fem frågor som visar vad agenten gör: den frågar när frågan är oklar, väljer registret i stället
-för dokumenten, följer hänvisningar i flera steg, hittar en rättelse som ersätter klausulen och
-säger "framgår inte" i stället för att gissa. Fråga 3 och 4 visar det som ett fast workflow inte
-klarar, eftersom nästa steg beror på vad agenten just har läst. Fyra
-av frågorna kommer ur testsamlingen ([`evals/datasets/gold_sv.jsonl`](../evals/datasets/gold_sv.jsonl)),
-så de har ett facit och en mätning bakom sig. Den första är en öppnare variant av q04, gjord för
-att agenten ska behöva fråga.
+för dokumenten, tar sig i flera steg från en punkt till definitionen den bygger på, hittar en
+rättelse som ersätter klausulen och säger "framgår inte" i stället för att gissa. Fråga 3 och 4
+visar det som ett fast workflow inte klarar, eftersom nästa steg beror på vad agenten just har
+läst. Fyra av frågorna kommer ur testsamlingen
+([`evals/datasets/gold_sv.jsonl`](../evals/datasets/gold_sv.jsonl)), så de har ett facit och en
+mätning bakom sig. Den första är en öppnare variant av q04, gjord för att agenten ska behöva
+fråga.
 
 Alla fem kördes mot den riktiga databasen 2026-10-07, både i terminalen och i webbappen, och
 reservfrågan i terminalen. Resultaten står i [steg 12](steg/12-demo.md). Körningen hittade ett fel:
@@ -22,7 +23,7 @@ och webbappen från PR #23. Hämta `main` före demot. Beslutet bakom urvalet st
 |---|---|---|---|---|---|
 | 1 | Uppsägningstiden i IT-drift | Agenten frågar när frågan är oklar | Verifierat | 52–55 s med dialogen | 54 s med dialogen |
 | 2 | q10 Nordlo Advance | Registret i stället för dokumenten | Verifierat | 12–14 s | 19 s |
-| 3 | q14 Lördagsarbete | Flera steg genom hänvisningar | Verifierat | 39–62 s | 50 s |
+| 3 | q14 Lördagsarbete | Flera steg utifrån det agenten läser | Verifierat | 39–62 s | 50 s |
 | 4 | q21 Antal anbud | En rättelse ersätter klausulen | Verifierat | 32–45 s | 36 s |
 | 5 | q27 Rangordnad etta | Agenten gissar inte | Inget svar eller Verifierat | 35–48 s | 31 s |
 | R | q24 Lägsta takpris | Jämförelse mellan leverantörer | Verifierat | – | 42 s |
@@ -124,15 +125,16 @@ finns i registret eller i en kontrollerad källa går svaret tillbaka till agent
 **Om det går fel:** frågan är den snabbaste och mest stabila. Svarar den inte alls är det
 tjänsten, inte agenten: se felsökningen nedan.
 
-## Fråga 3: flera steg genom hänvisningar
+## Fråga 3: flera steg utifrån det agenten läser
 
 **Fråga:** `Vår inhyrda IT-tekniker, avropad genom rangordning, behöver jobba en lördag. Vad får bemanningsföretaget ta betalt för de timmarna?`
 
 **Vad som händer:** i terminalen tog agenten nio verktygsanrop: den hittade punkt 9.9.2 om
 särskild ersättning, letade efter ändringar, läste prisbilagan för rangordnade IT-tjänster, som
 hänvisar arbete utanför Arbetsdag till avsnittet Särskild ersättning, och läste definitionen av
-Arbetsdag i 9.2. I webbappen tog den sju steg och läste inte prisbilagan, och i en andra körning
-nio steg med prisbilagan. Ordningen och stegen kan variera.
+Arbetsdag i 9.2. I webbappen tog den sju steg och läste inte prisbilagan. I två senare körningar
+tog den tio och nio steg ([steg 12](steg/12-demo.md)), och i den med tio läste den prisbilagan
+mellan 9.9.2 och 9.2. Ordningen och stegen kan variera.
 
 **Visa:**
 - Stegen. Ingen enskild sökning ger svaret: det bygger på 9.9.2 och definitionen i 9.2, som står
@@ -144,8 +146,16 @@ nio steg med prisbilagan. Ordningen och stegen kan variera.
   visar PDF-sidan med citatet ur 9.9.2 markerat.
 
 **Säg:** "Det här är frågan som visar varför det är en agent. Svaret står i en punkt om särskild
-ersättning, som prisbilagan hänvisar till, och i en definition på ett annat ställe. Ingen enskild
-sökning ger båda. Agenten letar upp delarna själv, i flera steg."
+ersättning och i en definition på ett annat ställe, och ingen enskild sökning ger båda. Vilka
+avsnitt agenten läser, och när, avgör den utifrån det den just har läst, så vägen kan skilja sig
+mellan körningar: ibland läser den prisbilagan på vägen, ibland inte. Inläsningen kopplade 7 519
+av 10 080 hänvisningar till sina mål, men en definition är ingen hänvisning, så den får agenten
+leta upp själv."
+
+**Om någon pekar på systemprompten:** raden om `calculate_date` säger "Gäller det arbetsdagar, läs
+först hur avtalet definierar Arbetsdag." Säg: "Ja, prompten säger att definitionen av Arbetsdag
+ska läsas när arbetsdagar spelar roll. Var den står, och vilka andra avsnitt svaret behöver, får
+agenten ta reda på själv utifrån det den läser."
 
 **Rätt svar:** särskild ersättning efter överenskommelse: konsultens kompensation enligt
 kollektivavtalet gånger 2,0, där faktorn redan innehåller arbetsgivaravgift, OH och påslag
