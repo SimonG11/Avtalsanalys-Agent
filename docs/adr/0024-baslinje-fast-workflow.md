@@ -133,17 +133,19 @@ påstående, inte ett mätt resultat.
   hänvisning; på enkla uppslagningar är baslinjen lika bra eller något bättre (8 och 9 av 9 mot
   agentens 7,5 och 8,5). Baslinjen var snabbare (median 29–30 s mot 38–42 s) och kostade ungefär
   lika mycket. Agenten frågade aldrig, och testsamlingen har inga oklara frågor, så motfrågorna
-  är inte mätta. De mättes 2026-10-08 på de åtta oklara frågorna (`low`, en körning per arm, med
-  PR #34): agenten frågade i båda frågorna där den skulle men skilde fallen åt bara i a08, frågade
-  i onödan i a02 och a07 och fick 6 av 8 mot baslinjens 5 av 8, där agentens a04 föll på ett
-  transportfel. Granskningen för hand höll med domarna, men åtta frågor visar ett mönster och
-  ingen säker skillnad
-  ([steg 11](../steg/11-utvardering.md#resultat-de-oklara-frågorna-2026-10-08)). Siffrorna och
-  stickproven står i
+  är inte mätta. Siffrorna och stickproven står i
   [steg 11](../steg/11-utvardering.md#resultat-agenten-mot-baslinjen), och rapporterna, som inte
   ligger i repot (`evals/reports/` ignoreras), i
   `/mnt/project-files/case-tokentek/implementering/matning-2026-10-07/`. Jämförelsen bör köras
   om mot den riktiga databasen innan den visas.
+- **Resultat, oklara frågor (2026-10-08, mot ersättaren, med PR #34).** De åtta oklara frågorna
+  kördes på `low`, en gång per arm. Agenten frågade i båda frågorna där den skulle men skilde
+  fallen åt bara i a08, frågade i onödan i a02 och a07 och fick 6 av 8 mot baslinjens 5 av 8,
+  där agentens a04 föll på ett transportfel. Granskningen för hand höll med domarna, men åtta
+  frågor visar ett mönster och ingen säker skillnad
+  ([steg 11](../steg/11-utvardering.md#resultat-de-oklara-frågorna-2026-10-08)). Rapporterna
+  ligger i `/mnt/project-files/case-tokentek/implementering/matning-2026-10-08/`. Också den här
+  körningen bör göras om mot den riktiga databasen.
 - Motfrågornas domare är en språkmodell, som svarsdomaren, och kan döma fel; dess skäl står i
   rapporten. Med två frågor där agenten ska fråga är talet grovt.
 - Varje fråga körs en gång per läge, som i ADR 0019, så en enskild fråga kan skifta mellan
