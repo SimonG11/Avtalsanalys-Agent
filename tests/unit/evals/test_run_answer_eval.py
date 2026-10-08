@@ -6,7 +6,10 @@ without a model, a key or a server. One question through the real graph is
 tested in test_answer_run.py.
 """
 
+import hashlib
 import logging
+import shutil
+import subprocess
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -20,9 +23,12 @@ import pytest
 from langchain_core.runnables import RunnableConfig
 from pydantic import SecretStr
 
+import avtalsagent
 from avtalsagent.agent.__main__ import CommandError
 from avtalsagent.agent.mcp_tools import McpTools
 from avtalsagent.agent.middleware import NO_DRAFT_TEXT
+from avtalsagent.agent.prompts import SYSTEM_PROMPT
+from avtalsagent.agent.reviewer import REVIEWER_PROMPT
 from avtalsagent.agent.schemas import Answer
 from avtalsagent.config import Settings
 from avtalsagent.observability.tracing import Tracing
@@ -37,8 +43,11 @@ from evals.run_answer_eval import (
     ask_question,
     build_parser,
     check_mcp,
+    code_commit,
     evaluate,
     judge_answer,
+    measured_commit,
+    run_info,
     run_settings,
     select_questions,
 )
@@ -136,6 +145,111 @@ def test_the_measurement_keeps_its_checkpoints_in_memory() -> None:
     assert run_settings(settings, None).checkpointer == "memory"
     assert run_settings(settings, None).agent_reasoning_effort == "low"
     assert run_settings(settings, "high").agent_reasoning_effort == "high"
+
+
+def git(where: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-C", str(where), "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+        + ["-c", "commit.gpgsign=false", *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return done.stdout.strip()
+
+
+def outside_any_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A folder git finds no repository from, wherever tmp_path is and whatever GIT_DIR was."""
+    for variable in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))  # git stops below tmp_path
+    folder = tmp_path / "outside"
+    folder.mkdir()
+    return folder
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+def test_the_commit_is_the_short_sha_and_whether_the_tree_has_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tmp_path = outside_any_repository(tmp_path, monkeypatch)
+    git(tmp_path, "init", "--quiet")
+    (tmp_path / "agent.py").write_text("PROMPT = 'ett'\n")
+    git(tmp_path, "add", "agent.py")
+    git(tmp_path, "commit", "--quiet", "-m", "first")
+    sha = git(tmp_path, "rev-parse", "--short", "HEAD")
+
+    assert code_commit(tmp_path) == (sha, False)
+    (tmp_path / "agent.py").write_text("PROMPT = 'två'\n")
+    assert code_commit(tmp_path) == (sha, True)
+    git(tmp_path, "commit", "--quiet", "-am", "second")
+    (tmp_path / "new.py").write_text("")  # neither tracked nor ignored
+    assert code_commit(tmp_path)[1] is True
+
+
+def test_without_git_or_a_repository_the_commit_is_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_git(*args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError("git")
+
+    outside = outside_any_repository(tmp_path, monkeypatch)
+    monkeypatch.delenv("AVTALSAGENT_COMMIT", raising=False)
+    if shutil.which("git") is not None:  # a folder in no repository
+        assert code_commit(outside) == (None, False)
+        assert measured_commit(outside) == (None, False, None)
+    monkeypatch.setattr(subprocess, "run", no_git)
+    assert code_commit(outside) == (None, False)
+    assert measured_commit(outside) == (None, False, None)
+
+
+def test_where_git_cannot_tell_the_commit_is_taken_from_the_variable(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    told: tuple[str | None, bool] = (None, False)
+    monkeypatch.setattr(runner, "code_commit", lambda where: told)
+    monkeypatch.setenv("AVTALSAGENT_COMMIT", " 4ea5dd2\n")
+
+    assert measured_commit(Path("src")) == ("4ea5dd2", False, "environment")
+    told = ("abc1234", True)  # git can tell: it wins over the variable
+    assert measured_commit(Path("src")) == ("abc1234", True, "git")
+    told = (None, False)
+    monkeypatch.setenv("AVTALSAGENT_COMMIT", "`main`")  # no sha: left out, with a warning
+    with caplog.at_level(logging.WARNING, logger="evals.answers"):
+        assert measured_commit(Path("src")) == (None, False, None)
+    assert "AVTALSAGENT_COMMIT is not a commit sha" in caplog.text
+    monkeypatch.setenv("AVTALSAGENT_COMMIT", "  ")
+    assert measured_commit(Path("src")) == (None, False, None)
+
+
+def test_the_run_info_names_the_commit_and_the_prompts_hashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    where: list[Path] = []
+
+    def commit(path: Path) -> tuple[str | None, bool]:
+        where.append(path)
+        return "abc1234", True
+
+    monkeypatch.setattr(runner, "code_commit", commit)
+    args = build_parser().parse_args([])
+
+    info = run_info(Settings(_env_file=None), args, None)
+
+    assert (info.commit, info.commit_source, info.uncommitted) == ("abc1234", "git", True)
+    assert where == [Path(avtalsagent.__file__).parent]  # the code that is measured
+    assert info.system_prompt_sha256 == hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
+    assert info.reviewer_prompt_sha256 == hashlib.sha256(REVIEWER_PROMPT.encode()).hexdigest()
+    assert info.system_prompt_sha256 != info.reviewer_prompt_sha256
+    # In compose's eval container git cannot tell, and the variable names the commit.
+    monkeypatch.setattr(runner, "code_commit", lambda path: (None, False))
+    monkeypatch.setenv("AVTALSAGENT_COMMIT", "4ea5dd2")
+    given = run_info(Settings(_env_file=None), args, None)
+    assert (given.commit, given.commit_source, given.uncommitted) == (
+        "4ea5dd2",
+        "environment",
+        False,
+    )
 
 
 def test_the_options_have_their_defaults() -> None:

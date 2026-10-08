@@ -17,14 +17,18 @@ from sqlalchemy import Select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
+from avtalsagent.domain.extracted import Quarantine
 from avtalsagent.domain.search import SearchFilters
 from avtalsagent.mcp_server.errors import NotFoundError
 from avtalsagent.mcp_server.tools.search_register import search_register, sub_area_parts
-from avtalsagent.mcp_server.visibility import document_filters, register_agreements
+from avtalsagent.mcp_server.visibility import Visibility, document_filters, register_agreements
 
 TWO_WAYS = ["23.3-12000-2020-001", "23.3-12000-2020-01"]
 ADVANIA = "23.3-5890-2023-003"
 CARD = "c" * 64
+# The stub's document_scope has no rows for the check of loaded documents (that check is
+# tested in test_mcp_document_checks.py), so it passes, as with no index.
+NOTHING_SHOWN = Visibility(files=frozenset(), quarantine=Quarantine(frozenset(), frozenset()))
 
 
 def sql(statement: Select[Any]) -> str:
@@ -105,7 +109,7 @@ def test_the_document_filter_takes_the_spelling_the_index_stored(
     # Only the stored spelling finds the agreement's card in document_scope.
     register = Register(indexed)
 
-    filters = document_filters(stub(register), None, number, None)
+    filters = document_filters(stub(register), NOTHING_SHOWN, None, number, None)
 
     assert filters == SearchFilters(agreement_number=spelling)
 
@@ -113,7 +117,7 @@ def test_the_document_filter_takes_the_spelling_the_index_stored(
 def test_an_agreement_with_one_spelling_is_not_looked_up_in_the_index() -> None:
     register = Register()
 
-    filters = document_filters(stub(register), None, "23.3.5890-23-003", None)
+    filters = document_filters(stub(register), NOTHING_SHOWN, None, "23.3.5890-23-003", None)
 
     assert filters == SearchFilters(agreement_number=ADVANIA)
     assert register.scope_lookups == []

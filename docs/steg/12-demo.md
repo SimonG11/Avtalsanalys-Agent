@@ -210,7 +210,7 @@ länkarna pekar på repots filer.
   agenten ställer i fråga 1 och statusen för "framgår inte" i fråga 5.
 - **Webbappens tider för fråga 3–5** kommer från körningen med rättelsen provad lokalt, samma
   ändring som PR #22 men före dess test.
-- **Omrankning och spårning i Langfuse** ingår inte i M12. Omrankningen mättes och väntar
+- **Omrankning och spårning i Langfuse** ingår inte i M12. Omrankningen mättes och byggdes inte in
   ([ADR 0020](../adr/0020-omrankning.md)), och spårningen byggdes i PR #24
   ([ADR 0021](../adr/0021-sparning-med-langfuse.md)). Demofrågorna kördes utan spårning.
 - **Skärmbilderna och rapporterna ligger utanför repot.** `evals/reports/` och `data/` checkas

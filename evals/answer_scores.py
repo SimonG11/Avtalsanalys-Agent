@@ -7,7 +7,11 @@ What:
     (`sources_found`), how many of the gold's agreements its register facts
     cover (`register_score`), and the verdict. `rule_judgement` judges an
     answer that needs no judge (`no_draft`). `summarize` gives the `Summary` of any group
-    of results, and `by_category` the groups by category.
+    of results, and `by_category` the groups by category. `summarize_paths`
+    gives the `PathSummary` of how the agent went about them: the calls per
+    tool, its model calls, the sections it read from a reference (and of
+    those, the ones no earlier search had returned), and the check's
+    rejections by rule.
 
 Why:
     The report's numbers come from plain values, so they can be tested
@@ -23,7 +27,10 @@ How:
     when either position is unknown. Only citations whose quote the check
     verified count. Agreements are compared by `agreement_key`, as the
     register's are. A run that ended without a draft (NO_DRAFT_TEXT) is
-    incorrect by rule. Percentiles are nearest-rank.
+    incorrect by rule. Percentiles are nearest-rank. The path's numbers
+    count the questions whose path was saved (`QuestionRun.path_saved`):
+    every question but one that never reached the graph, which is counted
+    as not saved instead of as no calls.
 """
 
 import math
@@ -36,6 +43,7 @@ from avtalsagent.agent.middleware import NO_DRAFT_TEXT
 from avtalsagent.agent.schemas import Answer, AnswerStatus, FinalAnswer
 from avtalsagent.domain.identifiers import agreement_key
 from evals.answer_run import QuestionRun, TokenUse, cost_range, total_use
+from evals.answer_steps import CHECK_RULES, READ_SECTION, CheckRule, Step, rule_counts
 from evals.gold import Alternative, DocumentSource, GoldQuestion, RegisterSource
 from evals.judge import Judgement, Verdict
 
@@ -288,6 +296,93 @@ def summarize(results: Sequence[QuestionResult]) -> Summary:
         cost=cost_range(usage),
         usage=usage,
     )
+
+
+@dataclass(frozen=True)
+class ToolCount:
+    calls: int
+    questions: int  # that called the tool at least once
+
+
+@dataclass(frozen=True)
+class RuleCount:
+    drafts: int  # drafts the rule sent back; a draft can be sent back by several rules
+    questions: int
+    problems: int  # lines of the feedback
+
+
+@dataclass(frozen=True)
+class PathSummary:
+    """How the agent went about a group of questions (see the module's How)."""
+
+    tools: Mapping[str, ToolCount]  # avtal-mcp's tools, most calls first
+    questions_saved: int  # whose path was saved: the questions the counts below are of
+    not_saved: int  # questions that never reached the graph
+    model_calls: tuple[int, ...]  # per question whose path was saved
+    reads: int  # read_section calls
+    reads_from_references: int  # to a section an earlier result's references named
+    reads_from_references_only: int  # of those, to a section no earlier search had returned
+    reads_from_amendments: int  # to an amending section an earlier find_amendments named
+    questions_from_references: int  # with at least one read from a reference
+    questions_from_references_only: int  # with at least one such read no search had returned
+    rejections: Mapping[CheckRule, RuleCount]  # by rule, in CHECK_RULES' order
+
+
+def summarize_paths(results: Sequence[QuestionResult]) -> PathSummary:
+    """The `PathSummary` of `results`."""
+    calls: dict[str, int] = {}
+    questions: dict[str, int] = {}
+    for r in results:
+        for tool in r.run.tools:
+            calls[tool] = calls.get(tool, 0) + 1
+        for tool in set(r.run.tools):
+            questions[tool] = questions.get(tool, 0) + 1
+    saved = [r.run for r in results if r.run.path_saved]
+    reads = [step for run in saved for step in run.steps if step.name == READ_SECTION]
+    by_rule = [rule_counts(run.rejections) for run in saved]
+    problems: dict[CheckRule, int] = {}
+    for run in saved:
+        for rejection in run.rejections:
+            for problem in rejection.problems:
+                problems[problem.rule] = problems.get(problem.rule, 0) + 1
+    return PathSummary(
+        tools={
+            tool: ToolCount(calls[tool], questions[tool])
+            for tool in sorted(calls, key=lambda tool: (-calls[tool], tool))
+        },
+        questions_saved=len(saved),
+        not_saved=len(results) - len(saved),
+        model_calls=tuple(run.model_calls for run in saved if run.model_calls is not None),
+        reads=len(reads),
+        reads_from_references=sum(1 for step in reads if _from_reference(step)),
+        reads_from_references_only=sum(1 for step in reads if _from_reference_only(step)),
+        reads_from_amendments=sum(1 for step in reads if step.target_from == "amendment"),
+        questions_from_references=sum(
+            1 for run in saved if any(_from_reference(step) for step in run.steps)
+        ),
+        questions_from_references_only=sum(
+            1 for run in saved if any(_from_reference_only(step) for step in run.steps)
+        ),
+        rejections={
+            rule: RuleCount(
+                drafts=sum(counts.get(rule, 0) for counts in by_rule),
+                questions=sum(1 for counts in by_rule if rule in counts),
+                problems=problems.get(rule, 0),
+            )
+            for rule in CHECK_RULES
+            if any(rule in counts for counts in by_rule)
+        },
+    )
+
+
+def _from_reference(step: Step) -> bool:
+    """A read of a section an earlier result's references named."""
+    return step.name == READ_SECTION and step.target_from == "reference"
+
+
+def _from_reference_only(step: Step) -> bool:
+    """A read of a section a reference named and no earlier search had returned."""
+    return _from_reference(step) and not step.found_by_search
 
 
 def by_category(results: Sequence[QuestionResult]) -> dict[str, list[QuestionResult]]:

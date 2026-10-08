@@ -5,6 +5,7 @@ reports are tested without a model or a server.
 """
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from evals.answer_report import (
 )
 from evals.answer_run import ASK_USER_REPLY, QuestionRun, TokenUse
 from evals.answer_scores import rule_judgement, score
+from evals.answer_steps import Problem, Rejection, Step
 from evals.gold import Alternative, DocumentSource, GoldQuestion, GoldScope
 from evals.judge import Judgement
 
@@ -76,19 +78,39 @@ def gold(id: str, answerable: bool = True) -> GoldQuestion:
 
 
 def run(answer: Answer | None, error: str | None = None, seconds: float = 12.0) -> QuestionRun:
+    """A run with an answer as the graph leaves it; without one, a session that never started."""
+    if answer is None:  # as ask_question records it: nothing reached the graph
+        return QuestionRun(
+            answer=None,
+            draft=None,
+            tools=(),
+            tool_errors=0,
+            asked=(),
+            check_retries=0,
+            refused_drafts=0,
+            seconds=seconds,
+            usage={},
+            error=error,
+        )
     return QuestionRun(
         answer=answer,
         draft=None,
         tools=("search_documents", "read_section"),
         tool_errors=0,
         asked=(),
-        check_retries=1 if answer else 0,
+        check_retries=1,
         refused_drafts=0,
         seconds=seconds,
-        usage={"gpt-6.1-sol": TokenUse(calls=3, input_tokens=100_000, cached_input_tokens=60_000)}
-        if answer
-        else {},
+        usage={"gpt-6.1-sol": TokenUse(calls=3, input_tokens=100_000, cached_input_tokens=60_000)},
         error=error,
+        steps=(
+            Step("search_documents", {"query": "vite"}),
+            Step("read_section", {"sha256": SHA, "section_position": 41}, found_by_search=True),
+            Step("FinalAnswer", {"text": "Ett."}, draft="sent_back"),
+            Step("FinalAnswer", {"text": "Två."}, draft="submitted"),
+        ),
+        model_calls=4,
+        rejections=(Rejection((Problem("citations", "Källa [1]: citatet är för kort."),)),),
     )
 
 
@@ -237,7 +259,10 @@ def test_a_run_without_a_draft_is_counted_apart_from_no_answer() -> None:
 
     markdown = render_markdown(AnswerReport(**{**plain.__dict__, "results": results}))
 
-    assert "- **Utan svar inom gränsen för modellanrop:** 1 av 4 frågor (16 anrop)." in markdown
+    assert (
+        "- **Utan svar inom gränsen för modellanrop:** 1 av 4 frågor (16 anrop per körning)."
+        in markdown
+    )
     assert "där agenten svarade att det inte framgår:** 0 av 3." in markdown
     assert "- **q03 Fel.** Agenten kom inte fram till ett svar" in markdown
 
@@ -309,6 +334,334 @@ def test_the_check_before_the_run_makes_the_folder_and_leaves_it_empty(tmp_path:
     check_writable(tmp_path / "reports")
 
     assert list((tmp_path / "reports").iterdir()) == []
+
+
+def test_the_follow_up_line_is_written_also_when_the_agent_asked_nothing() -> None:
+    markdown = render_markdown(report())
+
+    assert "- **Följdfrågor:** agenten frågade användaren i 0 av 3 frågor." in markdown
+
+
+# --- the agent's path -------------------------------------------------------------------------
+
+TERMS = "e3" * 32
+LONG_QUERY = "arbete på lördag och söndag och andra helgdagar inom bemanning"
+STEPS = (
+    Step("search_documents", {"query": LONG_QUERY, "framework_area": "Bemanning", "limit": 8}),
+    Step(
+        "read_section",
+        {"sha256": TERMS, "section_number": "9.9.2", "section_position": 80},
+        found_by_search=True,
+    ),
+    Step(
+        "resolve_reference",
+        {"sha256": TERMS, "section_number": "9.9.2", "reference": "punkt 9.9.3"},
+    ),
+    # Two reads of a reference's target: one the search had returned too, one it had not.
+    Step(
+        "read_section",
+        {"sha256": TERMS, "section_number": "9.9.3"},
+        target_from="reference",
+        found_by_search=True,
+    ),
+    Step("read_section", {"sha256": TERMS, "section_position": 12}, target_from="reference"),
+    Step("find_amendments", {"sha256": TERMS, "section_number": "9.9.2"}),
+    Step(
+        "read_section", {"sha256": SHA, "section_position": 3}, target_from="amendment", error=True
+    ),
+    Step("ask_user", {"question": "Vilket avtal?", "options": ["A", "B"]}),
+    Step("FinalAnswer", {"text": "Ett."}, draft="sent_back"),
+    Step("FinalAnswer", {"text": "Två."}, draft="refused"),
+    Step("get_outline", {"sha256": TERMS}),
+    Step(
+        "calculate_date",
+        {"start": "2027-02-17", "amount": 3, "unit": "months", "direction": "minus"},
+    ),
+    Step("no_such_tool", {"x": 1}, error=True),
+    Step("FinalAnswer", {"text": "Tre."}, draft="submitted"),
+)
+REJECTED = Rejection(
+    (
+        Problem(
+            "citations", "Källa [1]: citatet finns inte ordagrant i avsnitt 9.9.2. " + "x" * 300
+        ),
+        Problem("register_facts", "Datumet 2028-11-14 står inte i registret."),
+    )
+)
+
+
+def with_path(plain: AnswerReport) -> AnswerReport:
+    """`plain` with q01's long path, and q27 answered at once; q02 never reached the graph."""
+    first, second, third = plain.results
+    tools = tuple(s.name for s in STEPS if s.name not in ("FinalAnswer", "ask_user"))
+    q01 = replace(first.run, tools=tools, steps=STEPS, model_calls=16, rejections=(REJECTED,))
+    q27 = replace(
+        third.run,
+        tools=(),
+        steps=(Step("FinalAnswer", {"answered": False}, draft="submitted"),),
+        model_calls=5,
+        check_retries=0,
+        rejections=(),
+    )
+    return replace(
+        plain,
+        results=(replace(first, run=q01), second, replace(third, run=q27)),
+    )
+
+
+def test_each_questions_path_shows_its_calls_with_what_they_looked_for() -> None:
+    markdown = render_markdown(with_path(report()))
+
+    path = (
+        "- **q01** (16 modellanrop; nya försök efter regel: citat 1, registeruppgifter 1): "
+        'search\\_documents("arbete på lördag och söndag och andra h…", Bemanning) '
+        '→ read\\_section(9.9.2) → resolve\\_reference(9.9.2, "punkt 9.9.3") '
+        "→ ↪read\\_section(9.9.3) → ↪read\\_section(plats 12) → find\\_amendments(9.9.2) "
+        '→ Δread\\_section(plats 3)✗ → ask\\_user("Vilket avtal?") '
+        "→ FinalAnswer(underkänt: citat, registeruppgifter) → FinalAnswer(fel form) "
+        f"→ get\\_outline({TERMS[:12]}…) → calculate\\_date(2027-02-17, minus, 3, months) "
+        "→ no\\_such\\_tool✗ → FinalAnswer\n"
+    )
+    assert path in markdown
+    # Each problem of each draft sent back, under the path and cut to 200 characters.
+    reason = "  - Skäl till nytt försök 1, citat: Källa \\[1\\]: citatet finns inte ordagrant"
+    (line,) = [line for line in markdown.splitlines() if line.startswith(reason)]
+    assert line.endswith("x…") and len(line) < len(reason) + 200
+    assert (
+        "  - Skäl till nytt försök 1, registeruppgifter: Datumet 2028-11-14 står inte i "
+        "registret." in markdown
+    )
+    assert "- **q27** (5 modellanrop): FinalAnswer\n" in markdown
+    assert "- **q02:** inte sparat (fel i körningen)\n" in markdown
+
+
+def test_the_path_section_counts_the_tools_and_the_rejections_by_rule() -> None:
+    markdown = render_markdown(with_path(report()))
+
+    # Most calls first, then by name.
+    assert "| read\\_section | 4 | 1 |\n| calculate\\_date | 1 | 1 |" in markdown
+    assert "| resolve\\_reference | 1 | 1 |\n| search\\_documents | 1 | 1 |" in markdown
+    assert "| citat | 1 | 1 | 1 |\n| registeruppgifter | 1 | 1 | 1 |" in markdown
+    assert (
+        "- **Nya försök:** kontrollen skickade tillbaka 1 av 3 svar minst en gång (1 nytt "
+        "försök); efter regel, där ett utkast som flera regler underkände räknas under var och "
+        "en: citat 1, registeruppgifter 1." in markdown
+    )
+    # q02 never reached the graph: it is named as not saved, in no number.
+    assert (
+        "- **Agentens modellanrop per fråga:** median 10,5, högst 16, mot gränsen 16 per "
+        "körning; 1 av 2 frågor hade 16 eller fler (inte sparat för 1 fråga)." in markdown
+    )
+    assert (
+        f"- **Mål ur en hänvisning:** 2 av 4 anrop till `read_section` (50{NBSP}%) gick till "
+        "ett mål ur ett tidigare svars hänvisningar, i 1 av 2 frågor, och 1 av dem till ett mål "
+        "som ingen tidigare sökning hade gett, i 1 av 2 frågor; 1 anrop gick till en ändring "
+        "som `find_amendments` angav (inte sparat för 1 fråga)." in markdown
+    )
+    assert (
+        "- **`resolve_reference`:** 1 anrop, i 1 av 2 frågor (inte sparat för 1 fråga)." in markdown
+    )
+
+
+def test_a_question_that_never_reached_the_graph_is_not_saved_rather_than_zero() -> None:
+    plain = report()
+    failed = plain.results[1]  # its session to avtal-mcp never started
+    only_failed = replace(plain, results=(failed,))
+
+    markdown = render_markdown(only_failed)
+
+    assert "- **Agentens modellanrop per fråga:** inte sparat." in markdown
+    assert "- **Mål ur en hänvisning:** inte sparat." in markdown
+    assert "- **`resolve_reference`:** inte sparat." in markdown
+    assert "- **q02:** inte sparat (fel i körningen)\n" in markdown
+    assert (
+        "| q02 | enkel uppslagning | Ej bedömd | Fel i körningen | – | 0 av 1 | – | 0 | 0 | – |"
+        in (markdown)
+    )
+    data = json.loads(report_json(only_failed))
+    assert data["path"]["model_calls"] == {
+        "median": None,
+        "max": None,
+        "limit": 16,
+        "at_limit": None,
+    }
+    assert (data["path"]["questions_saved"], data["path"]["not_saved"]) == (0, 1)
+    question = data["questions"][0]
+    assert (question["model_calls"], question["steps"], question["rejections"]) == (
+        None,
+        None,
+        None,
+    )
+    assert overall_lines(only_failed)[5:7] == [
+        "model calls: not saved (limit 16 per run)",
+        "references: not saved",
+    ]
+
+
+def test_a_question_that_reached_the_graph_without_a_call_counts_as_none() -> None:
+    plain = report()
+    failed = plain.results[1]
+    # The first model call failed: the state was read, and it holds no call and no step.
+    stopped = replace(failed, run=replace(failed.run, error="ConnectionError: nej", model_calls=0))
+
+    markdown = render_markdown(replace(plain, results=(stopped,)))
+
+    assert "- **q02** (0 modellanrop): inga verktygsanrop\n" in markdown
+    assert "- **Agentens modellanrop per fråga:** median 0, högst 0, mot gränsen 16" in markdown
+    assert "- **`resolve_reference`:** 0 anrop, i 0 av 1 frågor." in markdown
+
+
+def test_the_draft_that_became_an_answer_with_reservation_is_marked() -> None:
+    plain = report()
+    first = plain.results[0]
+    assert first.run.answer is not None
+    answer = first.run.answer.model_copy(update={"status": "with_reservation"})
+    reserved = replace(first, run=replace(first.run, answer=answer))
+
+    markdown = render_markdown(replace(plain, results=(reserved,)))
+
+    assert "→ FinalAnswer(underkänt: citat) → FinalAnswer(med reservation)\n" in markdown
+    # One the check passed is drawn plain.
+    assert "→ FinalAnswer(underkänt: citat) → FinalAnswer\n" in render_markdown(plain)
+
+
+def test_a_run_without_new_attempts_says_so() -> None:
+    plain = report()
+    settled = [
+        replace(
+            r,
+            run=replace(
+                r.run,
+                check_retries=0,
+                rejections=(),
+                steps=tuple(step for step in r.run.steps if step.draft != "sent_back"),
+            ),
+        )
+        for r in plain.results
+    ]
+
+    markdown = render_markdown(replace(plain, results=tuple(settled)))
+
+    assert "svar minst en gång (0 nya försök).\n" in markdown
+    assert "Kontrollen skickade inte tillbaka något utkast.\n\n### Vägen per fråga" in markdown
+    assert "- **Agentens modellanrop per fråga:** median 4, högst 4, mot gränsen 16" in markdown
+
+
+def test_the_run_names_the_commit_and_the_prompts_it_measured() -> None:
+    measured = RunInfo(
+        **{
+            **INFO.__dict__,
+            "commit": "44196de",
+            "commit_source": "git",
+            "uncommitted": True,
+            "system_prompt_sha256": "5a" * 32,
+            "reviewer_prompt_sha256": "6b" * 32,
+        }
+    )
+    markdown = render_markdown(replace(report(), info=measured))
+
+    # The commit is the code of the agent and the measurement; avtal-mcp over HTTP may differ.
+    assert (
+        "- **Kod:** commit `44196de`, med ändringar som inte var incheckade; gäller agenten och "
+        "mätningen, medan avtal-mcp på http://127.0.0.1:18011/mcp kan vara en annan version "
+        "eller den tillfälliga ersättaren\n" in markdown
+    )
+    # The agent's prompt is hashed as the template, before the date is filled in.
+    assert (
+        "- **Prompter, sha256:** agentens systemprompt `5a5a5a5a5a5a` (mallen `SYSTEM_PROMPT`, "
+        "innan dagens datum fylls i), granskarens prompt `6b6b6b6b6b6b`" in markdown
+    )
+    assert (
+        "- **Agent:** gpt-6.1-sol, resonemang low, högst 16 modellanrop per körning av grafen "
+        "(en fråga där agenten frågar användaren är två körningar), högst 2 nya försök" in markdown
+    )
+    over_stdio = replace(measured, uncommitted=False, mcp="stdio")
+    clean = render_markdown(replace(report(), info=over_stdio))
+    assert (
+        "- **Kod:** commit `44196de`; gäller agenten och mätningen, och avtal-mcp, som kördes "
+        "som barnprocess ur samma installation\n" in clean
+    )
+    given = replace(measured, commit_source="environment", uncommitted=False)
+    assert (
+        "- **Kod:** commit `44196de` enligt `AVTALSAGENT_COMMIT` (git gick inte att fråga, så "
+        "om koden hade ändringar som inte var incheckade syns inte); gäller agenten"
+        in render_markdown(replace(report(), info=given))
+    )
+    unknown = render_markdown(report())  # neither git nor the variable told the commit
+    assert (
+        "- **Kod:** okänd commit (git gick inte att fråga där mätningen kördes, och "
+        "`AVTALSAGENT_COMMIT` gav ingen commit: inte satt, eller inte en sha, se loggen); "
+        "gäller agenten" in unknown
+    )
+    assert (
+        "- **Prompter, sha256:** agentens systemprompt inte sparat (mallen `SYSTEM_PROMPT`, "
+        "innan dagens datum fylls i), granskarens prompt inte sparat" in unknown
+    )
+
+
+def test_the_method_defines_the_questions_counted_and_when_the_reviewer_runs() -> None:
+    markdown = render_markdown(report())
+
+    assert "är därför de frågor vars väg sparades." in markdown
+    assert "Det strängare måttet, ”ett mål som ingen tidigare sökning hade gett”" in markdown
+    assert (
+        "Granskaren körs bara när utkastet svarar på frågan (`answered` är sant) och de andra "
+        "reglerna inte fann något fel" in markdown
+    )
+
+
+def test_the_json_holds_every_call_the_model_calls_and_the_reasons() -> None:
+    data = json.loads(report_json(with_path(report())))
+
+    first = data["questions"][0]
+    assert first["model_calls"] == 16
+    assert first["steps"][0] == {
+        "name": "search_documents",
+        "args": {"query": LONG_QUERY, "framework_area": "Bemanning", "limit": 8},
+        "error": False,
+        "draft": None,
+        "target_from": None,
+        "found_by_search": False,
+    }
+    assert [(step["target_from"], step["found_by_search"]) for step in first["steps"][1:7]] == [
+        (None, True),
+        (None, False),
+        ("reference", True),
+        ("reference", False),
+        (None, False),
+        ("amendment", False),
+    ]
+    assert first["rejections"][0][1] == {
+        "rule": "register_facts",
+        "text": "Datumet 2028-11-14 står inte i registret.",
+    }
+    second = data["questions"][1]  # never reached the graph: not saved
+    assert (second["model_calls"], second["steps"], second["rejections"]) == (None, None, None)
+    path = data["path"]
+    assert path["model_calls"] == {"median": 10.5, "max": 16, "limit": 16, "at_limit": 1}
+    assert (path["questions_saved"], path["not_saved"]) == (2, 1)
+    assert path["tools"]["read_section"] == {"calls": 4, "questions": 1}
+    assert path["rejections"]["citations"] == {"drafts": 1, "questions": 1, "problems": 1}
+    assert (path["reads"], path["reads_from_references"], path["reads_from_amendments"]) == (
+        4,
+        2,
+        1,
+    )
+    assert path["reads_from_references_only"] == 1
+    assert data["run"]["commit"] is None and data["run"]["commit_source"] is None
+    assert data["run"]["system_prompt_sha256"] is None
+
+
+def test_the_printed_lines_have_the_path_in_english() -> None:
+    lines = overall_lines(with_path(report()))
+
+    assert lines[5:8] == [
+        "model calls: median 10.5, max 16 (limit 16 per run); not saved for 1 question",
+        "references: read_section to a referenced target 2/4, of them not returned by an "
+        "earlier search 1; resolve_reference calls 1; not saved for 1 question",
+        "retries by rule (a draft under each rule that sent it back): citations 1, "
+        "register_facts 1",
+    ]
 
 
 def test_what_is_missing_and_wrong_is_one_sentence_each() -> None:
