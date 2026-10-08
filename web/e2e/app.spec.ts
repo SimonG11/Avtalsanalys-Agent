@@ -68,6 +68,10 @@ test("answers with verified sources and opens the cited page with the quote mark
   await expect(card).toContainText("tre månaders uppsägningstid");
   await expect(check).toHaveCount(0);
   await expect(card.getByTestId("reservations")).toHaveCount(0);
+  // The source card names the agreement page, which tells sibling agreements' files apart.
+  await expect(card.getByTestId("source-1").getByTestId("source-page-title")).toHaveText(
+    "Exempelområde IT-drift (fiktivt)",
+  );
 
   // With the answer there, the timeline folds into one line, and opens again on a click.
   const header = page.getByTestId("timeline-header");
@@ -249,6 +253,7 @@ test("shows a source in a Word file without a page and without a PDF", async ({ 
   await expect(card.getByTestId("source-1")).toHaveText(
     /Exempelbilaga Avropsförfrågan \(fiktiv\), avsnitt Avropsbilaga”Kunden anger/,
   );
+  await expect(card.getByTestId("source-page-title")).toHaveCount(0);
 
   await card.getByTestId("source-1").click();
   const panel = page.getByTestId("source-panel");
@@ -316,6 +321,8 @@ test("uploads a contract of one's own and compares it with the agreement", async
   await expect(card).toContainText("Uppsägningstiden skiljer sig");
   await expect(card.getByTestId("source-1").getByTestId("own-file")).toHaveText("Din fil");
   await expect(card.getByTestId("source-2").getByTestId("own-file")).toHaveCount(0);
+  await expect(card.getByTestId("source-1").getByTestId("source-page-title")).toHaveCount(0);
+  await expect(card.getByTestId("source-2").getByTestId("source-page-title")).toBeVisible();
 
   // The agent's steps name the file, not its id.
   await openTimeline(page);

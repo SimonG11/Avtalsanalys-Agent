@@ -206,6 +206,12 @@
   font-weight: 600;
 }
 
+.sourcePage {
+  color: var(--text-2);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
 .quote {
   display: -webkit-box;
   overflow: hidden;

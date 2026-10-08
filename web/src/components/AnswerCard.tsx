@@ -10,7 +10,9 @@
  * not be checked, and be able to check every source.
  *
  * How: Answers.tsx decides which answer a question shows; this component only draws it.
- * Clicking a source opens it in the source panel through OpenSourceContext.
+ * Clicking a source opens it in the source panel through OpenSourceContext. A source card names
+ * the agreement page (`page_title`), because sibling agreements such as IT-drift Mindre and
+ * IT-drift Större have their own files with the same title, section and page.
  */
 import { splitAnswerText } from "@/lib/answerText";
 import { sourceLabel } from "@/lib/citation";
@@ -97,6 +99,11 @@ export function AnswerCard({ answer }: { answer: Answer }) {
                     </span>
                   )}
                   <span className={styles.sourceTitle}>{sourceLabel(citation)}</span>
+                  {citation.page_title && (
+                    <span className={styles.sourcePage} data-testid="source-page-title">
+                      {citation.page_title}
+                    </span>
+                  )}
                   <span className={styles.quote}>”{citation.quote}”</span>
                   {!citation.verified && (
                     <span className={styles.unverified}>
