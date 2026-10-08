@@ -5,6 +5,7 @@ them, so the scores are tested without a model or a server.
 """
 
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -23,6 +24,8 @@ from evals.answer_scores import (
     NO_DRAFT_REASON,
     CitedPlace,
     QuestionResult,
+    RuleCount,
+    ToolCount,
     by_category,
     cited_places,
     is_alternative,
@@ -33,7 +36,9 @@ from evals.answer_scores import (
     score,
     sources_found,
     summarize,
+    summarize_paths,
 )
+from evals.answer_steps import Problem, Rejection, Step, TargetSource
 from evals.gold import Alternative, DocumentSource, GoldQuestion, GoldScope, RegisterSource
 from evals.judge import Judgement, Verdict
 
@@ -345,6 +350,73 @@ def test_an_empty_summary_has_zeros() -> None:
     assert summary.cost == (0.0, 0.0)
     assert median(summary.seconds) == 0.0
     assert percentile(summary.seconds, 0.9) == 0.0
+
+
+def read(target_from: TargetSource | None = None, found_by_search: bool = False) -> Step:
+    return Step(
+        "read_section",
+        {"sha256": TERMS, "section_position": 1},
+        target_from=target_from,
+        found_by_search=found_by_search,
+    )
+
+
+def test_the_paths_count_tools_model_calls_reads_and_rejections_by_rule() -> None:
+    cited = Rejection(
+        (Problem("citations", "a"), Problem("citations", "b"), Problem("register_facts", "c"))
+    )
+    reviewed = Rejection((Problem("review", "d"),))
+    runs = [
+        replace(
+            run(tools=("search_documents", "read_section", "read_section"), retries=2),
+            steps=(
+                Step("search_documents", {"query": "vite"}),
+                read(found_by_search=True),
+                read("reference", found_by_search=True),
+            ),
+            model_calls=6,
+            rejections=(cited, reviewed),
+        ),
+        replace(
+            run(tools=("read_section", "resolve_reference", "read_section")),
+            steps=(
+                read("amendment"),
+                Step("resolve_reference", {"sha256": TERMS, "section_position": 1}),
+                read("reference"),
+            ),
+            model_calls=16,
+        ),
+        replace(run(tools=()), model_calls=0),  # reached the graph, but no call finished
+        run(None, tools=(), error="avtal-mcp: ConnectError"),  # never reached the graph
+    ]
+
+    paths = summarize_paths([score(gold(id=f"q0{n}"), r, None, None) for n, r in enumerate(runs)])
+
+    assert paths.tools == {
+        "read_section": ToolCount(calls=4, questions=2),
+        "resolve_reference": ToolCount(calls=1, questions=1),
+        "search_documents": ToolCount(calls=1, questions=1),
+    }
+    assert list(paths.tools) == ["read_section", "resolve_reference", "search_documents"]
+    # The question that never reached the graph is not saved; the one without calls counts.
+    assert (paths.questions_saved, paths.not_saved) == (3, 1)
+    assert paths.model_calls == (6, 16, 0)
+    assert (paths.reads, paths.reads_from_references, paths.reads_from_amendments) == (4, 2, 1)
+    # Of the two reads from a reference, one went to a section a search had returned.
+    assert (paths.reads_from_references_only, paths.questions_from_references_only) == (1, 1)
+    assert paths.questions_from_references == 2
+    assert paths.rejections == {
+        "citations": RuleCount(drafts=1, questions=1, problems=2),
+        "register_facts": RuleCount(drafts=1, questions=1, problems=1),
+        "review": RuleCount(drafts=1, questions=1, problems=1),
+    }
+
+
+def test_the_paths_of_no_questions_are_empty() -> None:
+    paths = summarize_paths([])
+
+    assert (paths.tools, paths.model_calls, paths.reads, paths.rejections) == ({}, (), 0, {})
+    assert (paths.questions_saved, paths.not_saved) == (0, 0)
 
 
 def test_the_results_are_grouped_by_category_in_order() -> None:
