@@ -26,6 +26,7 @@ from pydantic import Field
 from avtalsagent.agent.ask_user import ask_user
 from avtalsagent.agent.checkpointer import serializer
 from avtalsagent.agent.graph import AvtalAgent, build_agent
+from avtalsagent.agent.list_uploads import LIST_UPLOADS
 from avtalsagent.agent.mcp_tools import McpTools, load_tools
 from avtalsagent.agent.purpose import (
     PURPOSE,
@@ -34,7 +35,9 @@ from avtalsagent.agent.purpose import (
     purpose_problem,
     with_purpose,
 )
+from avtalsagent.agent.read_upload import READ_UPLOAD
 from avtalsagent.config import Settings
+from avtalsagent.uploads.store import UploadStore
 from tests.unit.agent.scripted_model import (
     PURPOSE_TEXT,
     DictAmendments,
@@ -48,6 +51,7 @@ from tests.unit.agent.scripted_model import (
 from tests.unit.agent.test_agent_graph import GOOD, QUESTION, SECTION, SHA, THREAD
 from tests.unit.agent.test_mcp_tools import SECTION as SERVED
 from tests.unit.agent.test_mcp_tools import stand_in_server
+from tests.unit.agent.uploaded import add, memory_store
 
 READ_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -100,7 +104,9 @@ def read_section_on(session: RecordingSession) -> BaseTool:
     )
 
 
-def build(script: list[Any], tools: list[BaseTool]) -> tuple[AvtalAgent, SchemaModel]:
+def build(
+    script: list[Any], tools: list[BaseTool], uploads: UploadStore | None = None
+) -> tuple[AvtalAgent, SchemaModel]:
     model = SchemaModel(script=script)
     mcp = McpTools(
         tools=tools,
@@ -109,7 +115,9 @@ def build(script: list[Any], tools: list[BaseTool]) -> tuple[AvtalAgent, SchemaM
         amendments=DictAmendments(),
     )
     settings = Settings(_env_file=None, validation_retries=1, agent_model_call_limit=8)
-    graph = build_agent(model, mcp, ScriptedReviewer(), InMemorySaver(serde=serializer()), settings)
+    graph = build_agent(
+        model, mcp, ScriptedReviewer(), InMemorySaver(serde=serializer()), settings, uploads=uploads
+    )
     return graph, model
 
 
@@ -146,6 +154,25 @@ async def test_the_model_sees_syfte_first_and_required_on_each_avtal_mcp_tool() 
     # ask_user's question is shown as it is, and the answer is not a step: no syfte.
     assert PURPOSE not in bound[ask_user.name]["parameters"]["properties"]
     assert PURPOSE not in bound["FinalAnswer"]["parameters"]["properties"]
+
+
+@pytest.mark.anyio
+async def test_the_tools_for_the_users_files_take_no_syfte() -> None:
+    store = memory_store()
+    await add(store, THREAD["configurable"]["thread_id"])
+    graph, model = build(
+        [final_answer("Det framgår inte.", answered=False, call_id="c1")],
+        [read_section_on(RecordingSession())],
+        uploads=store,
+    )
+
+    await graph.ainvoke(QUESTION, THREAD)
+
+    [bound] = model.schemas
+    assert list(bound["read_section"]["parameters"]["properties"])[0] == PURPOSE
+    # The file tools live in the graph, not in avtal-mcp, and show the file's name instead.
+    assert PURPOSE not in bound[LIST_UPLOADS]["parameters"].get("properties", {})
+    assert PURPOSE not in bound[READ_UPLOAD]["parameters"]["properties"]
 
 
 def test_the_description_says_what_the_sentence_is_and_who_reads_it() -> None:
