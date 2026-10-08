@@ -1,13 +1,18 @@
 """The answer evaluation's reports: Markdown in Swedish, and JSON (M11).
 
 What:
-    `AnswerReport` holds a run: when, on which gold file, how (`RunInfo`)
-    and every `QuestionResult`. `render_markdown` writes the Swedish report:
-    the summary, the run, the method, a table per category and per
-    question, the tokens and cost by model, the judge's reason for each
-    verdict, and each answer next to the gold answer. `report_json` holds
-    the same, with each answer as the web app gets it; `overall_lines` is
-    what the command prints, and `write_reports` writes both files.
+    `AnswerReport` holds a run: when, on which gold file, how (`RunInfo`:
+    the models, the bounds, and the commit and prompts measured) and every
+    `QuestionResult`. `render_markdown` writes the Swedish report: the
+    summary (with the new attempts by rule, the follow-ups, the model calls
+    against the limit, the reads of a reference's target and the calls to
+    `resolve_reference`), the run, the method, a table per category and per
+    question, the agent's path (calls per tool, the check's rejections by
+    rule, and a line per question), the tokens and cost by model, the
+    judge's reason for each verdict, and each answer next to the gold
+    answer. `report_json` holds the same, with each answer as the web app
+    gets it and every tool call with its arguments; `overall_lines` is what
+    the command prints, and `write_reports` writes both files.
 
 Why:
     The Markdown is what is shown and read: the numbers first, then what it
@@ -18,36 +23,71 @@ Why:
     machine that ran them.
 
 How:
-    Pure functions over the results and `summarize`. Numbers are written
-    the Swedish way (a decimal comma, a no-break space before "%"), and text
-    in a table is put on one line with markup characters escaped. The cost
-    is a range: cached input at no cost, and at the full input price.
+    Pure functions over the results, `summarize` and `summarize_paths`.
+    Numbers are written the Swedish way (a decimal comma, a no-break space
+    before "%"), and text in a table is put on one line with markup
+    characters escaped. The cost is a range: cached input at no cost, and at
+    the full input price. A question's path shows each call with the
+    arguments that say what it looked for (`_SHOWN_ARGS`), each cut to
+    ARG_CHARS; a file's hash is shown by its first 12 characters, and a
+    limit or an offset is only in the JSON. The draft that became an answer
+    with reservation is marked as such, so it is not taken for one the
+    check passed. What a run did not save (one that never reached the
+    graph: its path, model calls and rejections) is named as not saved
+    ("inte sparat"), null in the JSON, and left out of the path's numbers,
+    never counted as zero.
 """
 
 import json
 import re
 import statistics
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from avtalsagent.agent.__main__ import STATUS_NAMES, CommandError
-from evals.answer_run import ASK_USER_REPLY, PRICES, TokenUse, cost_range, total_use
+from avtalsagent.agent.middleware import FINAL_ANSWER_TOOL
+from evals.answer_run import (
+    ASK_USER_REPLY,
+    PRICES,
+    QuestionRun,
+    TokenUse,
+    cost_range,
+    total_use,
+)
 from evals.answer_scores import (
     STATUSES,
+    PathSummary,
     QuestionResult,
     Summary,
+    ToolCount,
     by_category,
     median,
     percentile,
     summarize,
+    summarize_paths,
 )
+from evals.answer_steps import RESOLVE_REFERENCE, CheckRule, Rejection, Step, rule_counts
 
 VERDICT_NAMES = {"correct": "Rätt", "partly_correct": "Delvis rätt", "incorrect": "Fel"}
 UNJUDGED_NAME = "Ej bedömd"
+RULE_NAMES: dict[CheckRule, str] = {
+    "citations": "citat",
+    "register_facts": "registeruppgifter",
+    "latest_wording": "senaste lydelsen",
+    "review": "granskaren",
+    "unknown": "okänd regel",
+}
+NOT_SAVED = "inte sparat"
+# Where the commit measured came from: git, or the variable set where git cannot tell.
+CommitSource = Literal["git", "environment"]
+COMMIT_VARIABLE = "AVTALSAGENT_COMMIT"
+# How much of an argument a path shows, and of a problem the check found.
+ARG_CHARS = 40
+PROBLEM_CHARS = 200
 
 
 @dataclass(frozen=True)
@@ -66,6 +106,12 @@ class RunInfo:
     concurrency: int
     timeout: float
     label: str | None
+    # What was measured; None when it could not be told, or was not given.
+    commit: str | None = None  # the short sha of the agent's and the measurement's code
+    commit_source: CommitSource | None = None
+    uncommitted: bool = False  # by git: its working tree had changes that were not committed
+    system_prompt_sha256: str | None = None  # of SYSTEM_PROMPT, before the date is filled in
+    reviewer_prompt_sha256: str | None = None  # of REVIEWER_PROMPT
 
 
 @dataclass(frozen=True)
@@ -104,9 +150,23 @@ def report_json(report: AnswerReport) -> str:
             category: _summary_json(summarize(group))
             for category, group in by_category(report.results).items()
         },
+        "path": _path_json(summarize_paths(report.results), report.info.model_call_limit),
         "questions": [_result_json(result) for result in report.results],
     }
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def _path_json(paths: PathSummary, limit: int) -> dict[str, Any]:
+    """The path's numbers; the model calls' are null when no question saved them."""
+    data = asdict(paths)
+    calls = paths.model_calls
+    data["model_calls"] = {
+        "median": median(calls) if calls else None,
+        "max": max(calls) if calls else None,
+        "limit": limit,  # per run of the graph
+        "at_limit": sum(1 for count in calls if count >= limit) if calls else None,
+    }
+    return data
 
 
 def _summary_json(summary: Summary) -> dict[str, Any]:
@@ -165,9 +225,14 @@ def _result_json(result: QuestionResult) -> dict[str, Any]:
             "extra": result.register_extra,
         },
         "check_retries": run.check_retries,
+        "rejections": [[asdict(problem) for problem in r.problems] for r in run.rejections]
+        if run.path_saved
+        else None,
         "refused_drafts": run.refused_drafts,
         "tools": list(run.tools),
         "tool_errors": run.tool_errors,
+        "model_calls": run.model_calls,
+        "steps": [asdict(step) for step in run.steps] if run.path_saved else None,
         "asked": list(run.asked),
         "seconds": round(run.seconds, 1),
         "usage": _usage_json(run.usage),
@@ -198,6 +263,7 @@ def render_markdown(report: AnswerReport) -> str:
     lines += _md_method(report)
     lines += _md_categories(report.results)
     lines += _md_questions(report.results)
+    lines += _md_paths(report)
     lines += _md_usage(report)
     lines += _md_judgements(report)
     lines += _md_answers(report.results)
@@ -241,7 +307,7 @@ def _md_summary(report: AnswerReport) -> list[str]:
     if s.no_draft:
         lines.append(
             f"- **Utan svar inom gränsen för modellanrop:** {s.no_draft} av {n} frågor "
-            f"({report.info.model_call_limit} anrop)."
+            f"({report.info.model_call_limit} anrop per körning)."
         )
     if s.citations:
         lines.append(
@@ -260,12 +326,23 @@ def _md_summary(report: AnswerReport) -> list[str]:
             f"- **Registeruppgifter:** {s.register_found} av {s.register_required} avtal ur facit "
             f"finns bland svarens registerrader; {s.register_extra} avtal utöver facit."
         )
-    lines.append(
+    paths = summarize_paths(report.results)
+    line = (
         f"- **Nya försök:** kontrollen skickade tillbaka {s.retried} av {n} svar minst en gång "
-        f"({s.retries} nya försök)."
+        f"({_attempts(s.retries)})"
     )
-    if s.asked:
-        lines.append(f"- **Följdfrågor:** agenten frågade användaren i {s.asked} av {n} frågor.")
+    if paths.rejections:
+        line += (
+            "; efter regel, där ett utkast som flera regler underkände räknas under var och en: "
+            + ", ".join(
+                f"{RULE_NAMES[rule]} {count.drafts}" for rule, count in paths.rejections.items()
+            )
+        )
+    lines.append(line + ".")
+    lines.append(f"- **Följdfrågor:** agenten frågade användaren i {s.asked} av {n} frågor.")
+    lines.append(f"- **Agentens modellanrop per fråga:** {_model_calls(paths, report.info)}.")
+    lines.append(f"- **Mål ur en hänvisning:** {_reads(paths)}.")
+    lines.append(f"- **`resolve_reference`:** {_resolved(paths)}.")
     lines.append(
         f"- **Tid per fråga:** median {_seconds(median(s.seconds))}, 90:e percentilen "
         f"{_seconds(percentile(s.seconds, 0.9))}, längst {_seconds(max(s.seconds, default=0.0))}."
@@ -291,16 +368,51 @@ def _md_run(report: AnswerReport) -> list[str]:
         "",
         f"- **Tid:** {_moment(report.created_at)}, {_seconds(report.seconds)} totalt",
         f"- **Agent:** {_md(info.agent_model)}, resonemang {_md(info.agent_effort)}, högst "
-        f"{info.model_call_limit} modellanrop per fråga, högst {info.validation_retries} nya "
-        "försök",
+        f"{info.model_call_limit} modellanrop per körning av grafen (en fråga där agenten frågar "
+        f"användaren är två körningar), högst {info.validation_retries} nya försök",
         f"- **Granskare:** {_md(info.reviewer_model)}, resonemang {_md(info.reviewer_effort)}",
         f"- **Domare:** {judge}",
         f"- **avtal-mcp:** {_md(info.mcp)}",
         f"- **Guldfil:** {_md(report.gold_path)} (sha256 `{report.gold_sha256[:12]}`), "
         f"{len(report.results)} av {report.gold_questions} frågor",
         f"- **Samtidiga frågor:** {info.concurrency}; tidsgräns {_seconds(info.timeout)} per fråga",
+        f"- **Kod:** {_commit(info)}",
+        f"- **Prompter, sha256:** agentens systemprompt {_sha(info.system_prompt_sha256)} "
+        "(mallen `SYSTEM_PROMPT`, innan dagens datum fylls i), granskarens prompt "
+        f"{_sha(info.reviewer_prompt_sha256)}",
         "",
     ]
+
+
+def _commit(info: RunInfo) -> str:
+    """The commit measured, where it came from, and what code it is the commit of."""
+    if info.commit is None:
+        commit = (
+            "okänd commit (git gick inte att fråga där mätningen kördes, och "
+            f"`{COMMIT_VARIABLE}` gav ingen commit: inte satt, eller inte en sha, se loggen)"
+        )
+    elif info.commit_source == "environment":
+        commit = (
+            f"commit `{info.commit}` enligt `{COMMIT_VARIABLE}` (git gick inte att fråga, så om "
+            "koden hade ändringar som inte var incheckade syns inte)"
+        )
+    elif info.uncommitted:
+        commit = f"commit `{info.commit}`, med ändringar som inte var incheckade"
+    else:
+        commit = f"commit `{info.commit}`"
+    if info.mcp == "stdio":
+        return (
+            f"{commit}; gäller agenten och mätningen, och avtal-mcp, som kördes som barnprocess "
+            "ur samma installation"
+        )
+    return (
+        f"{commit}; gäller agenten och mätningen, medan avtal-mcp på {_md(info.mcp)} kan vara "
+        "en annan version eller den tillfälliga ersättaren"
+    )
+
+
+def _sha(sha256: str | None) -> str:
+    return f"`{sha256[:12]}`" if sha256 else NOT_SAVED
 
 
 def _md_method(report: AnswerReport) -> list[str]:
@@ -328,6 +440,34 @@ def _md_method(report: AnswerReport) -> list[str]:
         "- **Registeruppgifter:** avtalen i facits registerkällor jämförs med de avtal som "
         "svaret tar registeruppgifter ur, med samma nyckel som registret (-001 och -01 är samma "
         "avtal).",
+        "- **Agentens väg:** varje verktygsanrop sparas i ordning med sina argument, också "
+        "`ask_user` och varje utkast (`FinalAnswer`). Modellanropen är de som gränsen räknar "
+        "(`ModelCallLimitMiddleware`), för hela frågan. Gränsen gäller per körning av grafen, "
+        "och en fråga där agenten frågade användaren är två körningar, så den kan ha fler anrop "
+        "än gränsen. Vägen sparas för varje fråga där körningen nådde agenten. En fråga där den "
+        "aldrig gjorde det, som när sessionen mot avtal-mcp inte kom igång, har ingen väg: den "
+        "står som inte sparad och räknas inte som noll. ”Frågor” i måtten för vägen, modellanropen "
+        "och hänvisningarna är därför de frågor vars väg sparades.",
+        "- **Mål ur en hänvisning:** ett `read_section` räknas hit när avsnittet det ber om "
+        "(filen och platsen, eller filen och numret när platsen inte anges) står som mål under "
+        "`references` i ett tidigare svar från `read_section` eller `resolve_reference` i samma "
+        "fråga, det vill säga ett svar som kom före modellanropet som gjorde anropet. Ett mål "
+        "som är en hel fil räknas inte. Målet kan också ha funnits i en sökträff, så måttet säger "
+        "att agenten hade hänvisningen framför sig, inte varför den valde avsnittet. Det "
+        "strängare måttet, ”ett mål som ingen tidigare sökning hade gett”, räknar bara de av dem "
+        "där inget tidigare svar från `search_documents` i frågan hade avsnittet bland sina "
+        "träffar eller träffarnas kopior (`copies`): agenten kan inte ha tagit dem ur en "
+        "sökträff, bara ur hänvisningen eller ur en innehållsförteckning (`get_outline`). "
+        "Anropen till `resolve_reference` räknas för sig, "
+        "liksom ett `read_section` till ett avsnitt som ett tidigare `find_amendments` angav "
+        "som ändring.",
+        "- **Skälen till nya försök:** kontrollens återkoppling till agenten har en rad per fel, "
+        "och varje rad räknas till regeln som skrev den, efter hur regeln formulerar sina fel: "
+        "citat, registeruppgifter, senaste lydelsen eller granskaren. Granskaren körs bara när "
+        "utkastet svarar på frågan (`answered` är sant) och de andra reglerna inte fann något "
+        "fel; de andra kan underkänna samma utkast tillsammans. Ett utkast som flera regler "
+        "underkände räknas under var och en, så talen per regel kan bli fler än de nya "
+        "försöken. En rad som ingen regel känns igen på räknas till okänd regel.",
         "- **Tokens och kostnad** räknas för varje modellanrop, per modell, med priserna i "
         "arkitekturvalideringen (oktober 2026). Där saknas priset för cachad indata, så "
         "kostnaden anges från cachad indata utan kostnad till cachad indata till fullt pris; "
@@ -379,11 +519,12 @@ def _md_questions(results: Sequence[QuestionResult]) -> list[str]:
                 "Register",
                 "Nya försök",
                 "Verktyg",
+                "Modellanrop",
                 "Tid",
                 "Kostnad, högst",
             ]
         ),
-        _row(["---", "---", "---", "---", "---:", "---:", "---:", "---:", "---:", "---:", "---:"]),
+        _row(["---"] * 4 + ["---:"] * 8),
     ]
     for r in results:
         status = STATUS_NAMES[r.status] if r.status else "Fel i körningen"
@@ -399,6 +540,7 @@ def _md_questions(results: Sequence[QuestionResult]) -> list[str]:
                     _register_cell(r),
                     str(r.run.check_retries),
                     str(len(r.run.tools)),
+                    str(r.run.model_calls) if r.run.model_calls is not None else "–",
                     _seconds(r.run.seconds),
                     _dollars(r.cost[1]) if r.cost is not None else "–",
                 ]
@@ -408,7 +550,7 @@ def _md_questions(results: Sequence[QuestionResult]) -> list[str]:
         "",
         "Citat ✓: citat som står ordagrant i sitt avsnitt. Källor: facits källor som svaret "
         "citerar. Register: facits avtal bland svarets registerrader (+ avtal utöver facit). "
-        "Verktyg: anrop till avtal-mcp.",
+        "Verktyg: anrop till avtal-mcp. Modellanrop: agentens.",
         "",
     ]
     errors = [r for r in results if r.run.error]
@@ -417,6 +559,226 @@ def _md_questions(results: Sequence[QuestionResult]) -> list[str]:
         lines += [f"- **{_md(r.id)}:** {_md(r.run.error or '')}" for r in errors]
         lines.append("")
     return lines
+
+
+def _md_paths(report: AnswerReport) -> list[str]:
+    paths = summarize_paths(report.results)
+    lines = ["## Agentens väg", ""]
+    if paths.tools:
+        lines += [
+            "Anrop till avtal-mcp per verktyg, i alla frågor:",
+            "",
+            _row(["Verktyg", "Anrop", "Frågor"]),
+            _row(["---", "---:", "---:"]),
+        ]
+        lines += [
+            _row([_md(tool), str(n.calls), str(n.questions)]) for tool, n in paths.tools.items()
+        ]
+    else:
+        lines.append("Agenten anropade inga verktyg i avtal-mcp.")
+    lines.append("")
+    if paths.rejections:
+        lines += [
+            "Nya försök efter regeln som underkände utkastet:",
+            "",
+            _row(["Regel", "Utkast", "Frågor", "Fel"]),
+            _row(["---", "---:", "---:", "---:"]),
+        ]
+        lines += [
+            _row([RULE_NAMES[rule], str(n.drafts), str(n.questions), str(n.problems)])
+            for rule, n in paths.rejections.items()
+        ]
+        lines += [
+            "",
+            "Utkast: de som regeln underkände; ett utkast kan underkännas av flera regler. Fel: "
+            "raderna i återkopplingen till agenten.",
+            "",
+        ]
+    else:
+        lines += ["Kontrollen skickade inte tillbaka något utkast.", ""]
+    lines += [
+        "### Vägen per fråga",
+        "",
+        "Varje anrop i ordning, med de argument som säger vad agenten letade efter (förkortade; "
+        "alla står i JSON-rapporten, och där också om en tidigare sökning hade gett avsnittet, "
+        "`found_by_search`). ↪ läste ett mål ur ett tidigare svars hänvisningar, Δ läste en "
+        "ändring som ett tidigare `find_amendments` angav, ✗ verktyget svarade med fel. Ett "
+        "utkast som kontrollen skickade tillbaka står som `FinalAnswer(underkänt: regel)`, ett "
+        "vars form inte godtogs som `FinalAnswer(fel form)`. Det utkast som kontrollen släppte "
+        "igenom till användaren står som `FinalAnswer`, eller som `FinalAnswer(med reservation)` "
+        "när svaret fick status Med reservation: kontrollen underkände det också när de nya "
+        "försöken var slut, eller något i det gick inte att kontrollera (reservationerna står "
+        "under Bedömningar).",
+        "",
+    ]
+    for r in report.results:
+        lines += _md_path(r)
+    return [*lines, ""]
+
+
+def _model_calls(paths: PathSummary, info: RunInfo) -> str:
+    """'median 7, högst 16, mot gränsen 16 per körning; 1 av 30 frågor hade 16 eller fler'."""
+    calls, limit = paths.model_calls, info.model_call_limit
+    if not calls:
+        return NOT_SAVED
+    at_limit = sum(1 for count in calls if count >= limit)
+    text = (
+        f"median {_number(median(calls))}, högst {max(calls)}, mot gränsen {limit} per körning; "
+        f"{at_limit} av {len(calls)} frågor hade {limit} eller fler"
+    )
+    return text + _not_saved(paths)
+
+
+def _reads(paths: PathSummary) -> str:
+    """The reads of a reference's target, all and those no search had returned (see the method)."""
+    if not paths.questions_saved:
+        return NOT_SAVED
+    text = (
+        f"{paths.reads_from_references} av {paths.reads} anrop till `read_section` "
+        f"({_percent(paths.reads_from_references, paths.reads)}) gick till ett mål ur ett "
+        f"tidigare svars hänvisningar, i {paths.questions_from_references} av "
+        f"{paths.questions_saved} frågor, och {paths.reads_from_references_only} av dem till ett "
+        "mål som ingen tidigare sökning hade gett, i "
+        f"{paths.questions_from_references_only} av {paths.questions_saved} frågor; "
+        f"{paths.reads_from_amendments} anrop gick till en ändring som `find_amendments` angav"
+    )
+    return text + _not_saved(paths)
+
+
+def _resolved(paths: PathSummary) -> str:
+    """'3 anrop, i 2 av 30 frågor'."""
+    if not paths.questions_saved:
+        return NOT_SAVED
+    calls = paths.tools.get(RESOLVE_REFERENCE, ToolCount(0, 0))
+    text = f"{calls.calls} anrop, i {calls.questions} av {paths.questions_saved} frågor"
+    return text + _not_saved(paths)
+
+
+def _not_saved(paths: PathSummary) -> str:
+    return f" ({NOT_SAVED} för {_questions(paths.not_saved)})" if paths.not_saved else ""
+
+
+def _md_path(result: QuestionResult) -> list[str]:
+    """The question's path on one line, and each problem of each draft sent back below it."""
+    run = result.run
+    if not run.path_saved:
+        return [
+            f"- **{_md(result.id)}:** {NOT_SAVED}" + (" (fel i körningen)" if run.error else "")
+        ]
+    about = [f"{run.model_calls} modellanrop"]
+    if counts := rule_counts(run.rejections):
+        about.append(
+            "nya försök efter regel: "
+            + ", ".join(f"{RULE_NAMES[rule]} {n}" for rule, n in counts.items())
+        )
+    lines = [f"- **{_md(result.id)}** ({'; '.join(about)}): {_path(run)}"]
+    for number, rejection in enumerate(run.rejections, 1):
+        lines += [
+            f"  - Skäl till nytt försök {number}, {RULE_NAMES[problem.rule]}: "
+            f"{_md(_short(problem.text, PROBLEM_CHARS))}"
+            for problem in rejection.problems
+        ]
+    return lines
+
+
+def _path(run: QuestionRun) -> str:
+    if not run.steps:
+        return "inga verktygsanrop"
+    rejections = iter(run.rejections)
+    reserved = run.answer is not None and run.answer.status == "with_reservation"
+    return " → ".join(_step(step, rejections, reserved) for step in run.steps)
+
+
+def _attempts(count: int) -> str:
+    return "1 nytt försök" if count == 1 else f"{count} nya försök"
+
+
+def _questions(count: int) -> str:
+    return "1 fråga" if count == 1 else f"{count} frågor"
+
+
+def _step(step: Step, rejections: Iterator[Rejection], reserved: bool) -> str:
+    """One call as the path shows it: 'read_section(9.9.2)', with its marks.
+
+    `reserved`: the answer has status with_reservation, so the draft it came from is marked.
+    """
+    if step.name == FINAL_ANSWER_TOOL:
+        if step.draft == "sent_back":
+            rejection = next(rejections, None)
+            rules = ", ".join(RULE_NAMES[rule] for rule in rejection.rules) if rejection else ""
+            return f"FinalAnswer(underkänt{': ' + rules if rules else ''})"
+        if step.draft == "refused":
+            return "FinalAnswer(fel form)"
+        if step.draft == "submitted" and reserved:
+            return "FinalAnswer(med reservation)"
+        return "FinalAnswer"
+    mark = {"reference": "↪", "amendment": "Δ"}.get(step.target_from or "", "")
+    text = mark + _md(step.name)
+    if (shown := _shown_args(step)) is not None:
+        text += f"({', '.join(_md(arg) for arg in shown)})"
+    return text + ("✗" if step.error else "")
+
+
+# The arguments a call shows in the path, by tool, in order: what it looked for. "section" is
+# the section's number, else its position, else the file; "file" is the start of the hash.
+_SHOWN_ARGS: dict[str, tuple[str, ...]] = {
+    "search_documents": ("query", "framework_area", "agreement_number", "document_type"),
+    "search_register": (
+        "supplier",
+        "agreement_number",
+        "org_number",
+        "framework_area",
+        "sub_area",
+        "valid_on",
+    ),
+    "list_documents": ("framework_area", "agreement_number", "document_type"),
+    "get_outline": ("file",),
+    "read_section": ("section",),
+    "resolve_reference": ("section", "reference"),
+    "find_amendments": ("section",),
+    "calculate_date": ("start", "direction", "amount", "unit"),
+    "ask_user": ("question",),
+}
+_QUOTED_ARGS = {"query", "reference", "question"}  # free text, in quote marks
+
+
+def _shown_args(step: Step) -> list[str] | None:
+    """The call's shown arguments as text, each cut to ARG_CHARS; None for a tool not listed."""
+    names = _SHOWN_ARGS.get(step.name)
+    if names is None:
+        return None
+    shown = []
+    for name in names:
+        if name == "section":
+            value = _section_arg(step.args)
+        elif name == "file":
+            value = _file_arg(step.args)
+        else:
+            value = step.args.get(name)
+        if value is None or isinstance(value, bool) or str(value).strip() == "":
+            continue
+        text = _short(" ".join(str(value).split()), ARG_CHARS)
+        shown.append(f'"{text}"' if name in _QUOTED_ARGS else text)
+    return shown
+
+
+def _section_arg(args: Mapping[str, Any]) -> str | None:
+    number, position = args.get("section_number"), args.get("section_position")
+    if isinstance(number, str) and number.strip():
+        return number.strip()
+    if position is not None:
+        return f"plats {position}"
+    return _file_arg(args)
+
+
+def _file_arg(args: Mapping[str, Any]) -> str | None:
+    sha256 = args.get("sha256")
+    return f"{sha256[:12]}…" if isinstance(sha256, str) and sha256 else None
+
+
+def _short(text: str, length: int) -> str:
+    """`text` cut to at most `length` characters, an ellipsis marking the cut."""
+    return text if len(text) <= length else f"{text[: length - 1].rstrip()}…"
 
 
 def _md_usage(report: AnswerReport) -> list[str]:
@@ -570,6 +932,11 @@ def _decimal(value: float, places: int) -> str:
     return f"{value:.{places}f}".replace(".", ",")
 
 
+def _number(value: float) -> str:
+    """A whole number as it is, else with one decimal: '7', '7,5'."""
+    return str(int(value)) if value == int(value) else _decimal(value, 1)
+
+
 def _percent(part: int, whole: int) -> str:
     return f"{round(100 * part / whole) if whole else 0}{_NBSP}%"
 
@@ -601,6 +968,7 @@ def _moment(moment: datetime) -> str:
 def overall_lines(report: AnswerReport) -> list[str]:
     """The overall numbers as printed."""
     s = summarize(report.results)
+    paths = summarize_paths(report.results)
     v = s.verdicts
     n = s.questions
     statuses = ", ".join(f"{status} {s.statuses[status]}" for status in (*STATUSES, "error"))
@@ -617,10 +985,40 @@ def overall_lines(report: AnswerReport) -> list[str]:
         f"{s.register_found}/{s.register_required} (+{s.register_extra})",
         f"seconds: median {median(s.seconds):.0f}, p90 {percentile(s.seconds, 0.9):.0f}; "
         f"retried {s.retried}; asked the user {s.asked}",
+        f"model calls: {_printed_model_calls(paths, report.info.model_call_limit)}",
+        f"references: {_printed_reads(paths)}",
+        "retries by rule (a draft under each rule that sent it back): "
+        + (", ".join(f"{rule} {n.drafts}" for rule, n in paths.rejections.items()) or "none"),
     ]
     if s.cost is not None:
         lines.append(f"cost: ${s.cost[0]:.2f}-{s.cost[1]:.2f} (agent and reviewer)")
     return lines
+
+
+def _printed_not_saved(paths: PathSummary) -> str:
+    if not paths.not_saved:
+        return ""
+    return f"; not saved for {paths.not_saved} question{'s' if paths.not_saved != 1 else ''}"
+
+
+def _printed_model_calls(paths: PathSummary, limit: int) -> str:
+    calls = paths.model_calls
+    if not calls:
+        return f"not saved (limit {limit} per run)"
+    text = f"median {median(calls):g}, max {max(calls)} (limit {limit} per run)"
+    return text + _printed_not_saved(paths)
+
+
+def _printed_reads(paths: PathSummary) -> str:
+    if not paths.questions_saved:
+        return "not saved"
+    resolved = paths.tools.get(RESOLVE_REFERENCE, ToolCount(0, 0)).calls
+    text = (
+        f"read_section to a referenced target {paths.reads_from_references}/{paths.reads}, "
+        f"of them not returned by an earlier search {paths.reads_from_references_only}; "
+        f"resolve_reference calls {resolved}"
+    )
+    return text + _printed_not_saved(paths)
 
 
 def check_writable(out_dir: Path) -> None:

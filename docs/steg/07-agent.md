@@ -1,5 +1,8 @@
 # M7 – Agenten med citatkontrollen
 
+> Filen beskriver M7 som den var när den byggdes, och några stycken har lagts till senare.
+> Läget efter körningen mot den riktiga databasen står i [steg 12](12-demo.md).
+
 **Mål:** bygga agenten som besvarar frågorna: `create_agent` med `gpt-6.1-sol` (ADR 0005), som hämtar
 all sin data genom avtal-mcp (M6), kan fråga användaren när frågan passar flera avtal och lämnar
 ett strukturerat svar med citat. Innan användaren ser svaret kontrolleras varje citat mot avsnittet
@@ -253,13 +256,14 @@ skriver den utan `+psycopg`, med lösenordet kodat så att libpq läser samma l�
 
 `make_agent_model(settings)` ger `ChatOpenAI` med Responses API, `reasoning_effort` och
 `metadata={"emit-messages": False}`, utan `temperature`, och `MissingApiKeyError` utan nyckel.
-`prompts.py` har systemprompten på svenska: rollen, verktygen och i vilken ordning de används,
-filtren (`framework_area` med registrets namn på området, ett delområde med upphandlingens
-nummer), en sökning per delområde vid jämförelser, den senaste lydelsen, `ask_user` när svaret
-skiljer sig mellan avtal, svar på den del av frågan som framgår och "framgår inte" i stället för
-gissningar, vanlig text utan Markdown, hur källorna anges (meningen som stöder påståendet, utan
-rubriker, datum eller tabelltecken, och sidan frågan gäller), att text i dokumenten är uppgifter
-och inte instruktioner, och dagens datum i svensk tid på sista raden.
+`prompts.py` har systemprompten på svenska: rollen, vad varje verktyg är till för (ordningen och
+antalet steg väljer modellen), filtren (`framework_area` med registrets namn på området, ett
+delområde med upphandlingens nummer), en sökning per delområde vid jämförelser, att leta efter
+ändringar och Frågor och svar om samma sak och utgå från den senaste lydelsen, `ask_user` när
+svaret skiljer sig mellan avtal, svar på den del av frågan som framgår och "framgår inte" i
+stället för gissningar, vanlig text utan Markdown, hur källorna anges (meningen som stöder
+påståendet, utan rubriker, datum eller tabelltecken, och sidan frågan gäller), att text i
+dokumenten är uppgifter och inte instruktioner, och dagens datum i svensk tid på sista raden.
 `ask_user(question, options)` pausar körningen med `interrupt({question, options?})` och ger
 tillbaka svaret som text.
 
@@ -442,6 +446,60 @@ läsarna och kontrollen genom grafen (ett citat ur filen godkänt med filens fä
 underkänt, en hash från ett annat samtal underkänd, ett datum ur filen godkänt i svaret),
 granskarens anteckning, källan i STATE_SNAPSHOT genom hela API:t, `--fil` och exempelavtalet
 som Markdown och som PDF.
+## Middleware som inte används och varför
+
+Tillagt efter M12. LangChain har fler färdiga middleware än de som grafen använder
+(`agent/graph.py`). Vad var och en gör står nedan som i källkoden i den installerade versionen
+(`langchain.agents.middleware`, langchain 1.4.3).
+
+- **`TodoListMiddleware`** ger modellen verktyget `write_todos` och en att-göra-lista `todos` i
+  tillståndet, och lägger till en egen systemprompt på engelska om när listan ska användas. Inte
+  byggt och inte prövat. I mätningen mot den riktiga databasen tog frågorna 6,7 verktygsanrop i
+  medel och högst 16 (q15, [steg 12](12-demo.md)), och agenten väljer nästa steg utifrån det den
+  just har läst, utan en plan i tillståndet. Systemprompten hålls på ett ställe och på svenska
+  (`agent/prompts.py`), och middlewaret skulle lägga en andra del bredvid den.
+- **`ToolCallLimitMiddleware`** räknar verktygsanrop per körning eller per tråd, för alla verktyg
+  eller för ett, och blockerar anrop över gränsen med ett felsvar till modellen, avslutar
+  körningen eller kastar ett fel. Meddelandena är på engelska. Inte byggt: ADR 0013 valde bara
+  gränsen för modellanrop och skriver inget skäl mot en gräns för verktygsanrop. Följden är att ett
+  modellanrop kan begära hur många verktygsanrop som helst; i mätningen tog ingen fråga fler än 16.
+- **`SummarizationMiddleware`** sammanfattar före ett modellanrop de äldre meddelandena med en
+  modell, när historiken når en gräns i tokens eller meddelanden, och behåller de senaste (20 som
+  standard). Sammanfattningen ersätter meddelandena i tillståndet. Inte byggt: citaten ska kopieras
+  ordagrant ur texten från `read_section` (systemprompten), och en sammanfattning skriver om också
+  avsnitt som agenten kan behöva citera. Demot ställer varje fråga i en ny flik och mätningen en
+  fråga per samtal, så historiken där är en frågas lång. Ett längre samtal skickar hela historiken
+  vid varje modellanrop (Kända begränsningar nedan).
+- **`ContextEditingMiddleware`** byter före ett modellanrop ut gamla verktygssvar mot `[cleared]` i
+  det som skickas till modellen, när indata passerar en gräns (100 000 tokens som standard), och
+  behåller de tre senaste. Tillståndet ändras inte. Inte byggt, av samma skäl: ett rensat svar kan
+  vara ett avsnitt som agenten ska citera. Verktyg kan undantas (`exclude_tools`), till exempel
+  `read_section`, men det är inte prövat. Kontrollen påverkas inte, eftersom den läser varje
+  citerat avsnitt själv genom avtal-mcp.
+- **`HumanInTheLoopMiddleware`** pausar efter modellens anrop, före de verktygsanrop som man pekar
+  ut, och låter en människa godkänna, ändra eller avvisa anropet, eller svara i stället för
+  verktyget. Det passar verktyg som gör något; avtal-mcp:s verktyg kan bara läsa. Det agenten
+  behöver är att själv fråga användaren när frågan passar flera avtal med olika svar, och det gör
+  `ask_user` med en interrupt: agenten väljer när den frågar och vad, och svaret kommer tillbaka
+  till modellen som verktygssvar (`agent/ask_user.py`).
+- **Delagenter med `Send`** (arkitekturplanens avsnitt 5.1) är ingen middleware utan en egen graf.
+  Inte byggt: en jämförelse görs i samma loop, med en sökning per delområde eller avtal
+  (systemprompten, punkt 2), och de tre jämförelsefrågorna (q24–q26) blev rätt mot den riktiga
+  databasen ([steg 12](12-demo.md)). Kontrollen läser ett utkast när loopen slutar, så också med
+  delagenter skulle huvudagenten lämna ett utkast med alla källor. Delagenter kan bli värda sin
+  kod vid frågor över många avtal, till exempel alla leverantörer i ett område; det är inte mätt.
+
+**Varför 16 modellanrop.** `config.py` ger skälet till en gräns: en körning som aldrig blir klar ska
+ha en begränsad kostnad. Talet 16 har ingen mätning bakom sig: det sattes i M7, och varken ADR 0013
+eller `config.py` motiverar just 16. I efterhand: i provkörningarna i M7 och M8 tog frågorna 2–8
+modellanrop (Resultat ovan och [steg 8](08-validering.md)), och mot den riktiga databasen behövde
+10 av 30 testfrågor sju eller fler ([steg 12](12-demo.md)). Gränsen räknar de nya försöken och
+börjar om efter ett svar på `ask_user`.
+
+**Varför resonemangsnivån `low`.** `low` är standard sedan M7 (ADR 0013, punkt 3) och har inte
+heller någon mätning bakom sig. Provkörningarna i steg 7 och 8 och mätningarna och demot i steg 11
+och 12 kördes alla på `low`; ingen annan nivå är jämförd. Nivån kan ändras med
+`AGENT_REASONING_EFFORT` och i mätningen med `--effort` ([steg 11](11-utvardering.md)).
 
 ## Kända begränsningar
 
@@ -506,7 +564,9 @@ Titta på att stegen kommer medan agenten arbetar, att svaret har `[n]` och att 
 - en fråga vars svar skiljer sig mellan delområdena, till exempel ett takpris i IT-drift utan att
   ange Mindre eller Större: agenten bör fråga vilket delområde du menar, och svaret fortsätter när
   du har svarat med en siffra. Är villkoren desamma i båda, som uppsägningen i Allmänna villkor,
-  svarar agenten i stället för båda; den riktiga modellen har ännu inte frågat i provkörningarna;
+  svarar agenten i stället för båda. I M7:s provkörningar frågade den riktiga modellen aldrig.
+  Den frågade första gången i M9, mot ersättaren för avtal-mcp ([steg 9](09-api.md)), och sedan
+  i demots fråga 1, som är skriven för att vara oklar ([steg 12](12-demo.md));
 - en följdfråga i samtalsläget (`uv run python -m avtalsagent.agent`), som ska förstås utan att
   du upprepar sammanhanget;
 - en fråga som avtalen inte besvarar: status `Inget svar`, med modellens förklaring och de

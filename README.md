@@ -68,10 +68,20 @@ Ett workflow passar när stegen är kända i förväg. Frågorna här behöver e
 steg och deras ordning beror på vad som står i dokumenten. Exempel ur demot, alla körda mot den
 riktiga databasen (q-numren är frågor i testsamlingen):
 
-- **Hänvisningar i flera steg (q14):** "Vår inhyrda IT-tekniker, avropad genom rangordning, behöver
-  jobba en lördag. Vad får bemanningsföretaget ta betalt för de timmarna?" Svaret finns i punkt
-  9.9.2 om särskild ersättning, som prisbilagan hänvisar till, och i definitionen av Arbetsdag i
-  9.2. Agenten använde nio verktygsanrop i mätningen och sju till nio i webbappen.
+- **Nästa steg beror på vad agenten just läst (q14):** "Vår inhyrda IT-tekniker, avropad genom
+  rangordning, behöver jobba en lördag. Vad får bemanningsföretaget ta betalt för de timmarna?"
+  Svaret finns i punkt 9.9.2 om särskild ersättning, som prisbilagan hänvisar till, och i
+  definitionen av Arbetsdag i 9.2. Vägen skilde sig mellan körningarna: i några läste agenten
+  prisbilagan mellan 9.9.2 och definitionen, i andra inte. Systemprompten säger, på raden om
+  `calculate_date`, att agenten ska läsa hur avtalet definierar Arbetsdag när det gäller
+  arbetsdagar. Det agenten själv avgör är vilka avsnitt den läser och när, utifrån det den just
+  har läst. Inläsningen kopplade 7 519 av 10 080 hänvisningar till sina mål (74,6 %; lagar och
+  standarder, "fråga N", listpunkter och självhänvisningar räknas inte,
+  [steg 4](docs/steg/04-extraktion.md)), och `read_section` visar dem. För resten listar
+  verktygen flera möjliga mål eller bara måldokumentet, eller så finns målet inte bland de hämtade
+  filerna. Definitioner är inga hänvisningar: dem får agenten söka upp eller hitta med
+  `get_outline`, och bara om de finns bland dokumenten. Agenten använde nio verktygsanrop i
+  mätningen och sju till tio steg i webbappen.
 - **En rättelse ersätter klausulen (q21):** upphandlingsdokumentet säger att sju anbud antas.
   Kammarkollegiets rättelse i frågor-och-svar-loggen säger åtta. Agenten letar efter ändringar av
   varje avsnitt den citerar, som systemprompten säger, och kontrollen underkänner ett svar som citerar den ändrade punkten utan
@@ -158,11 +168,12 @@ En fråga från början till slut:
 1. Webbappen skickar frågan till API:t över AG-UI (`POST /agui`). API:t öppnar en session mot
    avtal-mcp och kör agenten ([steg 9](docs/steg/09-api.md)).
 2. Agenten (`gpt-6.1-sol`) väljer själv bland verktygen: `search_register` för avtal, leverantörer
-   och datum, `search_documents` för hybridsökningen, `read_section` för hela avsnittet,
-   `resolve_reference` för att följa en hänvisning, `find_amendments` för senare ändringar,
+   och datum, `search_documents` för hybridsökningen, `read_section` för hela avsnittet med dess
+   hänvisningar och vart de pekar, `resolve_reference` för samma hänvisningar utan avsnittets
+   text, alla eller bara dem som innehåller en viss text, `find_amendments` för senare ändringar,
    `get_outline`, `list_documents` och `calculate_date`. Med `ask_user` pausar den körningen och
-   frågar användaren. Webbappen visar varje anrop medan det görs ([steg 6](docs/steg/06-verktyg.md),
-   [steg 7](docs/steg/07-agent.md)).
+   frågar användaren. Webbappen visar varje anrop medan det görs
+   ([steg 6](docs/steg/06-verktyg.md), [steg 7](docs/steg/07-agent.md)).
 3. Agenten lämnar ett svarsutkast: text med hänvisningar [n], källor med ordagranna citat och de
    avtal ur registret som svaret bygger på.
 4. Kontrollen läser om allt genom avtal-mcp, i fast ordning: citaten, registeruppgifterna, senaste
@@ -185,7 +196,7 @@ i svaret märks de "Din fil" ([ADR 0026](docs/adr/0026-egna-filer.md),
 | Inläsningen | `src/avtalsagent/ingestion/` | Ett steg per fil, `step1_fetch.py` till `step6_index.py` | [0007](docs/adr/0007-hamtning-av-dokument.md), [0008](docs/adr/0008-tolkning-och-uppdelning.md), [0009](docs/adr/0009-extraktion-avstamning-och-karantan.md) |
 | Sökningen | `src/avtalsagent/retrieval/` | Exakt vektorsökning (`text-embedding-3-large`, 1 536 dimensioner) och BM25, sammanvägda med RRF | [0011](docs/adr/0011-hybridsokning.md) |
 | Verktygen | `src/avtalsagent/mcp_server/` | MCP-server, ett verktyg per fil, skrivskyddad databasanslutning | [0003](docs/adr/0003-mcp-som-verktygslager.md), [0012](docs/adr/0012-avtal-mcp.md), [0016](docs/adr/0016-datumrakning.md), [0017](docs/adr/0017-andringar.md) |
-| Agenten | `src/avtalsagent/agent/` | LangChains `create_agent` med middleware, en LangGraph-graf med checkpoints i Postgres | [0002](docs/adr/0002-langgraph-och-create-agent.md), [0013](docs/adr/0013-agenten.md) |
+| Agenten | `src/avtalsagent/agent/` | LangChains `create_agent` med middleware, en LangGraph-graf med checkpoints i Postgres | [0002](docs/adr/0002-langgraph-och-create-agent.md), [0013](docs/adr/0013-agenten.md), [0023](docs/adr/0023-langgraph-utan-yttre-graf.md) |
 | Kontrollen | `src/avtalsagent/validation/` | En regel per fil, granskaren i `agent/reviewer.py` | [0015](docs/adr/0015-valideringskedjan.md), [0017](docs/adr/0017-andringar.md) |
 | API:t | `src/avtalsagent/api/` | FastAPI över AG-UI, PDF-routen | [0014](docs/adr/0014-api-och-compose.md) |
 | Webbappen | `web/` | Next.js och CopilotKit | [0010](docs/adr/0010-webbapp-copilotkit-ag-ui.md) |
@@ -281,8 +292,9 @@ Projektet gjordes i faser, och varje fas godkändes innan nästa började:
    rättelser och tillägg i egna pull requests.
 
 Koden är skriven av en AI-kodagent (Claude Code) efter planen och arkitekturen. Varje milstolpe kom
-tillbaka som en pull request med en förklaring, och varje pull request granskades och slogs ihop av
-Simon.
+tillbaka som en pull request med en förklaring, och det är Simon som slår ihop dem.
+Diskussionen och besluten fördes i chatten med kodagenten i ett Claude-projekt, inte som
+granskningar på GitHub.
 
 Simon fattade besluten om inriktningen, och kodagenten byggde och föreslog. Simon godkände
 avtalsanalys bland de tre idéerna och valde Statens inköpscentrals ramavtal som data, efter att ha
@@ -329,6 +341,25 @@ prioritetsordning inför presentationen.
 - **Inget skydd framför agenten.** Arkitekturplanens klassificering av frågan innan agenten är
   inte byggd. Det som skyddar är att verktygen bara kan läsa, att systemprompten säger att text i
   dokument är uppgifter och inte instruktioner, och kontrollen av svaret.
+- **Inga delagenter och ingen plan.** Arkitekturplanens parallella delagenter (`Send`) och en egen
+  att-göra-lista i agentens tillstånd är inte byggda. En jämförelse görs i samma loop, med en
+  sökning per delområde eller avtal, och agenten väljer nästa steg utifrån det den just har läst
+  ([steg 7](docs/steg/07-agent.md#middleware-som-inte-används-och-varför)).
+- **Gränsen räknar modellanrop, inte verktygsanrop.** En körning stoppas före det 17:e
+  modellanropet, men ett modellanrop kan begära flera verktygsanrop, och dem räknar ingen gräns.
+  Räknaren sparas inte i checkpointen, så den börjar om när användaren har svarat på `ask_user`;
+  de nya försöken är ändå högst två per fråga (`src/avtalsagent/agent/graph.py`).
+- **Ingen tidsgräns för en hel körning i API:t.** Ett anrop till granskaren ges upp efter 60
+  sekunder och görs om högst två gånger, så en granskning kan ta upp till ungefär tre minuter. För
+  agentmodellens anrop och för en körning genom `POST /agui` sätter koden ingen tidsgräns. Det
+  enda som stoppar agentmodellen i webbappen är langchain-openai, som avbryter ett strömmat svar
+  när inget nytt har kommit på 120 sekunder (`stream_chunk_timeout`, langchain-openai 1.6.7).
+  Mätningen ger upp en fråga efter 600 sekunder.
+- **Historiken växer inom ett samtal.** Varje modellanrop skickar hela samtalet, och inget
+  sammanfattar det eller rensar gamla verktygssvar. Demot ställer varje fråga i en ny flik.
+- **Mätningen ställer en fråga per samtal.** Varje testfråga körs i en egen tråd, och frågar agenten
+  användaren får den ett fast svar (`evals/answer_run.py`). Siffrorna gäller alltså första frågan i
+  ett samtal, inte följdfrågor.
 - **Ett lokalt demo.** API:t har ingen inloggning, och portarna i `docker-compose.yml` är bundna
   till `127.0.0.1`.
   Agenten minns inom ett samtal men lär sig inget mellan samtal.

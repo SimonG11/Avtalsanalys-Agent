@@ -1,0 +1,193 @@
+.timeline {
+  margin: 2px 0 6px;
+}
+
+.header {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: -8px;
+  padding: 6px 12px 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-2);
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+.header:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.headerIcon {
+  display: inline-flex;
+  justify-content: center;
+  width: 16px;
+  color: var(--text-2);
+}
+
+.chevron svg {
+  transition: transform 0.15s ease;
+}
+
+.chevron[data-open="true"] svg {
+  transform: rotate(90deg);
+}
+
+.activity {
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.items {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  position: relative;
+  padding-bottom: 14px;
+}
+
+/* The line that joins one step's marker to the next. */
+.item::before {
+  content: "";
+  position: absolute;
+  top: 30px;
+  bottom: 2px;
+  left: 13.5px;
+  width: 1px;
+  background: var(--border-strong);
+}
+
+.item:last-child {
+  padding-bottom: 0;
+}
+
+.item:last-child::before {
+  display: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+.markerRunning {
+  border-color: var(--accent);
+  color: var(--accent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.markerOk {
+  border-color: transparent;
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.markerWarn {
+  border-color: transparent;
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.body {
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.title {
+  color: var(--text);
+  font-size: 0.925rem;
+  font-weight: 600;
+}
+
+.subject {
+  margin-left: 8px;
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.subject::before,
+.subject::after {
+  content: "”";
+}
+
+.details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin-top: 2px;
+  color: var(--text-2);
+  font-size: 0.85rem;
+}
+
+.details code {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.outcome {
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.thought {
+  margin: 2px 0 0;
+  color: var(--text-2);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.thought strong {
+  color: var(--text);
+}
+
+.result {
+  margin-top: 4px;
+}
+
+.result summary {
+  width: fit-content;
+  color: var(--text-2);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.result summary:hover {
+  color: var(--text);
+}
+
+.result pre {
+  max-height: 280px;
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

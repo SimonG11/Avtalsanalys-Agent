@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
-import "@copilotkit/react-core/v2/styles.css";
+import { THEME_SCRIPT } from "@/lib/theme";
+
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -10,7 +11,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="sv">
+    // The script sets data-theme before the first paint, so a chosen theme does not flash.
+    <html lang="sv" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body>{children}</body>
     </html>
   );

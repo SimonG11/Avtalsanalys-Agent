@@ -1,5 +1,8 @@
 # M11 – Mätning av agentens svar (förenklad)
 
+> Filen beskriver M11 som den var när den byggdes, och några stycken har lagts till senare.
+> Läget efter körningen mot den riktiga databasen står i [steg 12](12-demo.md).
+
 **Mål:** mäta det en användare får för de 30 testfrågorna: om svaret är rätt, om det är
 kontrollerat, vilka källor det citerar, hur lång tid det tar och vad det kostar, och visa det i en
 rapport till presentationen. Förenklad jämfört med arkitekturplanens avsnitt 8: DeepEval i CI, fler
@@ -120,10 +123,19 @@ uv run python -m evals.run_answer_eval --no-judge             # utan domare (ing
 # Med Docker Compose, mot den riktiga databasen (efter ingest, se steg 9):
 docker compose --profile eval run --rm eval
 docker compose --profile eval run --rm eval python -m evals.run_answer_eval --only q01 q21
+
+# Med commit i rapporten (containern har varken git eller .git):
+docker compose --profile eval run --rm -e AVTALSAGENT_COMMIT=$(git rev-parse --short HEAD) eval
 ```
 
 Rapporterna hamnar i `evals/reports/`, som git ignorerar. Utan `--only` ställs alla 30 frågor,
 vilket tar ungefär sex minuter och kostar några dollar.
+
+I compose-tjänsten `eval` kan mätningen inte fråga git vilken commit den kör, så rapporten skriver
+"okänd commit" om du inte anger den med `-e AVTALSAGENT_COMMIT=…` som ovan. Variabeln används bara
+när git inte kan svara och ska vara en commits sha (4 till 40 hexadecimala tecken); annars lämnas
+den bort med en varning i loggen. Rapporten skriver att commit kommer från variabeln: den prövas
+inte mot koden i imagen, och om arbetskatalogen hade ändringar som inte var incheckade syns inte.
 
 Med Langfuses nycklar i `.env` blir varje fråga också en spårning i Langfuse, med frågans id som
 namn och mätningens körning som session (`eval-<tid>[-<etikett>]`), taggad `eval` och med
@@ -162,8 +174,25 @@ sista `FinalAnswer`-anropet som går att läsa), verktygen, verktygsfelen, fråg
 användaren, utkasten som kontrollen skickade tillbaka och de som hade fel form. Ett fel eller en
 fråga som passerar tidsgränsen sparas som text, utan nyckel och lösenord, och nästa fråga ställs
 ändå. Bara en nyckel som OpenAI inte tar emot stoppar körningen (`stops_the_run`), eftersom varje
-fråga skulle få samma fel och felets text visar en del av nyckeln. `UsageCounter` räknar varje modellanrop per modell (`ls_model_name`) med tokens ur
-`usage_metadata`; `cost` och `cost_range` räknar dollar med arkitekturvalideringens priser.
+fråga skulle få samma fel och felets text visar en del av nyckeln. `UsageCounter` räknar varje
+modellanrop per modell (`ls_model_name`) med tokens ur `usage_metadata`; `cost` och `cost_range`
+räknar dollar med arkitekturvalideringens priser.
+
+Agentens väg läses ur samma meddelanden (`evals/answer_steps.py`): varje verktygsanrop i ordning
+med sina argument, också `ask_user` och varje utkast, och om verktyget svarade med fel. Ett
+`read_section` märks när avsnittet stod som mål under `references` i ett tidigare svar från
+`read_section` eller `resolve_reference`, eller var en ändring som ett tidigare `find_amendments`
+angav. Det märks också om ett tidigare svar från `search_documents` hade avsnittet bland sina
+träffar eller deras kopior (`found_by_search`), så att en läsning som bara kan komma ur
+hänvisningen går att skilja från en som agenten också hade fått ur en sökning. En position räknas
+bara när den är ett heltal eller högst nio av siffrorna 0–9 som text; ett argument som "²" pekar
+inte ut något avsnitt och kan inte stoppa läsningen, så en fråga som redan är betald går inte
+förlorad. Varje utkast som kontrollen skickade tillbaka sparas med sina fel, och varje fel räknas
+till regeln som skrev det (citat, registeruppgifter, senaste lydelsen eller granskaren) efter hur
+regeln formulerar sina fel; testerna prövar varje regels egna fel, så en regel som formuleras om
+syns där i stället för att räknas fel. Modellanropen är den räkning som `ModelCallLimitMiddleware`
+för i trådens tillstånd. En fråga som aldrig nådde agenten (sessionen mot avtal-mcp kom inte igång)
+har varken väg, skäl eller modellanrop sparade (`QuestionRun.path_saved`).
 
 ### 3. `evals/answer_scores.py` – poängen
 
@@ -171,19 +200,56 @@ fråga skulle få samma fel och felets text visar en del av nyckeln. `UsageCount
 citats position ur utkastet, `sources_found` säger vilka av facits källor som har ett godkänt citat
 på samma plats, och `register_score` jämför facits avtal med svarets registerrader.
 `rule_judgement` bedömer ett svar som inte blev klart inom gränsen för modellanrop som fel.
-`summarize` ger siffrorna för en grupp frågor, hela körningen eller en kategori.
+`summarize` ger siffrorna för en grupp frågor, hela körningen eller en kategori, och
+`summarize_paths` anropen per verktyg, modellanropen, läsningarna ur hänvisningar (alla, och de
+som ingen tidigare sökning hade gett) och de nya försöken efter regel. Vägens tal räknas i de
+frågor vars väg sparades; de andra räknas för sig som inte sparade.
 
 ### 4. `evals/answer_report.py` – rapporterna
 
 Markdown på svenska: sammanfattningen, körningen, metoden, en tabell per kategori och per fråga,
-tokens och kostnad per modell, domarens skäl och varje svar bredvid facit. JSON med samma innehåll
-och varje svar som webbappen får det, för att jämföra körningar.
+agentens väg, tokens och kostnad per modell, domarens skäl och varje svar bredvid facit. JSON med
+samma innehåll, varje verktygsanrop med alla argument och varje svar som webbappen får det, för
+att jämföra körningar.
+
+- **Sammanfattningen** har alltid raden Följdfrågor, också när agenten inte frågade något ("0 av
+  30"), de nya försöken efter regel (ett utkast som flera regler underkände räknas under var och
+  en, så talen kan bli fler än de nya försöken), agentens modellanrop per fråga (median och högst,
+  mot gränsen `AGENT_MODEL_CALL_LIMIT`, som gäller per körning av grafen), hur många
+  `read_section` som gick till ett mål ur ett tidigare svars hänvisningar och hur många av dem
+  till ett mål som ingen tidigare sökning hade gett, och anropen till `resolve_reference`. Metoden
+  definierar måtten, och vilka frågor de räknas i.
+- **Körningen** anger commit (kort sha, och om arbetskatalogen hade ändringar som inte var
+  incheckade) och sha256 av mallen `SYSTEM_PROMPT` (innan dagens datum fylls i) och av
+  granskarens `REVIEWER_PROMPT`, så att rapporten säger vilken kod och vilka prompter den mätte.
+  Commit gäller koden i processen som kör agenten och mätningen. Med `MCP_TRANSPORT=stdio` är
+  avtal-mcp en barnprocess ur samma installation; mot `MCP_URL` kan avtal-mcp vara en annan
+  version eller den tillfälliga ersättaren, och raden säger det. I compose-tjänsten `eval` finns
+  varken git eller `.git`, så där kommer commit från `AVTALSAGENT_COMMIT` (se Kommandon), annars
+  står den som okänd; prompternas hash står ändå.
+- **Agentens väg** har anropen per verktyg (anrop och frågor), de nya försöken efter regel (utkast,
+  frågor och fel) och en rad per fråga med anropen i ordning och argumentet som säger vad agenten
+  letade efter, till exempel `search_documents("lördag", Bemanning) → read_section(9.9.2) → …`.
+  Ett `read_section` till ett mål ur en hänvisning märks med ↪, en ändring ur `find_amendments`
+  med Δ och ett verktygsfel med ✗. Ett utkast som kontrollen skickade tillbaka står som
+  `FinalAnswer(underkänt: regel)`, och det som blev ett svar med reservation som
+  `FinalAnswer(med reservation)`, så att det inte ser ut som ett som kontrollen godkände. Under
+  raden står skälen till varje nytt försök.
+
+En fråga där körningen aldrig nådde agenten, som när sessionen mot avtal-mcp inte kom igång, står
+som "inte sparat" i stället för att räknas som noll: på sin rad under Agentens väg, och som "inte
+sparat för n frågor" efter modellanropen, hänvisningarna och `resolve_reference`. Talen räknas i
+de övriga frågorna. I JSON är frågans `model_calls`, `steps` och `rejections` då `null`, liksom
+median, högsta värde och antal vid gränsen för modellanropen när ingen fråga sparade dem; utskriften
+säger "not saved".
 
 ### 5. `evals/run_answer_eval.py` – körningen och kommandoraden
 
 Gör modellerna, prövar avtal-mcp en gång, kör frågorna med en egen MCP-session var
 (`--concurrency` åt gången), låter domaren bedöma varje svar när det är klart och skriver
-rapporterna. Fel som stoppar körningen ger en rad och slutkod 1, som agentens kommandorad.
+rapporterna. Fel som stoppar körningen ger en rad och slutkod 1, som agentens kommandorad. Före
+frågorna noterar `run_info` commit (`measured_commit`: ur git, annars ur `AVTALSAGENT_COMMIT`)
+och prompternas sha256.
 
 ### 6. `docker-compose.yml` – tjänsten `eval`
 
@@ -198,11 +264,12 @@ ställs, så en körning som har kostat pengar inte går förlorad på slutet.
 
 | Fil | Tester | Vad |
 |---|---:|---|
-| `tests/unit/evals/test_answer_run.py` | 15 | En fråga genom agentens riktiga graf med en skriptad modell: svar, utkast, verktyg och tokens; `ask_user` får det fasta svaret; ett utkast som skickas tillbaka; ett verktygsfel; ett fel med en hemlighet som döljs; en nyckel som OpenAI inte tar emot stoppar körningen; tidsgränsen; gränsen för modellanrop; tokens, kostnad och felgrupper |
-| `tests/unit/evals/test_answer_scores.py` | 18 | Citatens positioner ur utkastet, källor på plats (position eller nummer), bara godkända citat, avtal med samma nyckel, regeln för svar utan utkast, sammanfattningen (där ett svar utan utkast inte räknas som "framgår inte"), kategorierna och percentilen |
-| `tests/unit/evals/test_answer_report.py` | 13 | Rapporternas namn, Markdown med svenska tal, skäl, fel och svar som citat, utan domare, en domare som inte svarade, svar utan utkast, samma modell som agent och granskare, JSON, utskriften, och mappen som prövas före körningen och vid skrivning |
+| `tests/unit/evals/test_answer_run.py` | 18 | En fråga genom agentens riktiga graf med en skriptad modell: svar, utkast, verktyg med argument, modellanrop och tokens; `ask_user` får det fasta svaret; ett utkast som kontrollen och ett som granskaren skickar tillbaka, med skälen ur återkopplingen; ett `read_section` till ett mål ur ett tidigare svars hänvisningar; ett verktygsfel; ett fel med en hemlighet som döljs; en nyckel som OpenAI inte tar emot stoppar körningen; tidsgränsen; gränsen för modellanrop; ett felaktigt argument som inte gör att svaret går förlorat; tokens, kostnad och felgrupper |
+| `tests/unit/evals/test_answer_steps.py` | 17 | Varje anrop i ordning med argument och utfall; mål ur hänvisningar (position eller nummer, bara ur svar före anropet, inte hela filer, också ur `resolve_reference` och ur JSON-texten) och ändringar ur `find_amendments`; om en tidigare sökning hade gett avsnittet (träff eller kopia, bara ur lyckade svar före anropet); positioner som inte är siffrorna 0–9 ("²", "①", "٣٧"); varje regels egna fel räknas till rätt regel; återkopplingens rader och de underkända utkasten |
+| `tests/unit/evals/test_answer_scores.py` | 20 | Citatens positioner ur utkastet, källor på plats (position eller nummer), bara godkända citat, avtal med samma nyckel, regeln för svar utan utkast, sammanfattningen (där ett svar utan utkast inte räknas som "framgår inte"), agentens väg (verktyg, modellanrop, läsningar ur hänvisningar med och utan sökträff och nya försök efter regel, i de frågor vars väg sparades), kategorierna och percentilen |
+| `tests/unit/evals/test_answer_report.py` | 24 | Rapporternas namn, Markdown med svenska tal, skäl, fel och svar som citat, utan domare, en domare som inte svarade, svar utan utkast, samma modell som agent och granskare, raden Följdfrågor också vid noll, vägen per fråga med argument och märken, utkastet som blev ett svar med reservation, tabellerna per verktyg och regel, båda måtten för hänvisningar och `resolve_reference`, en fråga som aldrig nådde agenten (inte sparat, `null` i JSON) och en som nådde den utan anrop (noll), metodens definitioner, commit (ur git eller `AVTALSAGENT_COMMIT`, och vad den gäller) och prompternas hash, JSON, utskriften, och mappen som prövas före körningen och vid skrivning |
 | `tests/unit/evals/test_judge.py` | 8 | Domarens klient, frågan med båda svaren, att ingen text kan avsluta sitt element, det strikta schemat, ett lyckat och två misslyckade anrop |
-| `tests/unit/evals/test_run_answer_eval.py` | 15 | Urvalet av frågor, inställningarna, bedömningen (ingen utan domare), avtal-mcp som inte svarar, en nyckel som OpenAI inte tar emot, frågor åt gången i facits ordning, kommandoradens utskrift och fel, och en mapp som inte går att skriva i stoppar före första frågan |
+| `tests/unit/evals/test_run_answer_eval.py` | 20 | Urvalet av frågor, inställningarna, commit och ändringar ur git (och utan git eller utanför ett repo, oberoende av var testets mapp ligger och av `GIT_DIR`), commit ur `AVTALSAGENT_COMMIT` när git inte kan svara, prompternas hash, bedömningen (ingen utan domare), avtal-mcp som inte svarar, en nyckel som OpenAI inte tar emot, frågor åt gången i facits ordning, kommandoradens utskrift och fel, och en mapp som inte går att skriva i stoppar före första frågan |
 
 ## Kända begränsningar
 
@@ -212,6 +279,14 @@ ställs, så en körning som har kostat pengar inte går förlorad på slutet.
   drygt tre procentenheter.
 - **Facits källor räknas på plats.** Samma text i en fil som facit inte anger räknas inte (q18 och
   q19 citerade samma mening i en annan fil), så 78 procent är en undre gräns.
+- **Agentens väg är läst ur meddelandena.** Skälen till ett nytt försök räknas till regel efter
+  hur regeln formulerar sina fel, och ett `read_section` till ett mål ur en hänvisning säger att
+  agenten hade hänvisningen framför sig, inte varför den valde avsnittet: målet kan också ha
+  funnits i en sökträff. Det strängare måttet räknar bara mål som ingen tidigare sökning hade gett,
+  men ett sådant avsnitt kan agenten också ha hittat i en innehållsförteckning (`get_outline`).
+- **Ett svar med reservation märks, inte varför.** Kontrollen sparar inte i grafens tillstånd om
+  det sista utkastet underkändes när de nya försöken var slut eller om något i det inte gick att
+  kontrollera, så vägen märker utkastet med svarets status; reservationerna säger vilket.
 - **Kostnaden är ett intervall**, eftersom priset för cachad indata saknas i prislistan. Omkring 84
   procent av agentens indata var cachad.
 - **Ersättaren och databasen.** De två första körningarna är mot ersättaren och den tredje mot
