@@ -105,10 +105,22 @@ Mätningarna visar var de extra stegen behövs. I sökmätningen låg facits tre
 plats 1, 33 och 73 i en enda hybridsökning, och för q15 fanns en av tre källor inte alls bland
 träffarna. I q21 låg punkt 3.2 på plats 6 och rättelsen på plats 13, så de tio första träffarna
 ger bara den gamla lydelsen. I mätningen av svaren citerade agenten alla källorna i alla tre
-frågorna, med mellan ett anrop till avtal-mcp (q10) och 16 (q15), 6,7 i medel. Två saker är inte
-visade: agenten är inte jämförd med ett fast workflow (en sökning och ett svar) på samma frågor,
-och i de sju flerstegsfrågorna citerade agenten alla facits källor i bara två (12 av 18 källor, en
-undre gräns, eftersom samma text kan stå i en annan fil).
+frågorna, med mellan ett anrop till avtal-mcp (q10) och 16 (q15), 6,7 i medel. Agenten är också
+jämförd med ett fast workflow med samma modell, kontroll och domare, som tar samma steg för
+varje fråga: det frågar registret när frågan nämner ett område, ett delområde, ett avtal eller
+en leverantör, söker i dokumenten och läser de fem första avsnitten bland träffarna och högst
+fem avsnitt som ändrar dem, och söker sedan i Frågor och svar och läser de tre första träffarna
+som inte redan är lästa ([ADR 0024](docs/adr/0024-baslinje-fast-workflow.md)). På de 30
+testfrågorna, mot en ersättare för avtal-mcp, fick agenten 28 och 29 poäng (rätt 1, delvis rätt
+0,5) mot workflowets 24 och 24,5, på resonemangsnivå `low` respektive `medium`. På `medium` är
+skillnaden större än slumpen, på `low` kan den vara slump. Den kommer från flerstegsfrågorna och
+jämförelserna, där agenten sökte igen och valde vad den läste; däremot följde den aldrig en
+hänvisning. På enkla uppslagningar var workflowet lika bra eller något bättre
+([steg 11](docs/steg/11-utvardering.md#resultat-agenten-mot-baslinjen)). Två saker är inte
+visade: att skillnaden håller mot den riktiga databasen, eftersom jämförelsen bara är körd mot
+ersättaren, och att agenten hittar alla källor i flerstegsfrågor: i mätningen mot databasen
+citerade den alla facits källor i bara två av de sju (12 av 18 källor, en undre gräns, eftersom
+samma text kan stå i en annan fil).
 
 Allt utanför frågorna är ett workflow, och kontrollen av svaret ligger utanför agenten
 ([ADR 0001](docs/adr/0001-workflow-for-inlasning-agent-for-fragor.md)):

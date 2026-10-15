@@ -40,7 +40,7 @@ innehållsförteckning, så `Användningsrättigheter` hamnar under sin produkt.
 |---|---|---|
 | Varje nummer i dokumentets egen innehållsförteckning är ett avsnitt | `chunk` | 104 av 104 filer med förteckning (78 PDF, 26 Word) |
 | Varje fråga i en fråge- och svarslogg är ett eget avsnitt | `verify` | 1 462 av 1 463 frågor |
-| Raderna i PDF:ernas textlager (minst 25 bokstäver eller siffror) finns i avsnitten | `verify` | 95,1 % av 119 159 rader; 4,4 % finns bara i sidhuvuden, sidfötter och innehållsförteckningar som steg 3 tar bort; 0,5 % saknas |
+| Raderna i PDF:ernas textlager (minst 25 bokstäver eller siffror) finns i avsnitten | `verify` | 94,6 % av 119 159 rader; 4,9 % finns bara i det steg 3 tar bort med avsikt (sidhuvuden, sidfötter, innehållsförteckningar och, från M4, e-signeringens certifikat); 0,5 % saknas. Före M4 var det 95,1 % och 4,4 % |
 | Ingen numrerad rad i textlagret passar mellan två avsnitt utan att själv vara ett | `verify` | 3 rader i 3 filer, se nedan |
 
 Kontrollen mot innehållsförteckningen täcker hälften av filerna. De andra 103 är 58 numrerade

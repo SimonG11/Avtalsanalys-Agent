@@ -9,8 +9,8 @@ Besluten och varför står i [ADR 0012](../adr/0012-avtal-mcp.md). Efter M8 kom 
 
 **Klart när:** de sex verktygen svarar genom MCP, varje verktyg har tester utan språkmodell
 (enhetstester utan databas och integrationstester mot Postgres), och servern startar över HTTP och
-stdio och listar verktygen. En egen container i Docker Compose och ett prov med MCP Inspector
-återstår (se Kända begränsningar).
+stdio och listar verktygen. avtal-mcp fick en egen container i Docker Compose i M9, tillsammans
+med API:t ([steg 09](09-api.md)); ett prov med MCP Inspector återstår (se Kända begränsningar).
 
 ## Resultat
 
@@ -358,8 +358,9 @@ som servern gör.
 
 - **Integrationstesterna** körs bara i CI, där Postgres startas med Docker. De har inte körts mot
   urvalet.
-- **Ingen container ännu.** `docker-compose.yml` har bara Postgres; tjänsten för avtal-mcp kommer
-  med API:t. Verktygen är inte provade i MCP Inspector.
+- **Inte provade i MCP Inspector.** Ingen har kopplat Inspector till servern. Sedan M9 har
+  avtal-mcp en egen container i `docker-compose.yml` (tjänsten `mcp`), vars port inte publiceras på
+  värden, så bara API:t och mätningen (`eval`) når den inne i compose ([steg 09](09-api.md)).
 - **Engelska framför felen.** SDK:t 1.x skriver "Error executing tool <namn>: " före varje
   felmeddelande, också våra svenska. Sedan 2026-10-08 tar agenten bort det innan modellen,
   webbappen och kommandoraden ser felet ([steg 07](07-agent.md)); andra MCP-klienter ser det

@@ -11,10 +11,10 @@ Why:
     enforces in code: quote a section word for word, so read it before
     citing it; cite an amended section together with its amendment; copy
     register facts from search_register (`validation/`). Conditional
-    guidelines: if the question names an area or an agreement, filter on
-    it; if it compares sub-areas, search each; if the answer differs
-    between agreements, ask the user; if nothing asked is in the
-    agreements, say "framgår inte" rather than guess. Knowledge about the
+    guidelines: if the question names an area or agreement, filter on it; if it compares
+    sub-areas, search each; if cases differ, answer each briefly and ask only when the
+    cases are too many, the answers too long or the user's facts decide; if nothing asked
+    is in the agreements, say "framgår inte" rather than guess. Knowledge about the
     tools: what each is for and how its filters are written. The answer's
     form: plain text without Markdown, which no code checks, and [n] after
     each claim, which the check matches with the sources. And a rule no
