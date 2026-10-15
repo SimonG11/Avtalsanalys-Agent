@@ -111,8 +111,8 @@ class Settings(BaseSettings):
     # `reasoning.summary`, or "off" for none.
     agent_reasoning_summary: Literal["auto", "concise", "detailed", "off"] = "auto"
     # Model calls per run, new attempts included: a question, or its continuation after the
-    # user has answered ask_user. A run that reaches the limit gets the status no_answer, so a
-    # run that never settles has a bounded cost.
+    # user has answered ask_user. A run that reaches the limit ends with the last failed draft's
+    # answer (usually with_reservation), or no_answer without one, so its cost is bounded.
     agent_model_call_limit: int = Field(default=16, gt=0)
     # New attempts after a draft fails the answer check (M8: the citations, the register facts
     # or the review); after them the answer is given with reservation (with_reservation), with
