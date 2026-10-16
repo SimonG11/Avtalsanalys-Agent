@@ -496,5 +496,6 @@ mäts med `evals/`.
 | `docs/` | Demoskriptet, faserna, arkitekturbesluten (`adr/`) och milstolparna (`steg/`) |
 | `docker/` | Postgres startskript, som installerar pgvector. `Dockerfile` och `docker-compose.yml` ligger i repots rot och webbappens `Dockerfile` i `web/` |
 | `web/` | Webbappen (Next.js och CopilotKit), se [`web/README.md`](web/README.md) |
+| `CLAUDE.md`, `.claude/` | Instruktionerna till kodagenten (Claude Code), dess färdigheter (sju från [mattpocock/skills](https://github.com/mattpocock/skills) och tre egna: `verify`, `adr` och `pr`) och en hook som stoppar git-kommandon som kastar bort arbete, se [`.claude/skills/README.md`](.claude/skills/README.md) |
 
 Kod, identifierare och kommentarer är på engelska. Dokumentationen är på svenska.
